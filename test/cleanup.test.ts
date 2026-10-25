@@ -1,3 +1,4 @@
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MARKER_PROPERTY_ID } from "../src/sync/graph-events";
@@ -92,6 +93,9 @@ describe("cleanup", () => {
     const deletes = await fakeTarget(ruleId);
 
     expect((await post(`/rules/${ruleId}/delete`, cookie)).status).toBe(302);
+    // The request only queues the removal; the target account's alarm does it.
+    expect(deletes).toHaveLength(0);
+    expect(await runDurableObjectAlarm(env.ACCOUNT_SYNC.getByName(b))).toBe(true);
     expect(deletes.map((d) => d.url).sort()).toEqual(["/me/events/mine-1", "/me/events/mine-2"]);
     expect(deletes.every((d) => d.token === `Bearer token-${b}`)).toBe(true);
     expect(
@@ -112,8 +116,8 @@ describe("cleanup", () => {
     expect(await env.ACCOUNT_SYNC.getByName(a).hasTokens()).toBe(false);
   });
 
-  it("still deletes the rule when its blocks cannot be removed", async () => {
-    const { cookie, ruleId } = await setup("fail");
+  it("deletes the rule at once and retries the removal while the provider is down", async () => {
+    const { cookie, ruleId, b } = await setup("fail");
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async () => new Response("down", { status: 503 }),
@@ -128,6 +132,13 @@ describe("cleanup", () => {
     )
       .bind(ruleId)
       .first<{ detail: string }>();
-    expect(JSON.parse(audit?.detail ?? "{}")).toEqual({ cleanupFailed: true });
+    expect(JSON.parse(audit?.detail ?? "{}")).toEqual({ cleanup: "queued" });
+
+    const stub = env.ACCOUNT_SYNC.getByName(b);
+    await runDurableObjectAlarm(stub);
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<{ ruleId: string; attempts: number }[]>("removalQueue"),
+    );
+    expect(queue).toEqual([expect.objectContaining({ ruleId, attempts: 1 })]);
   });
 });

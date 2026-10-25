@@ -14,7 +14,7 @@ import {
   setSourceOptions,
   type Choice,
 } from "../editor";
-import { CalendarEditorPage, SourceCard, type Notice } from "../pages/calendar-editor";
+import { CalendarEditorPage, Overview, SourceCard, type Notice } from "../pages/calendar-editor";
 import { render, renderFragment } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
@@ -37,12 +37,10 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
   if ((await userCalendars(c.env.DB, user.id)).length === 0) {
     await refreshUserCalendars(c.env, user.id);
   }
-  const view = c.req.query("view") === "matrix" ? "matrix" : "list";
   const page = (
     <CalendarEditorPage
       user={user}
       state={await loadEditorState(c.env, user.id)}
-      view={view}
       open={c.req.query("open") ?? null}
       notice={notice}
       status={<SyncStatus outcomes={await latestRuleOutcomes(c.env.DB, user.id)} />}
@@ -82,6 +80,11 @@ async function targetAccountOf(db: D1Database, ruleId: string, userId: string) {
 }
 
 rules.get("/", (c) => renderPage(c));
+
+// The overview column alone, for the editor script after a save.
+rules.get("/overview", async (c) =>
+  renderFragment(c, <Overview state={await loadEditorState(c.env, currentUser(c).id)} />),
+);
 
 rules.post("/calendars/refresh", async (c) => {
   await refreshUserCalendars(c.env, currentUser(c).id);

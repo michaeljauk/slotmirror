@@ -46,6 +46,18 @@ const DEBOUNCE_MS = 5_000;
 /** Durable Object storage key of the rules still to run in the current cycle. */
 const RULE_QUEUE_KEY = "ruleQueue";
 
+/** Durable Object storage key of block removals for deleted or switched-off rules. */
+const REMOVAL_QUEUE_KEY = "removalQueue";
+
+/** Give up on a removal after this many failed attempts; the blocks then stay. */
+const MAX_REMOVAL_ATTEMPTS = 5;
+
+interface Removal {
+  ruleId: string;
+  remoteCalendarId: string;
+  attempts: number;
+}
+
 /** Refresh the access token this long before it expires. */
 const REFRESH_MARGIN_MS = 60_000;
 
@@ -276,6 +288,45 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
+   * Remove the blocks of a rule later, in an alarm. A rule's blocks carry its tag, so they can go
+   * after the rule itself is gone. The editor uses this so that a click does not wait for Graph.
+   */
+  async queueRemoval(ruleId: string, remoteCalendarId: string): Promise<void> {
+    const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
+    if (!queue.some((job) => job.ruleId === ruleId && job.remoteCalendarId === remoteCalendarId)) {
+      queue.push({ ruleId, remoteCalendarId, attempts: 0 });
+      await this.ctx.storage.put(REMOVAL_QUEUE_KEY, queue);
+    }
+    const pending = await this.ctx.storage.getAlarm();
+    const soon = Date.now() + NEXT_RUN_MS;
+    if (pending === null || pending > soon) await this.ctx.storage.setAlarm(soon);
+  }
+
+  /** Run one queued removal. Returns false if there was none. */
+  private async runRemoval(): Promise<boolean> {
+    const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
+    const [job, ...rest] = queue;
+    if (!job) return false;
+    let next = rest;
+    let delayMs = NEXT_RUN_MS;
+    try {
+      const { remaining } = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
+      if (remaining > 0) next = [job, ...rest];
+    } catch (error) {
+      console.error("Queued removal failed", job.ruleId, error);
+      const throttleDelay = throttleDelayMs(error);
+      if (throttleDelay !== null) delayMs = throttleDelay;
+      if (throttleDelay !== null || job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) {
+        next = [...rest, { ...job, attempts: job.attempts + 1 }];
+      }
+    }
+    if (next.length > 0) await this.ctx.storage.put(REMOVAL_QUEUE_KEY, next);
+    else await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
+    await this.ctx.storage.setAlarm(Date.now() + delayMs);
+    return true;
+  }
+
+  /**
    * Run the next rule that targets this account. Each alarm runs one rule, so that every rule gets
    * the full subrequest budget of an invocation; the alarm then schedules itself for the next one.
    * A rule with writes left stays at the front of the queue. If the provider throttled the run,
@@ -285,6 +336,8 @@ export class AccountSync extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
+    // Removals come first, one per alarm; the rules follow once none is left.
+    if (await this.runRemoval()) return;
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) queue = await rulesTargetingAccount(this.env.DB, accountId);
     const [ruleId, ...rest] = queue;

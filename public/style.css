@@ -1202,3 +1202,73 @@ details.source.dirty {
   border-color: var(--text);
   color: #fff;
 }
+
+/* Editor with overview column */
+
+main.wide {
+  max-width: 1120px;
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 16px;
+  align-items: start;
+}
+
+.overview {
+  position: sticky;
+  top: 16px;
+  padding: 12px 8px 4px;
+}
+
+.overview-title {
+  margin: 0 8px 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.overview .matrix {
+  padding: 0;
+  border-spacing: 4px;
+}
+
+.overview .matrix th {
+  font-size: 12px;
+}
+
+.overview .matrix .cell a {
+  padding: 8px 4px;
+  font-size: 12px;
+}
+
+.overview .matrix .cell small {
+  font-size: 10.5px;
+}
+
+.overview .matrix-hint {
+  padding: 4px 8px 8px;
+  font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .overview {
+    position: static;
+  }
+}
+
+.caps-org {
+  margin: 0;
+  padding: 12px 16px 4px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.caps-how {
+  margin-top: 8px;
+  text-align: left;
+}

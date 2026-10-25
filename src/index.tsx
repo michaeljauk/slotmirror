@@ -25,6 +25,7 @@ import { rules } from "./routes/rules";
 import { loadEditorState, renameAccount } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
+import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
 
@@ -234,7 +235,16 @@ app.get("/admin", async (c) => {
   const activity = await orgActivity(c.env.DB, user.orgId);
   return render(
     c,
-    <AdminPage user={user} users={results} activity={activity} caps={detailCapsFromEnv(c.env)} />,
+    <AdminPage
+      user={user}
+      users={results}
+      activity={activity}
+      caps={detailCapsFromEnv(c.env)}
+      org={{
+        domains: policyFromEnv(c.env).allowedDomains,
+        tenantCount: policyFromEnv(c.env).allowedTenantIds.length,
+      }}
+    />,
   );
 });
 

@@ -249,11 +249,13 @@ export function SourcePills(props: { state: EditorState; source: EditorAccount }
   );
 }
 
-function MatrixView(props: { state: EditorState }) {
+/** The same choices as a matrix. It stays next to the list, so that the whole setup is in view. */
+export function Overview(props: { state: EditorState }) {
   const { t } = useI18n();
   const accounts = props.state.accounts.filter((account) => account.calendar);
   return (
-    <div class="card">
+    <aside class="card overview" id="overview">
+      <h2 class="overview-title">{t.editor.viewMatrix}</h2>
       <table class="matrix">
         <thead>
           <tr>
@@ -283,7 +285,7 @@ function MatrixView(props: { state: EditorState }) {
                       : "";
                 return (
                   <td class={`cell level-${choice}`}>
-                    <a href={`/rules?open=${from.id}#src-${from.id}`}>
+                    <a href={`/rules?open=${from.id}#src-${from.id}`} data-open={from.id}>
                       {t.editor.choices[choice]}
                       <small>{label}</small>
                     </a>
@@ -295,14 +297,13 @@ function MatrixView(props: { state: EditorState }) {
         </tbody>
       </table>
       <p class="matrix-hint">{t.editor.matrixHint}</p>
-    </div>
+    </aside>
   );
 }
 
 export function CalendarEditorPage(props: {
   user: CurrentUser;
   state: EditorState;
-  view: "list" | "matrix";
   open: string | null;
   notice?: Notice;
   status?: Child;
@@ -310,24 +311,13 @@ export function CalendarEditorPage(props: {
   const { t } = useI18n();
   const ready = props.state.accounts.filter((account) => account.calendar);
   return (
-    <Layout title={t.editor.title} user={props.user} active="rules">
+    <Layout title={t.editor.title} user={props.user} active="rules" wide>
       <section class="section">
         <div class="section-head">
           <div>
             <h1>{t.editor.title}</h1>
             <p class="lead">{t.editor.lead}</p>
           </div>
-          <nav class="segmented" aria-label={t.editor.views}>
-            <a class={props.view === "list" ? "segment active" : "segment"} href="/rules">
-              {t.editor.viewList}
-            </a>
-            <a
-              class={props.view === "matrix" ? "segment active" : "segment"}
-              href="/rules?view=matrix"
-            >
-              {t.editor.viewMatrix}
-            </a>
-          </nav>
         </div>
 
         {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
@@ -337,16 +327,15 @@ export function CalendarEditorPage(props: {
             <div class="empty">{t.editor.needTwo}</div>
           </div>
         ) : (
-          <>
-            <GroupCard state={props.state} />
-            {props.view === "matrix" ? (
-              <MatrixView state={props.state} />
-            ) : (
-              ready.map((source) => (
+          <div class="editor-grid">
+            <div class="editor-main">
+              <GroupCard state={props.state} />
+              {ready.map((source) => (
                 <SourceCard state={props.state} source={source} open={props.open === source.id} />
-              ))
-            )}
-          </>
+              ))}
+            </div>
+            <Overview state={props.state} />
+          </div>
         )}
 
         {props.state.others.length > 0 ? (

@@ -133,7 +133,7 @@ export const de: Messages = {
     moreOptions: "Mehr Optionen",
     save: "Speichern",
     matrixCorner: "Von ↓ · nach →",
-    matrixHint: "Klick auf ein Feld öffnet den Kalender in der Liste.",
+    matrixHint: "Klick auf ein Feld öffnet den Kalender links.",
     cellGroup: "Gruppe",
     cellException: "Ausnahme",
     needTwo: "Verbinde mindestens zwei Konten. Dann legst du hier fest, wohin ihre Termine gehen.",
@@ -189,11 +189,20 @@ export const de: Messages = {
     lastSignIn: "Letzte Anmeldung",
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
-    capsTitle: "Detail-Grenzen",
+    capsTitle: "Datenschutz-Grenzen",
     capsLead:
-      "Wie viel Detail eine Regel höchstens zwischen Konten der Organisation und anderen Konten kopiert. Gesetzt über MAX_DETAIL_TO_EXTERNAL und MAX_DETAIL_FROM_EXTERNAL; Konten der Organisation passen zu ALLOWED_TENANT_IDS oder ALLOWED_DOMAINS.",
-    capToExternal: "Vom Konto der Organisation in ein anderes Konto",
-    capFromExternal: "Von einem anderen Konto in ein Konto der Organisation",
+      "Wie viel von einem Termin höchstens zwischen Firmenkalendern und privaten Kalendern wandert. Das gilt für alle in dieser Installation, auch wenn jemand in seinen Sync-Einstellungen mehr wählt.",
+    orgAccounts: (list: string) =>
+      `Als Firmenkalender zählen Konten bei ${list}. Alle anderen Konten gelten als privat.`,
+    orgNone:
+      "Es ist keine Firmen-Domain und kein Entra-Tenant gesetzt (ALLOWED_DOMAINS, ALLOWED_TENANT_IDS). Damit gibt es keine Grenzen.",
+    tenants: (count: number) => (count === 1 ? "1 Entra-Tenant" : `${count} Entra-Tenants`),
+    capToExternal: "Firmentermine in privaten Kalendern",
+    capFromExternal: "Private Termine in Firmenkalendern",
+    capNone: "Keine Grenze",
+    capAtMost: (level: string) => `Höchstens „${level}“`,
+    capsHow:
+      "Ändern über die Worker-Variablen MAX_DETAIL_TO_EXTERNAL und MAX_DETAIL_FROM_EXTERNAL.",
   },
   activity: {
     title: "Aktivität",

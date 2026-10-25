@@ -61,6 +61,8 @@ export function Layout(props: {
   title: string;
   user?: CurrentUser | null;
   active?: NavItem;
+  /** A wider page, for the calendar editor with its overview column. */
+  wide?: boolean;
   children: Child;
 }) {
   const { user } = props;
@@ -137,7 +139,7 @@ export function Layout(props: {
             ) : null}
           </div>
         </header>
-        <main>{props.children}</main>
+        <main class={props.wide ? "wide" : undefined}>{props.children}</main>
         <footer class="footer">
           <span>{APP_NAME}</span>
           <span aria-hidden="true">·</span>

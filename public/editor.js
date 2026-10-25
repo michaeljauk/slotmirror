@@ -7,13 +7,37 @@
     return fetch(url, { method: "POST", body, headers: { "x-fragment": "1" } });
   }
 
-  /** Replace a card with the server's version and set it up again. */
+  /** The first element of an HTML fragment. */
+  function parse(html) {
+    return new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
+  }
+
+  /** Replace a card with the server's version, set it up again, and refresh the overview. */
   async function replaceCard(card, response) {
-    const html = await response.text();
-    const next = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
+    const next = parse(await response.text());
     if (!next) return;
     card.replaceWith(next);
     setup(next);
+    const overview = document.getElementById("overview");
+    if (!overview) return;
+    const fresh = await fetch("/rules/overview", { headers: { "x-fragment": "1" } });
+    const replacement = fresh.ok ? parse(await fresh.text()) : null;
+    if (replacement) {
+      overview.replaceWith(replacement);
+      setupOverview(replacement);
+    }
+  }
+
+  /** A cell in the overview opens its source card instead of loading the page again. */
+  function setupOverview(overview) {
+    overview.addEventListener("click", (event) => {
+      const link = event.target.closest("a[data-open]");
+      const card = link && document.getElementById(`src-${link.dataset.open}`);
+      if (!card) return;
+      event.preventDefault();
+      card.open = true;
+      card.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function setup(card) {
@@ -102,4 +126,6 @@
   }
 
   for (const card of document.querySelectorAll("details.source[data-source]")) setup(card);
+  const overview = document.getElementById("overview");
+  if (overview) setupOverview(overview);
 })();

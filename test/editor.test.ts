@@ -162,7 +162,7 @@ describe("editor page", () => {
     expect(html).toContain("Exception");
 
     const matrix = await (
-      await exports.default.fetch(`${BASE}/rules?view=matrix`, { headers: { cookie } })
+      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
     ).text();
     expect(matrix).toContain('class="cell level-full"');
   });

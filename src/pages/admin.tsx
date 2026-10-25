@@ -19,8 +19,16 @@ export function AdminPage(props: {
   users: AdminUserRow[];
   activity: ActivityRow[];
   caps: DetailCaps;
+  /** Domains and Entra tenants whose accounts count as work calendars. */
+  org: { domains: string[]; tenantCount: number };
 }) {
   const { t, formatTimestamp } = useI18n();
+  const orgList = [
+    ...props.org.domains.map((domain) => `@${domain}`),
+    ...(props.org.tenantCount > 0 ? [t.admin.tenants(props.org.tenantCount)] : []),
+  ];
+  const capText = (level: DetailCaps["toExternal"]) =>
+    level === "full" ? t.admin.capNone : t.admin.capAtMost(t.rules.detailLevels[level]);
   return (
     <Layout title={t.admin.title} user={props.user} active="admin">
       <section class="section">
@@ -68,19 +76,23 @@ export function AdminPage(props: {
           </div>
         </div>
         <div class="card">
+          <p class="caps-org">
+            {orgList.length > 0 ? t.admin.orgAccounts(orgList.join(", ")) : t.admin.orgNone}
+          </p>
           <table class="table">
             <tbody>
               <tr>
                 <td>{t.admin.capToExternal}</td>
-                <td>{t.rules.detailLevels[props.caps.toExternal]}</td>
+                <td>{capText(props.caps.toExternal)}</td>
               </tr>
               <tr>
                 <td>{t.admin.capFromExternal}</td>
-                <td>{t.rules.detailLevels[props.caps.fromExternal]}</td>
+                <td>{capText(props.caps.fromExternal)}</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p class="fineprint caps-how">{t.admin.capsHow}</p>
       </section>
 
       <section class="section">

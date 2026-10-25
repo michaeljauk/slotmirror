@@ -131,7 +131,7 @@ export const en = {
     moreOptions: "More options",
     save: "Save",
     matrixCorner: "From ↓ · to →",
-    matrixHint: "Click a cell to open that calendar in the list.",
+    matrixHint: "Click a cell to open that calendar on the left.",
     cellGroup: "group",
     cellException: "exception",
     needTwo: "Connect at least two accounts. Then choose here where their events go.",
@@ -187,11 +187,20 @@ export const en = {
     lastSignIn: "Last sign-in",
     never: "never",
     onlyAdmins: "Only admins can open this page.",
-    capsTitle: "Detail limits",
+    capsTitle: "Privacy limits",
     capsLead:
-      "The most detail a rule may copy between org accounts and other accounts. Set with MAX_DETAIL_TO_EXTERNAL and MAX_DETAIL_FROM_EXTERNAL; org accounts match ALLOWED_TENANT_IDS or ALLOWED_DOMAINS.",
-    capToExternal: "From an org account to another account",
-    capFromExternal: "From another account to an org account",
+      "How much of an event may move between work calendars and private calendars. This applies to everyone on this deployment, also if someone sets more in their own sync settings.",
+    orgAccounts: (list: string) =>
+      `Work calendars are accounts at ${list}. Every other account counts as private.`,
+    orgNone:
+      "No work domain or Entra tenant is set (ALLOWED_DOMAINS, ALLOWED_TENANT_IDS), so there are no limits.",
+    tenants: (count: number) => (count === 1 ? "1 Entra tenant" : `${count} Entra tenants`),
+    capToExternal: "Work events in private calendars",
+    capFromExternal: "Private events in work calendars",
+    capNone: "No limit",
+    capAtMost: (level: string) => `At most “${level}”`,
+    capsHow:
+      "Change with the Worker variables MAX_DETAIL_TO_EXTERNAL and MAX_DETAIL_FROM_EXTERNAL.",
   },
   activity: {
     title: "Activity",

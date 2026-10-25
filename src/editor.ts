@@ -223,7 +223,7 @@ export async function deleteRuleWithBlocks(
     .first<{ accountId: string; remoteCalendarId: string }>();
   if (!target) return false;
 
-  const cleanup = await removeBlocks(env, ruleId, target);
+  const queued = await queueRemoval(env, ruleId, target);
   await env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?")
     .bind(ruleId, user.id)
     .run();
@@ -233,27 +233,26 @@ export async function deleteRuleWithBlocks(
     accountId: target.accountId,
     ruleId,
     kind: "rule_deleted",
-    detail: cleanup
-      ? { removed: cleanup.removed, remaining: cleanup.remaining }
-      : { cleanupFailed: true },
+    detail: queued ? { cleanup: "queued" } : { cleanupFailed: true },
   });
   return true;
 }
 
-// The rule's tag is the only way to find its blocks, so blocks go before the rule changes.
-async function removeBlocks(
+/**
+ * Hand the removal of a rule's blocks to the target account's Durable Object, which runs it in an
+ * alarm. The blocks carry the rule's tag, so the rule can change or go right away.
+ */
+async function queueRemoval(
   env: Env,
   ruleId: string,
   target: { accountId: string; remoteCalendarId: string },
-): Promise<{ removed: number; remaining: number } | null> {
+): Promise<boolean> {
   try {
-    return await accountSync(env, target.accountId).removeRuleBlocks(
-      ruleId,
-      target.remoteCalendarId,
-    );
+    await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId);
+    return true;
   } catch (error) {
-    console.error("Removing blocks failed", ruleId, error);
-    return null;
+    console.error("Queueing the removal failed", ruleId, error);
+    return false;
   }
 }
 
@@ -286,7 +285,7 @@ export async function setDirection(
       await deleteRuleWithBlocks(env, user, direction.ruleId);
       return;
     }
-    await removeBlocks(env, direction.ruleId, {
+    await queueRemoval(env, direction.ruleId, {
       accountId: to.id,
       remoteCalendarId: to.calendar.remoteId,
     });

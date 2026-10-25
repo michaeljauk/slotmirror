@@ -1,4 +1,4 @@
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MARKER_PROPERTY_ID } from "../src/sync/graph-events";
@@ -391,5 +391,77 @@ describe("alarm queue", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     expect(await runs()).toBe(2);
     expect(await runDurableObjectAlarm(stub)).toBe(false);
+  });
+});
+
+/** Fake Graph whose `$batch` throttles every request after the first `accepted` ones. */
+function throttlingGraph(accepted: number, retryAfterSeconds: string) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
+      return Response.json({ value: fixture.value });
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) return Response.json({ value: [] });
+    if (url.endsWith("/$batch")) {
+      const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+      return Response.json({
+        responses: body.requests.map((request, index) =>
+          index < accepted
+            ? { id: request.id, status: 201 }
+            : { id: request.id, status: 429, headers: { "Retry-After": retryAfterSeconds } },
+        ),
+      });
+    }
+    return new Response("unexpected", { status: 500 });
+  });
+}
+
+async function alarmIn(stub: DurableObjectStub): Promise<number | null> {
+  const at = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+  return at === null ? null : at - Date.now();
+}
+
+describe("throttling", () => {
+  it("keeps throttled writes open, records their status, and waits for Retry-After", async () => {
+    const { stub, ruleId } = await setupRule("acc-throttle");
+    await stub.storeTokens("acc-throttle", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    throttlingGraph(3, "20");
+
+    const result = await stub.runRule(ruleId);
+    expect(result).toMatchObject({ applied: 3, failed: 0, remaining: 12, retryAfterMs: 20_000 });
+    const [event] = await auditOf(ruleId, "sync_run");
+    expect(event?.detail).toMatchObject({ failed: 0, throttled: 12, statuses: "429:12" });
+    const wait = await alarmIn(stub);
+    expect(wait).toBeGreaterThan(15_000);
+    expect(wait).toBeLessThanOrEqual(20_000);
+  });
+
+  it("keeps a rule at the front of the queue when its read is throttled", async () => {
+    const { stub, ruleId } = await setupRule("acc-throttle-read");
+    await stub.storeTokens("acc-throttle-read", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("busy", { status: 429, headers: { "Retry-After": "7" } }),
+    );
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+
+    const [failure] = await auditOf(ruleId, "sync_failed");
+    expect(failure?.detail).toEqual({ code: "graph_429" });
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+    expect(queue).toEqual([ruleId]);
+    const wait = await alarmIn(stub);
+    expect(wait).toBeGreaterThan(4_000);
+    expect(wait).toBeLessThanOrEqual(7_000);
   });
 });

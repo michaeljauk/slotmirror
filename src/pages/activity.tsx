@@ -3,6 +3,14 @@ import { useI18n, type Messages } from "../i18n";
 import type { CurrentUser } from "../users";
 import { Layout } from "./layout";
 
+/** "429:13,400:2" as "429 ×13, 400 ×2". */
+function formatStatusList(statuses: string): string {
+  return statuses
+    .split(",")
+    .map((pair) => pair.replace(":", " ×"))
+    .join(", ");
+}
+
 /** A short, content-free description of an event: counts and codes from its detail. */
 function describe(row: ActivityRow, t: Messages): string {
   const detail = parseDetail(row.detail);
@@ -11,7 +19,9 @@ function describe(row: ActivityRow, t: Messages): string {
     if (detail.dryRun) return t.activity.preview(changes);
     const parts = [changes];
     if (detail.failed) parts.push(t.activity.failedCount(detail.failed));
+    if (detail.throttled) parts.push(t.activity.throttledCount(detail.throttled));
     if (detail.remaining) parts.push(t.activity.remainingCount(detail.remaining));
+    if (detail.statuses) parts.push(t.activity.statuses(formatStatusList(detail.statuses)));
     return parts.join(", ");
   }
   return detail.code ?? "";

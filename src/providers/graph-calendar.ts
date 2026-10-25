@@ -6,6 +6,12 @@ import {
   MARKER_PROPERTY_ID,
   parseMarkerValue,
 } from "../sync/graph-events";
+import {
+  EMPTY_BATCH_RESULT,
+  parseRetryAfter,
+  summarizeBatch,
+  type BatchResult,
+} from "../sync/throttle";
 import type { DesiredBlock, ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
 import type { CalendarClient, CalendarInfo, TimeWindow } from "./calendar-client";
 
@@ -41,7 +47,12 @@ const pageSchema = z.object({
 
 const batchResponseSchema = z.object({
   responses: z.array(
-    z.object({ id: z.string(), status: z.number(), body: z.optional(z.unknown()) }),
+    z.object({
+      id: z.string(),
+      status: z.number(),
+      headers: z.optional(z.record(z.string(), z.string())),
+      body: z.optional(z.unknown()),
+    }),
   ),
 });
 
@@ -49,6 +60,8 @@ export class GraphError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** From `Retry-After`, on throttled responses. */
+    readonly retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -126,15 +139,15 @@ export class GraphCalendar implements CalendarClient {
   }
 
   /**
-   * Apply up to GRAPH_BATCH_LIMIT actions in one `$batch` request. Returns the IDs of failed
-   * actions; the next run plans them again.
+   * Apply up to GRAPH_BATCH_LIMIT actions in one `$batch` request. Failed actions are counted per
+   * status; the next run plans them again.
    */
   async applyBatch(
     calendarId: string,
     ruleTag: string,
     actions: SyncAction[],
-  ): Promise<{ failed: number }> {
-    if (actions.length === 0) return { failed: 0 };
+  ): Promise<BatchResult> {
+    if (actions.length === 0) return EMPTY_BATCH_RESULT;
     if (actions.length > GRAPH_BATCH_LIMIT) throw new Error("Batch too large");
     const requests = actions.map((action, index) => {
       const id = String(index);
@@ -164,15 +177,16 @@ export class GraphCalendar implements CalendarClient {
       headers: { ...this.headers(), "Content-Type": "application/json" },
       body: JSON.stringify({ requests }),
     });
-    if (!response.ok)
-      throw new GraphError(response.status, `Graph $batch failed: ${response.status}`);
+    if (!response.ok) throw graphError(response, "$batch");
     const body = batchResponseSchema.parse(await response.json());
-    // A delete of a block that is already gone (404) is a success.
-    const failed = body.responses.filter(
-      (item) =>
-        item.status >= 400 && !(item.status === 404 && actions[Number(item.id)]?.kind === "delete"),
-    ).length;
-    return { failed };
+    const byId = new Map(body.responses.map((item) => [item.id, item]));
+    return summarizeBatch(actions, (index) => {
+      const item = byId.get(String(index));
+      return {
+        status: item?.status,
+        retryAfterMs: parseRetryAfter(retryAfterHeader(item?.headers)),
+      };
+    });
   }
 
   private async calendarView(
@@ -200,7 +214,7 @@ export class GraphCalendar implements CalendarClient {
 
   private async get(url: string): Promise<unknown> {
     const response = await fetch(url, { headers: this.headers() });
-    if (!response.ok) throw new GraphError(response.status, `Graph GET failed: ${response.status}`);
+    if (!response.ok) throw graphError(response, "GET");
     return response.json();
   }
 
@@ -210,6 +224,21 @@ export class GraphCalendar implements CalendarClient {
       Prefer: 'outlook.timezone="UTC", outlook.body-content-type="text"',
     };
   }
+}
+
+function graphError(response: Response, what: string): GraphError {
+  return new GraphError(
+    response.status,
+    `Graph ${what} failed: ${response.status}`,
+    parseRetryAfter(response.headers.get("Retry-After")),
+  );
+}
+
+/** Header names in a `$batch` response keep the case Graph chose. */
+function retryAfterHeader(headers: Record<string, string> | undefined): string | undefined {
+  if (!headers) return undefined;
+  const key = Object.keys(headers).find((name) => name.toLowerCase() === "retry-after");
+  return key ? headers[key] : undefined;
 }
 
 /** Graph event body for a block. No attendees, so that no invitations are sent. */

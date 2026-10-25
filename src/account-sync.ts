@@ -10,6 +10,7 @@ import { clientCredentials, oauthClient } from "./providers/oauth-clients";
 import type { TokenResponse } from "./providers/oauth-token";
 import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
 import { cleanupWindow, loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
+import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
 import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 
@@ -27,8 +28,14 @@ export interface RunResult {
   /** Actions written in this run; the rest follows in the next alarm. */
   applied: number;
   failed: number;
+  /** Actions not written yet, including throttled ones. */
   remaining: number;
+  /** Set if the provider throttled the run: wait this long before the next request. */
+  retryAfterMs?: number;
 }
+
+/** Pause between two alarm runs of one queue when nothing is throttled. */
+const NEXT_RUN_MS = 1_000;
 
 /** Wait this long after a change notification before syncing, so that bursts collapse into one run. */
 const DEBOUNCE_MS = 5_000;
@@ -161,6 +168,9 @@ export class AccountSync extends DurableObject<Env> {
     const existing = await target.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
     const plan = planSync(await desiredBlocks(rule.id, sourceEvents, rule.options), existing);
 
+    let throttled = 0;
+    const statuses: Record<number, number> = {};
+
     // One audit event per run, written once the outcome is known. Counts only, no event content.
     const audit = async (result: RunResult) => {
       const detail: SyncRunDetail = {
@@ -169,6 +179,8 @@ export class AccountSync extends DurableObject<Env> {
         applied: result.applied,
         failed: result.failed,
         remaining: result.remaining,
+        throttled,
+        statuses: formatStatuses(statuses),
         durationMs: Date.now() - startedAt,
       };
       await recordAudit(this.env.DB, {
@@ -196,17 +208,35 @@ export class AccountSync extends DurableObject<Env> {
     const batches = chunk(plan.actions, target.batchLimit);
     let applied = 0;
     let failed = 0;
+    let retryAfterMs: number | undefined;
     for (const batch of batches.slice(0, MAX_BATCHES_PER_RUN)) {
       const result = await target.applyBatch(rule.target.remoteCalendarId, ruleTag, batch);
-      applied += batch.length - result.failed;
+      applied += batch.length - result.failed - result.throttled;
       failed += result.failed;
+      throttled += result.throttled;
+      for (const [status, count] of Object.entries(result.statuses)) {
+        statuses[Number(status)] = (statuses[Number(status)] ?? 0) + count;
+      }
+      if (result.throttled > 0) {
+        // Further batches would only extend the penalty.
+        retryAfterMs = clampRetryAfter(result.retryAfterMs);
+        break;
+      }
     }
     const remaining = plan.actions.length - applied - failed;
     if (remaining > 0) {
       // Continue soon; the next run plans again from the calendars, so nothing is lost.
-      await this.ctx.storage.setAlarm(Date.now() + 1_000);
+      await this.ctx.storage.setAlarm(Date.now() + (retryAfterMs ?? NEXT_RUN_MS));
     }
-    return audit({ ruleId, dryRun: false, stats: plan.stats, applied, failed, remaining });
+    return audit({
+      ruleId,
+      dryRun: false,
+      stats: plan.stats,
+      applied,
+      failed,
+      remaining,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+    });
   }
 
   /**
@@ -228,7 +258,8 @@ export class AccountSync extends DurableObject<Env> {
     let removed = 0;
     for (const batch of chunk(actions, target.batchLimit).slice(0, MAX_BATCHES_PER_RUN)) {
       const result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
-      removed += batch.length - result.failed;
+      removed += batch.length - result.failed - result.throttled;
+      if (result.throttled > 0) break;
     }
     return { removed, remaining: actions.length - removed };
   }
@@ -236,7 +267,9 @@ export class AccountSync extends DurableObject<Env> {
   /**
    * Run the next rule that targets this account. Each alarm runs one rule, so that every rule gets
    * the full subrequest budget of an invocation; the alarm then schedules itself for the next one.
-   * A rule with writes left stays at the front of the queue.
+   * A rule with writes left stays at the front of the queue. If the provider throttled the run,
+   * the next alarm waits for its `Retry-After`; the other rules target the same mailbox, so they
+   * wait too.
    */
   override async alarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
@@ -247,17 +280,26 @@ export class AccountSync extends DurableObject<Env> {
     if (!ruleId) return;
 
     let unfinished = false;
+    let delayMs = NEXT_RUN_MS;
     try {
-      unfinished = (await this.runRule(ruleId)).remaining > 0;
+      const result = await this.runRule(ruleId);
+      unfinished = result.remaining > 0;
+      delayMs = result.retryAfterMs ?? NEXT_RUN_MS;
     } catch (error) {
       // One broken rule must not stop the others; runRule has recorded the failure.
       console.error("Rule run failed", ruleId, error);
+      // A throttled read is retried after the wait instead of in the next cron cycle.
+      const throttleDelay = throttleDelayMs(error);
+      if (throttleDelay !== null) {
+        unfinished = true;
+        delayMs = throttleDelay;
+      }
     }
 
     const next = unfinished ? [ruleId, ...rest] : rest;
     if (next.length > 0) {
       await this.ctx.storage.put(RULE_QUEUE_KEY, next);
-      await this.ctx.storage.setAlarm(Date.now() + 1_000);
+      await this.ctx.storage.setAlarm(Date.now() + delayMs);
     } else {
       await this.ctx.storage.delete(RULE_QUEUE_KEY);
     }

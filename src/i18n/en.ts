@@ -149,6 +149,8 @@ export const en = {
       `+${create} / ~${update} / −${remove}`,
     preview: (changes: string) => `Preview ${changes}`,
     failedCount: (count: number) => `${count} failed`,
+    throttledCount: (count: number) => `${count} throttled, retried after the wait`,
+    statuses: (list: string) => `HTTP ${list}`,
     remainingCount: (count: number) => `${count} left`,
   },
   setup: {

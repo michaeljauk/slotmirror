@@ -1,4 +1,5 @@
 import type { Provider } from "../config";
+import type { BatchResult } from "../sync/throttle";
 import type { ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
 import { GoogleCalendar } from "./google-calendar";
 import { GraphCalendar } from "./graph-calendar";
@@ -37,11 +38,7 @@ export interface CalendarClient {
   /** Blocks in the window that carry the given rule tag. */
   existingBlocks(calendarId: string, window: TimeWindow, ruleTag: string): Promise<ExistingBlock[]>;
   /** Apply up to `batchLimit` actions; already deleted blocks count as success. */
-  applyBatch(
-    calendarId: string,
-    ruleTag: string,
-    actions: SyncAction[],
-  ): Promise<{ failed: number }>;
+  applyBatch(calendarId: string, ruleTag: string, actions: SyncAction[]): Promise<BatchResult>;
 }
 
 export function calendarClient(provider: Provider, accessToken: string): CalendarClient {

@@ -6,6 +6,12 @@ import {
   googleMarker,
   toGoogleBlock,
 } from "../sync/google-events";
+import {
+  EMPTY_BATCH_RESULT,
+  parseRetryAfter,
+  summarizeBatch,
+  type BatchResult,
+} from "../sync/throttle";
 import type { ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
 import type { CalendarClient, CalendarInfo, TimeWindow } from "./calendar-client";
 
@@ -34,6 +40,8 @@ export class GoogleApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** From `Retry-After`, on throttled responses. */
+    readonly retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -107,8 +115,8 @@ export class GoogleCalendar implements CalendarClient {
     calendarId: string,
     ruleTag: string,
     actions: SyncAction[],
-  ): Promise<{ failed: number }> {
-    if (actions.length === 0) return { failed: 0 };
+  ): Promise<BatchResult> {
+    if (actions.length === 0) return EMPTY_BATCH_RESULT;
     if (actions.length > this.batchLimit) throw new Error("Batch too large");
     const boundary = `batch_${crypto.randomUUID()}`;
     const path = `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
@@ -133,22 +141,13 @@ export class GoogleCalendar implements CalendarClient {
       },
       body: `${parts.join("")}--${boundary}--\r\n`,
     });
-    if (!response.ok) {
-      throw new GoogleApiError(response.status, `Google batch failed: ${response.status}`);
-    }
+    if (!response.ok) throw googleError(response, "batch");
     // The body is multipart, which `text()` warns about; decode the bytes instead.
     const statuses = parseBatchStatuses(
       new TextDecoder().decode(await response.arrayBuffer()),
       response.headers.get("content-type") ?? "",
     );
-    let failed = 0;
-    actions.forEach((action, index) => {
-      const status = statuses.get(index);
-      // A delete of a block that is already gone (404, 410) is a success.
-      const gone = action.kind === "delete" && (status === 404 || status === 410);
-      if (status === undefined || (status >= 400 && !gone)) failed++;
-    });
-    return { failed };
+    return summarizeBatch(actions, (index) => ({ status: statuses.get(index) }));
   }
 
   private async listEvents(
@@ -181,11 +180,17 @@ export class GoogleCalendar implements CalendarClient {
 
   private async get(url: string): Promise<unknown> {
     const response = await fetch(url, { headers: { Authorization: `Bearer ${this.accessToken}` } });
-    if (!response.ok) {
-      throw new GoogleApiError(response.status, `Google GET failed: ${response.status}`);
-    }
+    if (!response.ok) throw googleError(response, "GET");
     return response.json();
   }
+}
+
+function googleError(response: Response, what: string): GoogleApiError {
+  return new GoogleApiError(
+    response.status,
+    `Google ${what} failed: ${response.status}`,
+    parseRetryAfter(response.headers.get("Retry-After")),
+  );
 }
 
 function httpPart(method: string, path: string, body?: unknown): string {

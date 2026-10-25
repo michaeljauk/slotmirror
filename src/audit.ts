@@ -30,6 +30,10 @@ export interface SyncRunDetail {
   applied: number;
   failed: number;
   remaining: number;
+  /** Actions the provider throttled; they are part of `remaining`. */
+  throttled: number;
+  /** HTTP status of failed and throttled actions, e.g. "429:13,400:2". Empty if none. */
+  statuses: string;
   durationMs: number;
 }
 

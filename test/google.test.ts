@@ -130,7 +130,7 @@ describe("Google batch", () => {
       { kind: "create", block: block! },
       { kind: "delete", targetId: "old", marker: "m" },
     ]);
-    expect(result).toEqual({ failed: 0 });
+    expect(result).toEqual({ failed: 0, throttled: 0, statuses: {} });
     expect(sent).toContain("POST /calendar/v3/calendars/primary/events HTTP/1.1");
     expect(sent).toContain("DELETE /calendar/v3/calendars/primary/events/old HTTP/1.1");
   });

@@ -149,6 +149,8 @@ export const de: Messages = {
       `+${create} / ~${update} / −${remove}`,
     preview: (changes: string) => `Vorschau ${changes}`,
     failedCount: (count: number) => `${count} fehlgeschlagen`,
+    throttledCount: (count: number) => `${count} gedrosselt, neuer Versuch nach der Wartezeit`,
+    statuses: (list: string) => `HTTP ${list}`,
     remainingCount: (count: number) => `${count} offen`,
   },
   setup: {

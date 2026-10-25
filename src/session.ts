@@ -60,14 +60,22 @@ export async function verifyPayload<T extends { exp: number }>(
   }
 }
 
+/** Imported keys per secret. Importing on every request costs CPU on the Free plan's 10 ms budget. */
+const hmacKeys = new Map<string, Promise<CryptoKey>>();
+
 function hmacKey(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
+  let key = hmacKeys.get(secret);
+  if (!key) {
+    key = crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+    hmacKeys.set(secret, key);
+  }
+  return key;
 }
 
 export function base64url(bytes: Uint8Array): string {

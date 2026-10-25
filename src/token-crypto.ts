@@ -35,7 +35,15 @@ export async function decryptJson<T>(
   return JSON.parse(new TextDecoder().decode(plaintext)) as T;
 }
 
+/** Imported keys per encoded key, so that each isolate imports a key once. */
+const aesKeys = new Map<string, Promise<CryptoKey>>();
+
 function importKey(base64Key: string): Promise<CryptoKey> {
-  const raw = Uint8Array.from(atob(base64Key.trim()), (char) => char.charCodeAt(0));
-  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+  let key = aesKeys.get(base64Key);
+  if (!key) {
+    const raw = Uint8Array.from(atob(base64Key.trim()), (char) => char.charCodeAt(0));
+    key = crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+    aesKeys.set(base64Key, key);
+  }
+  return key;
 }

@@ -142,6 +142,10 @@ export const de: Messages = {
     cancel: "Abbrechen",
     saveFailed: "Speichern fehlgeschlagen. Bitte noch einmal.",
     discard: "Verwerfen",
+    settingsTitle: "Für alle Kalender",
+    settingsLead: "Diese Einstellungen gelten für alle Richtungen oben.",
+    window: "Zeitraum",
+    days: (days: number) => `${days} Tage`,
     cellChanged: "geändert",
     checking: "Wird geprüft …",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
@@ -229,6 +233,7 @@ export const de: Messages = {
       rule_paused: "Regel pausiert",
       rule_updated: "Regel geändert",
       group_changed: "Gruppe geändert",
+      settings_changed: "Sync-Einstellungen geändert",
       sync_run: "Synchronisierung",
       sync_failed: "Synchronisierung fehlgeschlagen",
     },

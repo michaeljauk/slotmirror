@@ -20,6 +20,7 @@ export type AuditKind =
   | "rule_paused"
   | "rule_updated"
   | "group_changed"
+  | "settings_changed"
   | "sync_run"
   | "sync_failed";
 

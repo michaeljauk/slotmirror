@@ -2,6 +2,7 @@
 // overview at once; the bar at the bottom saves every change of the page in one request.
 // Without this script every button is a plain form submit, so the editor also works without it.
 (() => {
+  document.documentElement.classList.add("js");
   const bar = document.getElementById("page-bar");
   if (!bar) return;
   const short = JSON.parse(bar.dataset.short);
@@ -71,18 +72,34 @@
     refreshBar();
   });
 
+  // The settings form counts as one change while it differs from the saved settings.
+  const settings = document.getElementById("settings");
+  const readSettings = () => new URLSearchParams(new FormData(settings)).toString();
+  const savedSettings = settings ? readSettings() : "";
+  settings?.addEventListener("change", () => {
+    if (readSettings() === savedSettings) pending.delete("settings");
+    else pending.set("settings", readSettings());
+    refreshBar();
+  });
+
   bar.querySelector(".edit-cancel").addEventListener("click", () => {
     const keys = [...pending.keys()];
     pending.clear();
-    for (const key of keys) show(key, original.get(key));
+    for (const key of keys) if (key !== "settings") show(key, original.get(key));
+    settings?.reset();
     refreshBar();
   });
 
   bar.querySelector(".edit-save").addEventListener("click", async () => {
     const body = new URLSearchParams();
     for (const [key, choice] of pending) {
+      if (key === "settings") continue;
       const [from, to] = key.split(">");
       body.append(`choice.${from}.${to}`, choice);
+    }
+    if (pending.has("settings")) {
+      body.append("settings", "1");
+      for (const [name, value] of new FormData(settings)) body.append(`settings.${name}`, value);
     }
     bar.classList.add("saving");
     try {
@@ -93,7 +110,11 @@
       });
       if (!response.ok) throw new Error(String(response.status));
       // Reload once, with the changed cards open, so that every label comes from the server.
-      const open = [...new Set([...pending.keys()].map((key) => key.split(">")[0]))];
+      const open = [
+        ...new Set(
+          [...pending.keys()].filter((key) => key !== "settings").map((key) => key.split(">")[0]),
+        ),
+      ];
       pending.clear();
       location.assign(`/rules?open=${open.map(encodeURIComponent).join(",")}`);
     } catch {

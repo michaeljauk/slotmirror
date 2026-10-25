@@ -43,9 +43,16 @@ export interface EditorDirection {
   options: RuleOptions | null;
 }
 
+/** Settings for all rules of a user. The editor shows them once, not per direction. */
+export type SyncSettings = Pick<
+  RuleOptions,
+  "daysAhead" | "skipAllDay" | "skipTentative" | "markPrivate"
+>;
+
 export interface EditorState {
   accounts: EditorAccount[];
   directions: EditorDirection[];
+  settings: SyncSettings;
   /** Rules that do not run between two main calendars. The editor lists them, so none hides. */
   others: { ruleId: string; source: string; target: string; choice: Choice }[];
 }
@@ -179,7 +186,58 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       target: `${nameOf(row.targetAccountId)} · ${row.targetName}`,
       choice: choiceOf(parseRuleOptions(row.options), row.enabled === 1),
     }));
-  return { accounts, directions, others };
+  const settingsRow = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+    .bind(userId)
+    .first<{ json: string }>();
+  return { accounts, directions, others, settings: parseSettings(settingsRow?.json ?? "{}") };
+}
+
+function parseSettings(json: string): SyncSettings {
+  const { daysAhead, skipAllDay, skipTentative, markPrivate } = parseRuleOptions(json);
+  return { daysAhead, skipAllDay, skipTentative, markPrivate };
+}
+
+/** Options of a new rule: the user's settings with the given detail level. */
+function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOptions {
+  return ruleOptionsSchema.parse({
+    ...settings,
+    detailLevel: detailLevel === "off" ? "busy" : detailLevel,
+  });
+}
+
+/**
+ * Store the settings and apply them to every rule of the user. The detail level of each rule
+ * stays; it is the choice per direction.
+ */
+export async function setSettings(
+  env: Env,
+  user: CurrentUser,
+  settings: SyncSettings,
+): Promise<void> {
+  await env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?")
+    .bind(JSON.stringify(settings), user.id)
+    .run();
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, r.options, tc.account_id AS targetAccountId FROM rules r
+     JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
+  )
+    .bind(user.id)
+    .all<{ id: string; options: string; targetAccountId: string }>();
+  const targets = new Set<string>();
+  for (const row of results) {
+    const options = ruleOptionsSchema.parse({ ...parseRuleOptions(row.options), ...settings });
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify(options), row.id)
+      .run();
+    targets.add(row.targetAccountId);
+  }
+  await recordAudit(env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    kind: "settings_changed",
+    detail: { ...settings },
+  });
+  for (const id of targets) await accountSync(env, id).requestSync();
 }
 
 /** Longest name an account can get. */
@@ -256,8 +314,6 @@ async function queueRemoval(
   }
 }
 
-const GROUP_OPTIONS: RuleOptions = ruleOptionsSchema.parse({ detailLevel: "busy" });
-
 /**
  * Set one direction. "busy" between two group members becomes a group rule again; every other
  * choice is a custom rule. "off" removes the blocks; between group members it keeps a disabled
@@ -298,7 +354,10 @@ export async function setDirection(
     return;
   }
 
-  const options = { ...(direction.options ?? GROUP_OPTIONS), detailLevel: choice };
+  const options = {
+    ...(direction.options ?? newRuleOptions(state.settings, choice)),
+    detailLevel: choice,
+  };
   const origin = bothInGroup && choice === "busy" ? "group" : "custom";
   if (direction.ruleId) {
     await env.DB.prepare(
@@ -371,12 +430,15 @@ export async function setGroupMembership(
           ruleId,
           from.calendar.id,
           to.calendar.id,
-          GROUP_OPTIONS,
+          newRuleOptions(state.settings, "busy"),
           "group",
         );
         await audit(env, user, to.id, ruleId, "rule_created", { choice: "busy" });
         touched.add(to.id);
-      } else if (direction.choice === "busy" && hasDefaultOptions(direction.options)) {
+      } else if (
+        direction.choice === "busy" &&
+        hasDefaultOptions(direction.options, state.settings)
+      ) {
         await env.DB.prepare("UPDATE rules SET origin = 'group' WHERE id = ?")
           .bind(direction.ruleId)
           .run();
@@ -388,31 +450,11 @@ export async function setGroupMembership(
   for (const id of touched) await accountSync(env, id).requestSync();
 }
 
-function hasDefaultOptions(options: RuleOptions | null): boolean {
+function hasDefaultOptions(options: RuleOptions | null, settings: SyncSettings): boolean {
   if (!options) return false;
   const { detailLevel: _level, ...rest } = options;
-  const { detailLevel: _default, ...defaults } = GROUP_OPTIONS;
+  const { detailLevel: _default, ...defaults } = newRuleOptions(settings, "busy");
   return JSON.stringify(rest) === JSON.stringify(defaults);
-}
-
-/** Options that apply to every rule from one account, set under "More options". */
-export async function setSourceOptions(
-  env: Env,
-  user: CurrentUser,
-  fromId: string,
-  patch: Pick<RuleOptions, "daysAhead" | "skipAllDay" | "skipTentative" | "markPrivate">,
-): Promise<void> {
-  const state = await loadEditorState(env, user.id);
-  const targets = new Set<string>();
-  for (const direction of state.directions) {
-    if (direction.from !== fromId || !direction.ruleId || !direction.options) continue;
-    const options = ruleOptionsSchema.parse({ ...direction.options, ...patch });
-    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND user_id = ?")
-      .bind(JSON.stringify(options), direction.ruleId, user.id)
-      .run();
-    targets.add(direction.to);
-  }
-  for (const id of targets) await accountSync(env, id).requestSync();
 }
 
 async function insertRule(

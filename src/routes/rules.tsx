@@ -11,7 +11,8 @@ import {
   resetDirection,
   setDirection,
   setGroupMembership,
-  setSourceOptions,
+  setSettings,
+  type SyncSettings,
   type Choice,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
@@ -184,6 +185,7 @@ rules.post("/choices", async (c) => {
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
+  if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
 });
@@ -195,16 +197,20 @@ rules.post("/direction/reset", async (c) => {
   return backTo(c, from);
 });
 
-rules.post("/source/:accountId/options", async (c) => {
-  const form = await c.req.formData();
-  const days = Number(form.get("daysAhead") ?? 90);
-  await setSourceOptions(c.env, currentUser(c), c.req.param("accountId"), {
+/** Settings from a form or the editor script's fields "settings.<name>". */
+function settingsFrom(form: FormData, prefix = ""): SyncSettings {
+  const days = Number(form.get(`${prefix}daysAhead`) ?? 90);
+  return {
     daysAhead: [30, 90, 180, 365].includes(days) ? days : 90,
-    skipAllDay: form.has("skipAllDay"),
-    skipTentative: form.has("skipTentative"),
-    markPrivate: form.has("markPrivate"),
-  });
-  return backTo(c, c.req.param("accountId"));
+    skipAllDay: form.has(`${prefix}skipAllDay`),
+    skipTentative: form.has(`${prefix}skipTentative`),
+    markPrivate: form.has(`${prefix}markPrivate`),
+  };
+}
+
+rules.post("/settings", async (c) => {
+  await setSettings(c.env, currentUser(c), settingsFrom(await c.req.formData()));
+  return c.redirect("/rules");
 });
 
 for (const action of ["preview", "run"] as const) {

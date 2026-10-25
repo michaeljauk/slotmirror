@@ -252,3 +252,32 @@ describe("page save", () => {
     expect(page).toContain('id="page-bar"');
   });
 });
+
+describe("settings", () => {
+  it("applies the settings to every rule and to new ones, and keeps each detail level", async () => {
+    const { user, cookie, w, o, g } = await setup("settings");
+    await setDirection(env, user, w, g, "full");
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        settings: "1",
+        "settings.daysAhead": "180",
+        "settings.markPrivate": "on",
+      }),
+    });
+    expect(response.status).toBe(204);
+    await setDirection(env, user, o, w, "busy");
+
+    const { results } = await env.DB.prepare("SELECT options FROM rules WHERE user_id = ?")
+      .bind(user.id)
+      .all<{ options: string }>();
+    const options = results.map((row) => JSON.parse(row.options) as Record<string, unknown>);
+    expect(options).toHaveLength(2);
+    for (const option of options) {
+      expect(option).toMatchObject({ daysAhead: 180, skipAllDay: false, markPrivate: true });
+    }
+    expect(options.map((option) => option.detailLevel).sort()).toEqual(["busy", "full"]);
+  });
+});

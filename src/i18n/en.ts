@@ -140,6 +140,10 @@ export const en = {
     cancel: "Cancel",
     saveFailed: "Saving failed. Try again.",
     discard: "Discard",
+    settingsTitle: "For all calendars",
+    settingsLead: "These settings apply to every direction above.",
+    window: "Time window",
+    days: (days: number) => `${days} days`,
     cellChanged: "changed",
     checking: "Checking…",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
@@ -227,6 +231,7 @@ export const en = {
       rule_paused: "Rule paused",
       rule_updated: "Rule changed",
       group_changed: "Block group changed",
+      settings_changed: "Sync settings changed",
       sync_run: "Sync run",
       sync_failed: "Sync failed",
     },

@@ -50,6 +50,51 @@ function AccountName(props: { account: EditorAccount }) {
   );
 }
 
+/** Settings for all directions. With the editor script they join the page's unsaved changes. */
+function SettingsCard(props: { state: EditorState }) {
+  const { t } = useI18n();
+  const { settings } = props.state;
+  return (
+    <form method="post" action="/rules/settings" class="card settings-card" id="settings">
+      <div class="settings-head">
+        <strong>{t.editor.settingsTitle}</strong>
+        <span class="group-text">{t.editor.settingsLead}</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">{t.editor.window}</span>
+        <span class="choices">
+          {DAYS_AHEAD.map((days) => (
+            <label class="choice-radio">
+              <input
+                type="radio"
+                name="daysAhead"
+                value={String(days)}
+                checked={settings.daysAhead === days}
+              />
+              <span class="choice">{t.editor.days(days)}</span>
+            </label>
+          ))}
+        </span>
+      </div>
+      <label class="check-row">
+        <input type="checkbox" name="skipAllDay" checked={settings.skipAllDay} />
+        <span>{t.rules.skipAllDay}</span>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" name="skipTentative" checked={settings.skipTentative} />
+        <span>{t.rules.skipTentative}</span>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" name="markPrivate" checked={settings.markPrivate} />
+        <span>{t.rules.markPrivate}</span>
+      </label>
+      <button type="submit" class="button small nojs-only">
+        {t.editor.save}
+      </button>
+    </form>
+  );
+}
+
 function GroupCard(props: { state: EditorState }) {
   const { t } = useI18n();
   const members = props.state.accounts.filter((account) => account.inGroup).length;
@@ -151,7 +196,6 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
   const { t } = useI18n();
   const { state, source } = props;
   const targets = state.accounts.filter((account) => account.id !== source.id && account.calendar);
-  const options = state.directions.find((d) => d.from === source.id && d.options)?.options;
   return (
     <details class="card source" id={`src-${source.id}`} open={props.open} data-source={source.id}>
       <summary class="source-head">
@@ -170,40 +214,6 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
           <DestinationRow state={state} source={source} target={target} direction={direction} />
         ) : null;
       })}
-      <details class="more">
-        <summary>{t.editor.moreOptions}</summary>
-        <form
-          method="post"
-          action={`/rules/source/${source.id}/options`}
-          class="more-form card-form"
-        >
-          <label>
-            <span>{t.rules.daysAhead}</span>
-            <select name="daysAhead">
-              {DAYS_AHEAD.map((days) => (
-                <option value={String(days)} selected={days === (options?.daysAhead ?? 90)}>
-                  {t.rules.days(days)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class="check-row">
-            <input type="checkbox" name="skipAllDay" checked={options?.skipAllDay ?? true} />
-            <span>{t.rules.skipAllDay}</span>
-          </label>
-          <label class="check-row">
-            <input type="checkbox" name="skipTentative" checked={options?.skipTentative ?? false} />
-            <span>{t.rules.skipTentative}</span>
-          </label>
-          <label class="check-row">
-            <input type="checkbox" name="markPrivate" checked={options?.markPrivate ?? true} />
-            <span>{t.rules.markPrivate}</span>
-          </label>
-          <button type="submit" class="button small">
-            {t.editor.save}
-          </button>
-        </form>
-      </details>
     </details>
   );
 }
@@ -300,7 +310,7 @@ export function CalendarEditorPage(props: {
   const { t } = useI18n();
   const ready = props.state.accounts.filter((account) => account.calendar);
   return (
-    <Layout title={t.editor.title} user={props.user} active="rules" wide>
+    <Layout title={t.editor.title} user={props.user} active="rules">
       <section class="section">
         <div class="section-head">
           <div>
@@ -327,6 +337,7 @@ export function CalendarEditorPage(props: {
                     open={props.open.includes(source.id)}
                   />
                 ))}
+                <SettingsCard state={props.state} />
               </div>
               <Overview state={props.state} />
             </div>

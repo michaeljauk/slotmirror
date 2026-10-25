@@ -141,18 +141,38 @@ for (const action of ["preview", "run"] as const) {
 rules.post("/:id/delete", async (c) => {
   const user = currentUser(c);
   const ruleId = c.req.param("id");
-  const target = await targetAccountOf(c.env.DB, ruleId, user.id);
-  const deleted = await c.env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?")
+  const target = await c.env.DB.prepare(
+    `SELECT tc.account_id AS accountId, tc.remote_id AS remoteCalendarId FROM rules r
+     JOIN calendars tc ON tc.id = r.target_calendar_id
+     WHERE r.id = ? AND r.user_id = ?`,
+  )
+    .bind(ruleId, user.id)
+    .first<{ accountId: string; remoteCalendarId: string }>();
+  if (!target) return c.redirect("/rules");
+
+  // Remove the rule's blocks first; the rule's tag is the only way to find them later.
+  let cleanup: { removed: number; remaining: number } | null = null;
+  try {
+    cleanup = await c.env.ACCOUNT_SYNC.getByName(target.accountId).removeRuleBlocks(
+      ruleId,
+      target.remoteCalendarId,
+    );
+  } catch (error) {
+    console.error("Removing blocks failed", ruleId, error);
+  }
+
+  await c.env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?")
     .bind(ruleId, user.id)
     .run();
-  if (deleted.meta.changes > 0) {
-    await recordAudit(c.env.DB, {
-      orgId: user.orgId,
-      userId: user.id,
-      accountId: target?.accountId,
-      ruleId,
-      kind: "rule_deleted",
-    });
-  }
+  await recordAudit(c.env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    accountId: target.accountId,
+    ruleId,
+    kind: "rule_deleted",
+    detail: cleanup
+      ? { removed: cleanup.removed, remaining: cleanup.remaining }
+      : { cleanupFailed: true },
+  });
   return c.redirect("/rules");
 });

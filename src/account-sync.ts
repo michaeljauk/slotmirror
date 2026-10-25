@@ -3,7 +3,7 @@ import { accountOwner, errorCode, recordAudit, type SyncRunDetail } from "./audi
 import { GRAPH_BATCH_LIMIT, GraphCalendar, type CalendarInfo } from "./providers/graph-calendar";
 import * as microsoft from "./providers/microsoft";
 import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
-import { loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
+import { cleanupWindow, loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
 import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 
@@ -195,6 +195,30 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + 1_000);
     }
     return audit({ ruleId, dryRun: false, stats: plan.stats, applied, failed, remaining });
+  }
+
+  /**
+   * Delete the blocks one rule wrote into a calendar of this account, before the rule or an account
+   * goes away. Returns how many are left if the limit per invocation was reached.
+   */
+  async removeRuleBlocks(
+    ruleId: string,
+    remoteCalendarId: string,
+  ): Promise<{ removed: number; remaining: number }> {
+    const graph = new GraphCalendar(await this.accessToken());
+    const ruleTag = await ruleTagFor(ruleId);
+    const blocks = await graph.existingBlocks(remoteCalendarId, cleanupWindow(), ruleTag);
+    const actions = blocks.map((block) => ({
+      kind: "delete" as const,
+      targetId: block.targetId,
+      marker: block.marker,
+    }));
+    let removed = 0;
+    for (const batch of chunk(actions, GRAPH_BATCH_LIMIT).slice(0, MAX_BATCHES_PER_RUN)) {
+      const result = await graph.applyBatch(remoteCalendarId, ruleTag, batch);
+      removed += batch.length - result.failed;
+    }
+    return { removed, remaining: actions.length - removed };
   }
 
   /** Run every rule that targets this account, one after another. */

@@ -79,3 +79,12 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
   const end = new Date(start.getTime() + options.daysAhead * 24 * 60 * 60 * 1000);
   return { start, end };
 }
+
+/**
+ * Window for removing a rule's blocks: from the start of the current UTC day to one year and a
+ * month ahead, wider than any rule window. Past blocks stay as a record of when the user was busy.
+ */
+export function cleanupWindow(now = new Date()): { start: Date; end: Date } {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return { start, end: new Date(start.getTime() + 400 * 24 * 60 * 60 * 1000) };
+}

@@ -100,7 +100,36 @@ app.post("/accounts/:id/disconnect", async (c) => {
     .bind(accountId, user.id)
     .first();
   if (!owned) return c.notFound();
+
+  // Remove every block that involves the account before its tokens go: blocks in its own
+  // calendars (written by rules that target it) and blocks it caused elsewhere (rules with it as
+  // source). Each target account deletes with its own tokens.
+  const { results: affected } = await c.env.DB.prepare(
+    `SELECT r.id AS ruleId, tc.account_id AS targetAccountId, tc.remote_id AS remoteCalendarId
+     FROM rules r
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN calendars tc ON tc.id = r.target_calendar_id
+     WHERE sc.account_id = ? OR tc.account_id = ?`,
+  )
+    .bind(accountId, accountId)
+    .all<{ ruleId: string; targetAccountId: string; remoteCalendarId: string }>();
+  let removed = 0;
+  let cleanupFailed = 0;
+  for (const rule of affected) {
+    try {
+      const result = await c.env.ACCOUNT_SYNC.getByName(rule.targetAccountId).removeRuleBlocks(
+        rule.ruleId,
+        rule.remoteCalendarId,
+      );
+      removed += result.removed;
+    } catch (error) {
+      cleanupFailed++;
+      console.error("Removing blocks failed", rule.ruleId, error);
+    }
+  }
+
   await c.env.ACCOUNT_SYNC.getByName(accountId).forget();
+  // Deleting the account also deletes its calendars and every rule that uses them.
   await c.env.DB.prepare("DELETE FROM accounts WHERE id = ? AND user_id = ?")
     .bind(accountId, user.id)
     .run();
@@ -109,6 +138,7 @@ app.post("/accounts/:id/disconnect", async (c) => {
     userId: user.id,
     accountId,
     kind: "account_disconnected",
+    detail: { rules: affected.length, removed, cleanupFailed },
   });
   return c.redirect("/");
 });

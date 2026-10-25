@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RETRY_AFTER_MS,
+  errorReason,
   formatStatuses,
+  isThrottled,
   parseRetryAfter,
   summarizeBatch,
   throttleDelayMs,
@@ -18,6 +20,30 @@ describe("parseRetryAfter", () => {
     expect(parseRetryAfter("Sun, 25 Oct 2026 18:00:30 GMT", now)).toBe(30_000);
     expect(parseRetryAfter(null)).toBeUndefined();
     expect(parseRetryAfter("soon")).toBeUndefined();
+  });
+});
+
+describe("isThrottled", () => {
+  it("treats Google's rate-limit 403 as throttling, but not its abuse quota", () => {
+    expect(isThrottled(429)).toBe(true);
+    expect(isThrottled(503)).toBe(true);
+    expect(isThrottled(403, "rateLimitExceeded")).toBe(true);
+    expect(isThrottled(403, "userRateLimitExceeded")).toBe(true);
+    expect(isThrottled(403, "quotaExceeded")).toBe(false);
+    expect(isThrottled(403)).toBe(false);
+  });
+});
+
+describe("errorReason", () => {
+  it("reads Graph and Google codes and drops anything that is not an identifier", () => {
+    expect(errorReason({ error: { code: "ApplicationThrottled", message: "x" } })).toBe(
+      "ApplicationThrottled",
+    );
+    expect(errorReason({ error: { code: 403, errors: [{ reason: "rateLimitExceeded" }] } })).toBe(
+      "rateLimitExceeded",
+    );
+    expect(errorReason({ error: { code: "Meeting with Alice" } })).toBeUndefined();
+    expect(errorReason(null)).toBeUndefined();
   });
 });
 
@@ -66,6 +92,13 @@ describe("throttleDelayMs", () => {
     expect(throttleDelayMs(new Error("Graph GET failed: 429"))).toBe(DEFAULT_RETRY_AFTER_MS);
     expect(throttleDelayMs(new Error("Google batch failed: 503"))).toBe(DEFAULT_RETRY_AFTER_MS);
     expect(throttleDelayMs(new Error("Graph GET failed: 404"))).toBeNull();
+    expect(throttleDelayMs(new Error("Graph GET failed: 429 ApplicationThrottled"))).toBe(
+      DEFAULT_RETRY_AFTER_MS,
+    );
+    expect(throttleDelayMs(new Error("Google GET failed: 403 rateLimitExceeded"))).toBe(
+      DEFAULT_RETRY_AFTER_MS,
+    );
+    expect(throttleDelayMs(new Error("Google GET failed: 403 quotaExceeded"))).toBeNull();
     expect(throttleDelayMs("429")).toBeNull();
   });
 });

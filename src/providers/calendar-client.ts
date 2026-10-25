@@ -41,6 +41,22 @@ export interface CalendarClient {
   applyBatch(calendarId: string, ruleTag: string, actions: SyncAction[]): Promise<BatchResult>;
 }
 
+/**
+ * The same client, but each call waits until the previous one finished. `run` queues the calls.
+ */
+export function oneCallAtATime(
+  client: CalendarClient,
+  run: <T>(call: () => Promise<T>) => Promise<T>,
+): CalendarClient {
+  return {
+    batchLimit: client.batchLimit,
+    listCalendars: () => run(() => client.listCalendars()),
+    sourceEvents: (...args) => run(() => client.sourceEvents(...args)),
+    existingBlocks: (...args) => run(() => client.existingBlocks(...args)),
+    applyBatch: (...args) => run(() => client.applyBatch(...args)),
+  };
+}
+
 export function calendarClient(provider: Provider, accessToken: string): CalendarClient {
   return provider === "microsoft"
     ? new GraphCalendar(accessToken)

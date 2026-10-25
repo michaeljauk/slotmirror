@@ -465,3 +465,40 @@ describe("throttling", () => {
     expect(wait).toBeLessThanOrEqual(7_000);
   });
 });
+
+describe("mailbox concurrency", () => {
+  it("runs one provider call at a time, also when a read arrives during a write run", async () => {
+    const { stub, ruleId } = await setupRule("acc-serial");
+    await stub.storeTokens("acc-serial", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight--;
+      if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
+        return Response.json({ value: fixture.value });
+      if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
+        return Response.json({ value: [] });
+      const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+      return Response.json({
+        responses: body.requests.map((request) => ({ id: request.id, status: 201 })),
+      });
+    });
+
+    const window = { start: new Date(), end: new Date(Date.now() + 86_400_000) };
+    const [run] = await Promise.all([
+      stub.runRule(ruleId),
+      stub.readSourceEvents(SOURCE_CAL, window, false),
+      stub.readSourceEvents(SOURCE_CAL, window, false),
+    ]);
+    expect(run).toMatchObject({ applied: 15, failed: 0 });
+    expect(maxInFlight).toBe(1);
+  });
+});

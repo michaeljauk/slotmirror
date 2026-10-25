@@ -86,6 +86,14 @@ describe("Google batch", () => {
       "",
       "--batch_x",
       "Content-Type: application/http",
+      "Content-ID: <response-item2>",
+      "",
+      "HTTP/1.1 403 Forbidden",
+      "Content-Type: application/json",
+      "",
+      '{"error":{"code":403,"message":"Rate Limit Exceeded","errors":[{"domain":"usageLimits","reason":"rateLimitExceeded"}]}}',
+      "--batch_x",
+      "Content-Type: application/http",
       "Content-ID: <response-item0>",
       "",
       "HTTP/1.1 200 OK",
@@ -96,8 +104,9 @@ describe("Google batch", () => {
     ].join("\r\n");
     expect(parseBatchStatuses(body, "multipart/mixed; boundary=batch_x")).toEqual(
       new Map([
-        [0, 200],
-        [1, 410],
+        [0, { status: 200 }],
+        [1, { status: 410 }],
+        [2, { status: 403, reason: "rateLimitExceeded" }],
       ]),
     );
   });

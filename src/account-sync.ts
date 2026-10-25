@@ -3,6 +3,7 @@ import { accountOwner, errorCode, recordAudit, type SyncRunDetail } from "./audi
 import type { Provider } from "./config";
 import {
   calendarClient,
+  oneCallAtATime,
   type CalendarClient,
   type CalendarInfo,
 } from "./providers/calendar-client";
@@ -65,6 +66,8 @@ const MAX_BATCHES_PER_RUN = 25;
  */
 export class AccountSync extends DurableObject<Env> {
   private refreshing: Promise<string> | null = null;
+  /** The last queued provider call. See `client()`. */
+  private providerQueue: Promise<unknown> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -169,7 +172,7 @@ export class AccountSync extends DurableObject<Env> {
     const plan = planSync(await desiredBlocks(rule.id, sourceEvents, rule.options), existing);
 
     let throttled = 0;
-    const statuses: Record<number, number> = {};
+    const statuses: Record<string, number> = {};
 
     // One audit event per run, written once the outcome is known. Counts only, no event content.
     const audit = async (result: RunResult) => {
@@ -215,7 +218,7 @@ export class AccountSync extends DurableObject<Env> {
       failed += result.failed;
       throttled += result.throttled;
       for (const [status, count] of Object.entries(result.statuses)) {
-        statuses[Number(status)] = (statuses[Number(status)] ?? 0) + count;
+        statuses[status] = (statuses[status] ?? 0) + count;
       }
       if (result.throttled > 0) {
         // Further batches would only extend the penalty.
@@ -322,10 +325,23 @@ export class AccountSync extends DurableObject<Env> {
     return this.refreshing;
   }
 
-  /** The calendar adapter for this account's provider, with a valid access token. */
+  /**
+   * The calendar adapter for this account's provider, with a valid access token. Its calls run one
+   * at a time.
+   *
+   * Outlook allows four concurrent requests per app and mailbox, and Graph runs four requests of
+   * one `$batch` at once. Every call to this account's mailbox starts in this instance: its own
+   * rules write here, and other instances read their source events here over RPC. While a call
+   * waits on the network, the instance accepts other requests, so the queue keeps a read from
+   * running next to a write batch.
+   */
   private async client(): Promise<CalendarClient> {
     const token = await this.accessToken();
-    return calendarClient(this.providerOrDefault(), token);
+    return oneCallAtATime(calendarClient(this.providerOrDefault(), token), (call) => {
+      const result = this.providerQueue.then(call);
+      this.providerQueue = result.catch(() => undefined);
+      return result;
+    });
   }
 
   private async refresh(

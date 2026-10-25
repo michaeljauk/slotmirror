@@ -32,7 +32,7 @@ export interface SyncRunDetail {
   remaining: number;
   /** Actions the provider throttled; they are part of `remaining`. */
   throttled: number;
-  /** HTTP status of failed and throttled actions, e.g. "429:13,400:2". Empty if none. */
+  /** Status and reason of failed and throttled actions, e.g. "429 ApplicationThrottled:13". */
   statuses: string;
   durationMs: number;
 }
@@ -77,11 +77,15 @@ export async function recordAudit(db: D1Database, event: AuditEvent): Promise<vo
 /** A short code for an error, safe to store: no response bodies, no event content. */
 export function errorCode(error: unknown): string {
   if (error instanceof TokenError) return `token_${error.code}`;
-  if (error instanceof GraphError) return `graph_${error.status}`;
-  if (error instanceof GoogleApiError) return `google_${error.status}`;
+  if (error instanceof GraphError) return withReason(`graph_${error.status}`, error.reason);
+  if (error instanceof GoogleApiError) return withReason(`google_${error.status}`, error.reason);
   // Errors thrown by this app carry static messages. Other error types may echo input.
   if (error instanceof Error && error.name === "Error") return error.message.slice(0, 120);
   return error instanceof Error ? error.name : "unknown";
+}
+
+function withReason(code: string, reason: string | undefined): string {
+  return reason ? `${code}_${reason}` : code;
 }
 
 /** The org and user that own an account, or null if the account is gone. */

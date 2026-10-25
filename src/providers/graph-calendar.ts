@@ -8,7 +8,9 @@ import {
 } from "../sync/graph-events";
 import {
   EMPTY_BATCH_RESULT,
+  errorReason,
   parseRetryAfter,
+  providerErrorMessage,
   summarizeBatch,
   type BatchResult,
 } from "../sync/throttle";
@@ -62,6 +64,8 @@ export class GraphError extends Error {
     message: string,
     /** From `Retry-After`, on throttled responses. */
     readonly retryAfterMs?: number,
+    /** Graph `error.code`, e.g. "ApplicationThrottled". */
+    readonly reason?: string,
   ) {
     super(message);
   }
@@ -177,13 +181,14 @@ export class GraphCalendar implements CalendarClient {
       headers: { ...this.headers(), "Content-Type": "application/json" },
       body: JSON.stringify({ requests }),
     });
-    if (!response.ok) throw graphError(response, "$batch");
+    if (!response.ok) throw await graphError(response, "$batch");
     const body = batchResponseSchema.parse(await response.json());
     const byId = new Map(body.responses.map((item) => [item.id, item]));
     return summarizeBatch(actions, (index) => {
       const item = byId.get(String(index));
       return {
         status: item?.status,
+        reason: item && item.status >= 400 ? errorReason(item.body) : undefined,
         retryAfterMs: parseRetryAfter(retryAfterHeader(item?.headers)),
       };
     });
@@ -214,7 +219,7 @@ export class GraphCalendar implements CalendarClient {
 
   private async get(url: string): Promise<unknown> {
     const response = await fetch(url, { headers: this.headers() });
-    if (!response.ok) throw graphError(response, "GET");
+    if (!response.ok) throw await graphError(response, "GET");
     return response.json();
   }
 
@@ -226,11 +231,13 @@ export class GraphCalendar implements CalendarClient {
   }
 }
 
-function graphError(response: Response, what: string): GraphError {
+async function graphError(response: Response, what: string): Promise<GraphError> {
+  const reason = errorReason(await response.json().catch(() => null));
   return new GraphError(
     response.status,
-    `Graph ${what} failed: ${response.status}`,
+    providerErrorMessage("Graph", what, response.status, reason),
     parseRetryAfter(response.headers.get("Retry-After")),
+    reason,
   );
 }
 

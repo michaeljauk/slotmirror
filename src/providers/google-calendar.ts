@@ -8,7 +8,9 @@ import {
 } from "../sync/google-events";
 import {
   EMPTY_BATCH_RESULT,
+  errorReason,
   parseRetryAfter,
+  providerErrorMessage,
   summarizeBatch,
   type BatchResult,
 } from "../sync/throttle";
@@ -42,6 +44,8 @@ export class GoogleApiError extends Error {
     message: string,
     /** From `Retry-After`, on throttled responses. */
     readonly retryAfterMs?: number,
+    /** Google `error.errors[0].reason`, e.g. "rateLimitExceeded". */
+    readonly reason?: string,
   ) {
     super(message);
   }
@@ -141,13 +145,13 @@ export class GoogleCalendar implements CalendarClient {
       },
       body: `${parts.join("")}--${boundary}--\r\n`,
     });
-    if (!response.ok) throw googleError(response, "batch");
+    if (!response.ok) throw await googleError(response, "batch");
     // The body is multipart, which `text()` warns about; decode the bytes instead.
     const statuses = parseBatchStatuses(
       new TextDecoder().decode(await response.arrayBuffer()),
       response.headers.get("content-type") ?? "",
     );
-    return summarizeBatch(actions, (index) => ({ status: statuses.get(index) }));
+    return summarizeBatch(actions, (index) => statuses.get(index) ?? { status: undefined });
   }
 
   private async listEvents(
@@ -180,16 +184,18 @@ export class GoogleCalendar implements CalendarClient {
 
   private async get(url: string): Promise<unknown> {
     const response = await fetch(url, { headers: { Authorization: `Bearer ${this.accessToken}` } });
-    if (!response.ok) throw googleError(response, "GET");
+    if (!response.ok) throw await googleError(response, "GET");
     return response.json();
   }
 }
 
-function googleError(response: Response, what: string): GoogleApiError {
+async function googleError(response: Response, what: string): Promise<GoogleApiError> {
+  const reason = errorReason(await response.json().catch(() => null));
   return new GoogleApiError(
     response.status,
-    `Google ${what} failed: ${response.status}`,
+    providerErrorMessage("Google", what, response.status, reason),
     parseRetryAfter(response.headers.get("Retry-After")),
+    reason,
   );
 }
 
@@ -200,17 +206,37 @@ function httpPart(method: string, path: string, body?: unknown): string {
 }
 
 /**
- * Status per request of a multipart batch response. Google answers each part with
- * `Content-ID: <response-itemN>` and an HTTP status line; the order of parts is not guaranteed.
+ * Status and error reason per request of a multipart batch response. Google answers each part
+ * with `Content-ID: <response-itemN>`, an HTTP status line and a JSON body; the order of parts is
+ * not guaranteed.
  */
-export function parseBatchStatuses(body: string, contentType: string): Map<number, number> {
+export function parseBatchStatuses(
+  body: string,
+  contentType: string,
+): Map<number, { status: number; reason?: string }> {
   const boundary = /boundary=("?)([^";]+)\1/.exec(contentType)?.[2];
-  const statuses = new Map<number, number>();
+  const statuses = new Map<number, { status: number; reason?: string }>();
   if (!boundary) return statuses;
   for (const part of body.split(`--${boundary}`)) {
     const id = /Content-ID:\s*<response-item(\d+)>/i.exec(part)?.[1];
     const status = /HTTP\/1\.1\s+(\d{3})/.exec(part)?.[1];
-    if (id !== undefined && status !== undefined) statuses.set(Number(id), Number(status));
+    if (id === undefined || status === undefined) continue;
+    const reason = Number(status) >= 400 ? errorReason(partJson(part)) : undefined;
+    statuses.set(
+      Number(id),
+      reason ? { status: Number(status), reason } : { status: Number(status) },
+    );
   }
   return statuses;
+}
+
+/** The JSON body of one batch part, or null. */
+function partJson(part: string): unknown {
+  const start = part.indexOf("{");
+  if (start < 0) return null;
+  try {
+    return JSON.parse(part.slice(start, part.lastIndexOf("}") + 1));
+  } catch {
+    return null;
+  }
 }

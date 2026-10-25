@@ -136,6 +136,10 @@ export const en = {
     cellException: "exception",
     needTwo: "Connect at least two accounts. Then choose here where their events go.",
     statusOk: (time: string) => `Everything in sync · ${time}`,
+    changes: (count: number) => (count === 1 ? "1 change" : `${count} changes`),
+    cancel: "Cancel",
+    saveFailed: "Saving failed. Try again.",
+    checking: "Checking…",
     othersTitle: "Other rules",
     othersLead:
       "Rules between calendars other than the main ones. The editor above does not change them.",

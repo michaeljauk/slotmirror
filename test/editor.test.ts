@@ -202,3 +202,41 @@ describe("account names", () => {
     expect(state.accounts.find((a) => a.id === w)?.name).toBe("work");
   });
 });
+
+describe("editor script endpoints", () => {
+  const fragment = (path: string, cookie: string, body?: URLSearchParams) =>
+    exports.default.fetch(`${BASE}${path}`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        cookie,
+        "x-fragment": "1",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+
+  it("saves several choices at once and answers with the updated card", async () => {
+    const { user, cookie, w, o, g } = await setup("batch");
+    const response = await fragment(
+      `/rules/source/${w}/choices`,
+      cookie,
+      new URLSearchParams({ [`choice.${o}`]: "busy", [`choice.${g}`]: "full" }),
+    );
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html.startsWith(`<details class="card source" id="src-${w}" open`)).toBe(true);
+    expect(html).not.toContain("<!doctype");
+    expect((await rulesOf(user.id)).map((rule) => rule.level).sort()).toEqual(["busy", "full"]);
+  });
+
+  it("refuses an unknown choice", async () => {
+    const { cookie, w, o } = await setup("badchoice");
+    const response = await fragment(
+      `/rules/source/${w}/choices`,
+      cookie,
+      new URLSearchParams({ [`choice.${o}`]: "everything" }),
+    );
+    expect(response.status).toBe(400);
+  });
+});

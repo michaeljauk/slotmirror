@@ -1154,3 +1154,46 @@ details.rename summary::-webkit-details-marker {
 .plain-link:hover {
   text-decoration: underline;
 }
+
+/* Editor edit state */
+
+details.source.dirty {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px #eef2fb;
+}
+
+.edit-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  background: #f5f8fe;
+  font-size: 13.5px;
+}
+
+.edit-bar[hidden] {
+  display: none;
+}
+
+.edit-count {
+  margin-right: auto;
+  font-weight: 600;
+}
+
+.edit-bar.saving {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.preview-result {
+  margin-left: 8px;
+  color: var(--muted);
+}
+
+.preview-result.error {
+  color: var(--danger);
+}

@@ -73,6 +73,7 @@ export function Layout(props: {
         <title>{`${props.title} · ${APP_NAME}`}</title>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link rel="stylesheet" href="/style.css" />
+        <script src="/editor.js" defer />
       </head>
       <body>
         <header class="topbar">

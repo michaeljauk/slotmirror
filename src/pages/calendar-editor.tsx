@@ -25,9 +25,9 @@ function directionOf(state: EditorState, from: string, to: string): EditorDirect
 }
 
 /** How a sample event of the source looks in the target with a choice. */
-function Example(props: { source: EditorAccount; direction: EditorDirection }) {
+function Example(props: { source: EditorAccount; direction: EditorDirection; choice: Choice }) {
   const { t } = useI18n();
-  const choice = props.direction.effective;
+  const choice = props.choice;
   if (choice === "off") return <span class="ev none">{t.editor.notThere}</span>;
   const sample = PRIVATE_DOMAINS.test(props.source.email)
     ? t.editor.samplePrivate
@@ -92,7 +92,7 @@ function DestinationRow(props: {
         <span class="dest-to">{t.editor.to}</span>
         <AccountName account={target} />
       </div>
-      <form method="post" action="/rules/direction" class="choices">
+      <form method="post" action="/rules/direction" class="choices" data-to={target.id}>
         <input type="hidden" name="from" value={source.id} />
         <input type="hidden" name="to" value={target.id} />
         {CHOICES.map((choice) => (
@@ -109,11 +109,16 @@ function DestinationRow(props: {
       </form>
       <div class="dest-note">
         {`${t.editor.looksLike} `}
-        <Example source={source} direction={direction} />
+        {/* Every choice is rendered, so that the editor script can switch without a request. */}
+        {CHOICES.map((choice) => (
+          <span data-example={choice} hidden={choice !== direction.effective}>
+            <Example source={source} direction={direction} choice={choice} />
+          </span>
+        ))}
       </div>
       {fromGroup ? <div class="dest-note faint">{t.editor.fromGroup}</div> : null}
       {isException ? (
-        <form method="post" action="/rules/direction/reset" class="dest-note faint">
+        <form method="post" action="/rules/direction/reset" class="dest-note faint card-form">
           <input type="hidden" name="from" value={source.id} />
           <input type="hidden" name="to" value={target.id} />
           {`${t.editor.exception} · `}
@@ -123,10 +128,16 @@ function DestinationRow(props: {
         </form>
       ) : null}
       {direction.ruleId && direction.effective !== "off" ? (
-        <form method="post" action={`/rules/${direction.ruleId}/preview`} class="dest-note faint">
+        <form
+          method="post"
+          action={`/rules/${direction.ruleId}/preview`}
+          class="dest-note faint preview-form"
+          data-loading={t.editor.checking}
+        >
           <button type="submit" class="link-button">
             {t.editor.checkReal}
           </button>
+          <span class="preview-result" role="status" />
         </form>
       ) : null}
       {direction.maxChoice !== "full" ? (
@@ -136,13 +147,13 @@ function DestinationRow(props: {
   );
 }
 
-function SourceCard(props: { state: EditorState; source: EditorAccount; open: boolean }) {
+export function SourceCard(props: { state: EditorState; source: EditorAccount; open: boolean }) {
   const { t } = useI18n();
   const { state, source } = props;
   const targets = state.accounts.filter((account) => account.id !== source.id && account.calendar);
   const options = state.directions.find((d) => d.from === source.id && d.options)?.options;
   return (
-    <details class="card source" id={`src-${source.id}`} open={props.open}>
+    <details class="card source" id={`src-${source.id}`} open={props.open} data-source={source.id}>
       <summary class="source-head">
         <span class="provider-icon">
           <ProviderIcon provider={source.provider} size={16} />
@@ -159,9 +170,28 @@ function SourceCard(props: { state: EditorState; source: EditorAccount; open: bo
           <DestinationRow state={state} source={source} target={target} direction={direction} />
         ) : null;
       })}
+      <div
+        class="edit-bar"
+        hidden
+        data-one={t.editor.changes(1)}
+        data-many={t.editor.changes(0).replace("0", "{n}")}
+        data-failed={t.editor.saveFailed}
+      >
+        <span class="edit-count" />
+        <button type="button" class="link-button edit-cancel">
+          {t.editor.cancel}
+        </button>
+        <button type="button" class="button small primary edit-save">
+          {t.editor.save}
+        </button>
+      </div>
       <details class="more">
         <summary>{t.editor.moreOptions}</summary>
-        <form method="post" action={`/rules/source/${source.id}/options`} class="more-form">
+        <form
+          method="post"
+          action={`/rules/source/${source.id}/options`}
+          class="more-form card-form"
+        >
           <label>
             <span>{t.rules.daysAhead}</span>
             <select name="daysAhead">

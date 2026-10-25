@@ -138,6 +138,10 @@ export const de: Messages = {
     cellException: "Ausnahme",
     needTwo: "Verbinde mindestens zwei Konten. Dann legst du hier fest, wohin ihre Termine gehen.",
     statusOk: (time: string) => `Alles synchron · ${time}`,
+    changes: (count: number) => (count === 1 ? "1 Änderung" : `${count} Änderungen`),
+    cancel: "Abbrechen",
+    saveFailed: "Speichern fehlgeschlagen. Bitte noch einmal.",
+    checking: "Wird geprüft …",
     othersTitle: "Weitere Regeln",
     othersLead:
       "Regeln zwischen anderen Kalendern als den Hauptkalendern. Der Editor oben ändert sie nicht.",

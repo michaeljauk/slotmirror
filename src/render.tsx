@@ -8,6 +8,11 @@ import { I18nProvider, i18nFromContext } from "./i18n";
  * Render a page in the request's locale. The doctype keeps browsers in standards mode; without it
  * they use quirks mode, which adds margins below forms and changes fonts in form controls.
  */
+/** Render part of a page, for scripts that replace one element. No doctype, no layout. */
+export function renderFragment(c: Context, node: Child, status: ContentfulStatusCode = 200) {
+  return c.html(<I18nProvider value={i18nFromContext(c)}>{node}</I18nProvider>, status);
+}
+
 export function render(c: Context, page: Child, status: ContentfulStatusCode = 200) {
   return c.html(
     <>

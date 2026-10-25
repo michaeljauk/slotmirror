@@ -14,8 +14,8 @@ import {
   setSourceOptions,
   type Choice,
 } from "../editor";
-import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
-import { render } from "../render";
+import { CalendarEditorPage, SourceCard, type Notice } from "../pages/calendar-editor";
+import { render, renderFragment } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
 
@@ -137,8 +137,22 @@ function formText(form: FormData, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
-/** Where to go after a change: back to the list with the source open. */
-function backTo(c: Context<AppEnv>, sourceId: string) {
+/** The editor script asks for fragments with this header; forms without the script do not. */
+function wantsFragment(c: Context<AppEnv>): boolean {
+  return c.req.header("x-fragment") === "1";
+}
+
+/**
+ * Where to go after a change: the updated card for the editor script, otherwise back to the list
+ * with the source open.
+ */
+async function backTo(c: Context<AppEnv>, sourceId: string) {
+  if (wantsFragment(c)) {
+    const state = await loadEditorState(c.env, currentUser(c).id);
+    const source = state.accounts.find((account) => account.id === sourceId);
+    if (!source) return c.notFound();
+    return renderFragment(c, <SourceCard state={state} source={source} open />);
+  }
   return c.redirect(
     `/rules?open=${encodeURIComponent(sourceId)}#src-${encodeURIComponent(sourceId)}`,
   );
@@ -162,6 +176,19 @@ rules.post("/direction", async (c) => {
   const choice = formText(form, "choice");
   if (!(CHOICES as readonly string[]).includes(choice)) return c.text("Bad choice", 400);
   await setDirection(c.env, currentUser(c), from, to, choice as Choice);
+  return backTo(c, from);
+});
+
+// Several choices of one source at once, sent by the editor script: fields "choice.<target ID>".
+rules.post("/source/:accountId/choices", async (c) => {
+  const user = currentUser(c);
+  const from = c.req.param("accountId");
+  const form = await c.req.formData();
+  for (const [name, value] of form.entries()) {
+    if (!name.startsWith("choice.") || typeof value !== "string") continue;
+    if (!(CHOICES as readonly string[]).includes(value)) return c.text("Bad choice", 400);
+    await setDirection(c.env, user, from, name.slice("choice.".length), value as Choice);
+  }
   return backTo(c, from);
 });
 
@@ -200,10 +227,11 @@ for (const action of ["preview", "run"] as const) {
         action === "preview"
           ? t.rules.previewResult(create, update, remove, unchanged)
           : t.rules.runResult(result.applied, result.failed, result.remaining);
-      return renderPage(c, { kind: "info", text });
+      return wantsFragment(c) ? c.text(text) : renderPage(c, { kind: "info", text });
     } catch (error) {
       console.error(`Rule ${action} failed`, ruleId, error);
-      return renderPage(c, { kind: "error", text: (error as Error).message }, 400);
+      const text = (error as Error).message;
+      return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
     }
   });
 }

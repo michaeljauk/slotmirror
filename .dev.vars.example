@@ -1,0 +1,11 @@
+# Copy to .dev.vars for local development. Set the same names as secrets in production
+# (`wrangler secret put <NAME>`). The Deploy to Cloudflare button asks for these values.
+
+SESSION_SECRET=
+TOKEN_ENCRYPTION_KEY=
+
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=

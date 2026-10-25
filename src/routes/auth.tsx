@@ -1,0 +1,172 @@
+import { Hono, type Context } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import type { AppEnv } from "../app-env";
+import type { Provider } from "../config";
+import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
+import { i18nFromContext } from "../i18n";
+import { PROVIDER_LABEL } from "../pages/home";
+import { MessagePage } from "../pages/message";
+import * as microsoft from "../providers/microsoft";
+import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "../session";
+import { render } from "../render";
+import { signInUser } from "../users";
+
+export const auth = new Hono<AppEnv>();
+
+const PROVIDERS: readonly Provider[] = ["microsoft", "google"];
+
+function parseProvider(value: string): Provider | null {
+  return (PROVIDERS as readonly string[]).includes(value) ? (value as Provider) : null;
+}
+
+function redirectUri(c: Context<AppEnv>, provider: Provider): string {
+  return `${new URL(c.req.url).origin}/auth/${provider}/callback`;
+}
+
+function message(
+  c: Context<AppEnv>,
+  status: 400 | 403 | 409 | 501 | 502,
+  title: string,
+  text: string,
+) {
+  return render(c, <MessagePage title={title} message={text} />, status);
+}
+
+async function startFlow(c: Context<AppEnv>, provider: Provider, purpose: OAuthPurpose) {
+  const { t } = i18nFromContext(c);
+  if (provider !== "microsoft") {
+    return message(c, 501, t.messages.notAvailable, t.messages.googleNotImplemented);
+  }
+  const { cookie, state, codeChallenge } = await createOAuthState(
+    provider,
+    purpose,
+    c.env.SESSION_SECRET,
+  );
+  setCookie(c, OAUTH_COOKIE, cookie, {
+    path: "/auth",
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    maxAge: 600,
+  });
+  return c.redirect(
+    microsoft.authorizeUrl({
+      clientId: c.env.MICROSOFT_CLIENT_ID,
+      redirectUri: redirectUri(c, provider),
+      scopes: purpose === "sign-in" ? microsoft.SIGN_IN_SCOPES : microsoft.CONNECT_SCOPES,
+      state,
+      codeChallenge,
+    }),
+  );
+}
+
+auth.post("/logout", (c) => {
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
+  return c.redirect("/");
+});
+
+auth.get("/:provider/login", async (c) => {
+  const provider = parseProvider(c.req.param("provider"));
+  if (!provider) return c.notFound();
+  return startFlow(c, provider, "sign-in");
+});
+
+auth.get("/:provider/connect", async (c) => {
+  const provider = parseProvider(c.req.param("provider"));
+  if (!provider) return c.notFound();
+  if (!c.get("user")) return c.redirect("/");
+  return startFlow(c, provider, "connect");
+});
+
+auth.get("/:provider/callback", async (c) => {
+  const provider = parseProvider(c.req.param("provider"));
+  if (provider !== "microsoft") return c.notFound();
+  const { t } = i18nFromContext(c);
+  const label = PROVIDER_LABEL[provider];
+
+  const stored = await checkOAuthState(
+    getCookie(c, OAUTH_COOKIE),
+    provider,
+    c.req.query("state"),
+    c.env.SESSION_SECRET,
+  );
+  deleteCookie(c, OAUTH_COOKIE, { path: "/auth", secure: true });
+  if (!stored) {
+    return message(c, 400, t.messages.signInExpired, t.messages.signInExpiredText);
+  }
+
+  const providerError = c.req.query("error");
+  if (providerError) {
+    const description = c.req.query("error_description") ?? providerError;
+    return message(c, 400, t.messages.providerRefused(label), description);
+  }
+  const code = c.req.query("code");
+  if (!code) return message(c, 400, t.messages.signInFailed, t.messages.noCode(label));
+
+  let tokens: microsoft.TokenResponse;
+  let identity: microsoft.Identity;
+  try {
+    tokens = await microsoft.exchangeCode({
+      clientId: c.env.MICROSOFT_CLIENT_ID,
+      clientSecret: c.env.MICROSOFT_CLIENT_SECRET,
+      redirectUri: redirectUri(c, provider),
+      code,
+      codeVerifier: stored.codeVerifier,
+    });
+    if (!tokens.id_token) throw new Error("Token response carries no ID token");
+    identity = microsoft.identityFromIdToken(tokens.id_token);
+  } catch (error) {
+    console.error("Microsoft token exchange failed", error);
+    return message(c, 502, t.messages.signInFailed, t.messages.exchangeFailed(label));
+  }
+
+  if (stored.purpose === "sign-in") {
+    const user = await signInUser(c.env, identity);
+    if (!user) {
+      return message(c, 403, t.messages.notAllowed, t.messages.notAllowedToSignIn(identity.email));
+    }
+    const session = await signSession(
+      { userId: user.id, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS },
+      c.env.SESSION_SECRET,
+    );
+    setCookie(c, SESSION_COOKIE, session, {
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      maxAge: SESSION_TTL_SECONDS,
+    });
+    return c.redirect("/");
+  }
+
+  // purpose === "connect": the account joins the signed-in user, whatever its own address is.
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (!tokens.refresh_token) {
+    return message(c, 502, t.messages.connectFailed, t.messages.noRefreshToken(label));
+  }
+  // The WHERE clause keeps an account that belongs to another user untouched; RETURNING is then empty.
+  const account = await c.env.DB.prepare(
+    `INSERT INTO accounts (id, user_id, provider, email, tenant_id) VALUES (?, ?, 'microsoft', ?, ?)
+     ON CONFLICT (provider, email) DO UPDATE SET tenant_id = excluded.tenant_id
+       WHERE accounts.user_id = excluded.user_id
+     RETURNING id`,
+  )
+    .bind(crypto.randomUUID(), user.id, identity.email, identity.tenantId)
+    .first<{ id: string }>();
+  if (!account) {
+    return message(
+      c,
+      409,
+      t.messages.alreadyConnected,
+      t.messages.alreadyConnectedText(identity.email),
+    );
+  }
+
+  await c.env.ACCOUNT_SYNC.getByName(account.id).storeTokens(account.id, {
+    refreshToken: tokens.refresh_token,
+    accessToken: tokens.access_token,
+    accessExpiresAt: Date.now() + tokens.expires_in * 1000,
+  });
+  return c.redirect("/");
+});

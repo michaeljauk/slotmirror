@@ -1,0 +1,81 @@
+{
+  "name": "freebusy-sync",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mirror busy blocks between Microsoft 365 and Google calendars. Self-hosted on Cloudflare Workers.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "cf-typegen": "wrangler types --strict-vars=false",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "hono": "4.13.14",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.6",
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/config-conventional": "21.2.4",
+    "husky": "9.1.7",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
+    "oxlint-tsgolint": "7.0.2004",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "wrangler": "4.151.3"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  },
+  "cloudflare": {
+    "bindings": {
+      "ORG_NAME": {
+        "description": "Optional. Name shown in the dashboard, e.g. your company name."
+      },
+      "ALLOWED_EMAILS": {
+        "description": "Comma-separated email addresses that may sign in. For a personal deployment, put your own address here."
+      },
+      "ALLOWED_DOMAINS": {
+        "description": "Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team deployment."
+      },
+      "ALLOWED_TENANT_IDS": {
+        "description": "Optional. Comma-separated Entra tenant IDs. If set, Microsoft sign-ins from other tenants are refused."
+      },
+      "ADMIN_EMAILS": {
+        "description": "Comma-separated email addresses with access to the admin page. Admins may always sign in."
+      },
+      "SESSION_SECRET": {
+        "description": "Random string, at least 32 characters. Signs the session cookie."
+      },
+      "TOKEN_ENCRYPTION_KEY": {
+        "description": "Base64-encoded 32-byte key. Encrypts OAuth tokens at rest. Generate with `openssl rand -base64 32`."
+      },
+      "MICROSOFT_CLIENT_ID": {
+        "description": "Application (client) ID of your Entra app registration. Leave empty if you do not use Microsoft 365."
+      },
+      "MICROSOFT_CLIENT_SECRET": {
+        "description": "Client secret of your Entra app registration."
+      },
+      "GOOGLE_CLIENT_ID": {
+        "description": "OAuth client ID from Google Cloud. Leave empty if you do not use Google Calendar."
+      },
+      "GOOGLE_CLIENT_SECRET": {
+        "description": "OAuth client secret from Google Cloud."
+      }
+    }
+  }
+}

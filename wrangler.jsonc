@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "freebusy-sync",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-10-25",
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "assets": { "directory": "./public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "freebusy-sync",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNT_SYNC", "class_name": "AccountSync" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountSync"] }],
+  "triggers": { "crons": ["*/10 * * * *"] },
+  "vars": {
+    "ORG_NAME": "",
+    "ALLOWED_EMAILS": "",
+    "ALLOWED_DOMAINS": "",
+    "ALLOWED_TENANT_IDS": "",
+    "ADMIN_EMAILS": "",
+  },
+}

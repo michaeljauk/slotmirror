@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .ink { stroke: #1c1c1a; }
+    .ink-fill { fill: #1c1c1a; }
+    .event { fill: #2b59c3; }
+    @media not all {
+      .ink { stroke: #f2f1ec; }
+      .ink-fill { fill: #f2f1ec; }
+      .event { fill: #6b93ee; }
+    }
+  </style>
+  <defs>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect class="ink-fill" width="4" height="8"/>
+    </pattern>
+  </defs>
+  <rect class="ink" x="4" y="5" width="24" height="54" rx="7" fill="none" stroke-width="6"/>
+  <rect class="ink" x="36" y="5" width="24" height="54" rx="7" fill="none" stroke-width="6"/>
+  <rect class="event" x="10" y="20" width="12" height="24" rx="3"/>
+  <rect x="42" y="20" width="12" height="24" rx="3" fill="url(#hatch)"/>
+</svg>

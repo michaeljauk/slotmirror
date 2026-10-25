@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="3" height="6" fill="#1c1c1a"/>
+    </pattern>
+    <clipPath id="r"><rect x="6" y="6" width="52" height="52" rx="12"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect x="6" y="6" width="26" height="52" fill="#2b59c3"/>
+    <rect x="32" y="6" width="26" height="52" fill="url(#hatch)"/>
+  </g>
+  <rect x="8" y="8" width="48" height="48" rx="10" fill="none" stroke="#1c1c1a" stroke-width="4"/>
+</svg>

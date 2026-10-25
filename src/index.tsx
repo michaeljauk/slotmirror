@@ -1,0 +1,126 @@
+import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
+import { languageDetector } from "hono/language";
+import type { AppEnv } from "./app-env";
+import { setupStatus } from "./config";
+import { i18nFromContext, LOCALES } from "./i18n";
+import { AdminPage, type AdminUserRow } from "./pages/admin";
+import { HomePage, SignInPage, type AccountRow } from "./pages/home";
+import { MessagePage } from "./pages/message";
+import { SetupPage } from "./pages/setup";
+import { render } from "./render";
+import { auth } from "./routes/auth";
+import { SESSION_COOKIE, verifySession } from "./session";
+import { loadUser } from "./users";
+
+export { AccountSync } from "./account-sync";
+
+const app = new Hono<AppEnv>();
+
+app.get("/healthz", (c) => c.text("ok"));
+
+// Microsoft Graph change notifications. On subscription creation Graph sends a validation
+// request and expects the token back as plain text within 10 seconds.
+app.post("/webhooks/microsoft", async (c) => {
+  const validationToken = c.req.query("validationToken");
+  if (validationToken !== undefined) {
+    return c.text(validationToken, 200, { "Content-Type": "text/plain" });
+  }
+  // Not implemented yet: validate clientState, then requestSync() on the account's instance.
+  // Graph counts a notification as delivered only on a 2xx within 3 seconds.
+  return c.body(null, 202);
+});
+
+// Google Calendar push notifications carry no body; the headers identify the channel.
+app.post("/webhooks/google", (c) => c.body(null, 202));
+
+// Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
+app.use(
+  "*",
+  languageDetector({
+    supportedLanguages: [...LOCALES],
+    fallbackLanguage: LOCALES[0],
+    order: ["querystring", "cookie", "header"],
+    lookupQueryString: "lang",
+    lookupCookie: "lang",
+    caches: ["cookie"],
+    cookieOptions: { path: "/", sameSite: "Lax", secure: true, httpOnly: true, maxAge: 31_536_000 },
+  }),
+);
+
+// Everything below needs a finished setup. `user` is null for visitors without a valid session.
+app.use("*", async (c, next) => {
+  const status = setupStatus(c.env);
+  if (!status.ready) {
+    return render(c, <SetupPage status={status} />, 503);
+  }
+  const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
+  c.set("user", session ? await loadUser(c.env, session.userId) : null);
+  await next();
+});
+
+app.route("/auth", auth);
+
+app.get("/", async (c) => {
+  const user = c.get("user");
+  const { providers } = setupStatus(c.env);
+  if (!user) {
+    return render(c, <SignInPage providers={providers} />);
+  }
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt
+     FROM accounts WHERE user_id = ? ORDER BY provider, email`,
+  )
+    .bind(user.id)
+    .all<AccountRow>();
+  return render(c, <HomePage user={user} accounts={results} providers={providers} />);
+});
+
+// Remove an account of the signed-in user: its tokens and state first, then the registry row.
+app.post("/accounts/:id/disconnect", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  const accountId = c.req.param("id");
+  const owned = await c.env.DB.prepare("SELECT 1 FROM accounts WHERE id = ? AND user_id = ?")
+    .bind(accountId, user.id)
+    .first();
+  if (!owned) return c.notFound();
+  await c.env.ACCOUNT_SYNC.getByName(accountId).forget();
+  await c.env.DB.prepare("DELETE FROM accounts WHERE id = ? AND user_id = ?")
+    .bind(accountId, user.id)
+    .run();
+  return c.redirect("/");
+});
+
+app.get("/admin", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") {
+    const { t } = i18nFromContext(c);
+    return render(
+      c,
+      <MessagePage title={t.messages.notAllowed} message={t.admin.onlyAdmins} />,
+      403,
+    );
+  }
+  // Metadata only: no calendar contents, no tokens.
+  const { results } = await c.env.DB.prepare(
+    `SELECT u.email, u.role, u.last_sign_in_at AS lastSignInAt, COUNT(a.id) AS accounts
+     FROM users u LEFT JOIN accounts a ON a.user_id = u.id
+     WHERE u.org_id = ?
+     GROUP BY u.id
+     ORDER BY u.email`,
+  )
+    .bind(user.orgId)
+    .all<AdminUserRow>();
+  return render(c, <AdminPage user={user} users={results} />);
+});
+
+async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+  const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();
+  for (const { id } of results) {
+    await env.ACCOUNT_SYNC.getByName(id).requestSync();
+  }
+}
+
+export default { fetch: app.fetch, scheduled } satisfies ExportedHandler<Env>;

@@ -195,4 +195,9 @@ describe("account actions", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("set-cookie")).toMatch(/fbs_session=;.*Max-Age=0/);
   });
+
+  it("sends a doctype, so that browsers render in standards mode", async () => {
+    const response = await exports.default.fetch(`${BASE}/privacy`);
+    expect((await response.text()).startsWith("<!doctype html>")).toBe(true);
+  });
 });

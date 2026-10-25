@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not sync or does not work as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Providers involved
+      multiple: true
+      options:
+        - Microsoft 365 (work or school account)
+        - Microsoft (personal account)
+        - Google Calendar
+    validations:
+      required: true
+  - type: dropdown
+    id: event-kind
+    attributes:
+      label: Kind of event
+      multiple: true
+      options:
+        - Single event
+        - Recurring series
+        - Moved or changed occurrence of a series
+        - Cancelled occurrence of a series
+        - All-day event
+        - Not event-related
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Do not paste event titles, attendees or tokens.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit

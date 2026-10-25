@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait three days after a release before proposing it; matches the local pnpm setting.
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      dev-dependencies:
+        dependency-type: development
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: ci

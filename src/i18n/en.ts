@@ -143,6 +143,10 @@ export const en = {
     settingsTitle: "For all calendars",
     settingsLead: "These settings apply to every direction above.",
     window: "Time window",
+    calendarsFrom: (name: string) => `Calendars from ${name}:`,
+    mainCalendar: "Main calendar",
+    noSource:
+      "No calendar chosen. Turn on at least one, then its events go to the calendars below.",
     skipAllDayTitle: "Skip all-day events",
     skipAllDayHint:
       "Holidays, birthdays and days off would otherwise block the whole day in the other calendars.",

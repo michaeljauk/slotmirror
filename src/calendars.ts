@@ -60,8 +60,9 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
     await env.DB.batch(
       calendars.map((calendar) =>
         env.DB.prepare(
-          `INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default)
-           VALUES (?, ?, ?, ?, ?, ?)
+          // A new main calendar starts as a source; is_source never changes on an update.
+          `INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (account_id, remote_id) DO UPDATE SET
              name = excluded.name, can_edit = excluded.can_edit, is_default = excluded.is_default`,
         ).bind(
@@ -72,6 +73,7 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
           // Only the account's own calendars are targets. A colleague's calendar shared with edit
           // rights must never receive blocks by accident.
           calendar.canEdit && calendar.owned ? 1 : 0,
+          calendar.isDefault ? 1 : 0,
           calendar.isDefault ? 1 : 0,
         ),
       ),

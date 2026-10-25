@@ -12,6 +12,7 @@ import {
   setDirection,
   setGroupMembership,
   setSettings,
+  setSourceCalendar,
   type SyncSettings,
   type Choice,
 } from "../editor";
@@ -173,6 +174,12 @@ rules.post("/direction", async (c) => {
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const form = await c.req.formData();
+  // Source calendars first, so that the choices below also reach newly chosen calendars.
+  for (const [name, value] of form.entries()) {
+    const [prefix, calendarId, ...rest] = name.split(".");
+    if (prefix !== "calendar" || !calendarId || rest.length > 0) continue;
+    await setSourceCalendar(c.env, user, calendarId, value === "1");
+  }
   const changes: { from: string; to: string; choice: Choice }[] = [];
   for (const [name, value] of form.entries()) {
     const [prefix, from, to, ...rest] = name.split(".");
@@ -207,6 +214,17 @@ function settingsFrom(form: FormData, prefix = ""): SyncSettings {
     markPrivate: form.has(`${prefix}markPrivate`),
   };
 }
+
+rules.post("/source-calendar/:calendarId", async (c) => {
+  const form = await c.req.formData();
+  await setSourceCalendar(
+    c.env,
+    currentUser(c),
+    c.req.param("calendarId"),
+    form.get("isSource") === "1",
+  );
+  return c.redirect("/rules");
+});
 
 rules.post("/settings", async (c) => {
   await setSettings(c.env, currentUser(c), settingsFrom(await c.req.formData()));

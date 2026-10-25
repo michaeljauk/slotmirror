@@ -72,6 +72,21 @@
     refreshBar();
   });
 
+  // Source calendar chips toggle locally; each changed calendar counts as one change.
+  const savedSources = new Map();
+  for (const chip of document.querySelectorAll(".cal-chip[data-calendar]")) {
+    savedSources.set(chip.dataset.calendar, !chip.classList.contains("out"));
+    chip.addEventListener("click", (event) => {
+      event.preventDefault();
+      const on = chip.classList.toggle("out") === false;
+      const key = `calendar:${chip.dataset.calendar}`;
+      if (on === savedSources.get(chip.dataset.calendar)) pending.delete(key);
+      else pending.set(key, on ? "1" : "0");
+      chip.classList.toggle("pending", pending.has(key));
+      refreshBar();
+    });
+  }
+
   // The settings form counts as one change while it differs from the saved settings.
   const settings = document.getElementById("settings");
   const readSettings = () => new URLSearchParams(new FormData(settings)).toString();
@@ -85,7 +100,13 @@
   bar.querySelector(".edit-cancel").addEventListener("click", () => {
     const keys = [...pending.keys()];
     pending.clear();
-    for (const key of keys) if (key !== "settings") show(key, original.get(key));
+    for (const key of keys) {
+      if (key.startsWith("calendar:")) {
+        const chip = document.querySelector(`.cal-chip[data-calendar="${key.slice(9)}"]`);
+        chip?.classList.toggle("out", !savedSources.get(key.slice(9)));
+        chip?.classList.remove("pending");
+      } else if (key !== "settings") show(key, original.get(key));
+    }
     settings?.reset();
     refreshBar();
   });
@@ -94,6 +115,10 @@
     const body = new URLSearchParams();
     for (const [key, choice] of pending) {
       if (key === "settings") continue;
+      if (key.startsWith("calendar:")) {
+        body.append(`calendar.${key.slice(9)}`, choice);
+        continue;
+      }
       const [from, to] = key.split(">");
       body.append(`choice.${from}.${to}`, choice);
     }
@@ -112,7 +137,7 @@
       // Reload once, with the changed cards open, so that every label comes from the server.
       const open = [
         ...new Set(
-          [...pending.keys()].filter((key) => key !== "settings").map((key) => key.split(">")[0]),
+          [...pending.keys()].filter((key) => key.includes(">")).map((key) => key.split(">")[0]),
         ),
       ];
       pending.clear();

@@ -34,7 +34,7 @@ async function setup(prefix: string) {
         "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, ?, ?)",
       ).bind(id, user.id, provider, email),
       env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default) VALUES (?, ?, ?, 'Main', 1, 1)",
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Main', 1, 1, 1)",
       ).bind(`${id}-cal`, id, `${id}-remote`),
     ]);
     await env.ACCOUNT_SYNC.getByName(id).storeTokens(
@@ -279,5 +279,38 @@ describe("settings", () => {
       expect(option).toMatchObject({ daysAhead: 180, skipAllDay: false, markPrivate: true });
     }
     expect(options.map((option) => option.detailLevel).sort()).toEqual(["busy", "full"]);
+  });
+});
+
+describe("source calendars", () => {
+  it("gives a new source calendar the choices of its account, and removes them when off", async () => {
+    const { user, cookie, w, o, g } = await setup("srccal");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES ('srccal-games', ?, 'games', 'UFC games', 0, 0, 0)",
+    )
+      .bind(g)
+      .run();
+    await setDirection(env, user, g, w, "busy");
+    await setDirection(env, user, g, o, "title");
+
+    const save = (fields: Record<string, string>) =>
+      exports.default.fetch(`${BASE}/rules/choices`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(fields),
+      });
+    expect((await save({ "calendar.srccal-games": "1" })).status).toBe(204);
+    const fromGames = (await rulesOf(user.id)).filter((rule) => rule.source === g);
+    expect(fromGames).toHaveLength(4);
+    expect(fromGames.map((rule) => rule.level).sort()).toEqual(["busy", "busy", "title", "title"]);
+
+    // A later choice reaches every source calendar of the account.
+    await setDirection(env, user, g, w, "full");
+    const toWork = (await rulesOf(user.id)).filter((r) => r.source === g && r.target === w);
+    expect(toWork.map((rule) => rule.level)).toEqual(["full", "full"]);
+
+    expect((await save({ "calendar.srccal-games": "0" })).status).toBe(204);
+    expect((await rulesOf(user.id)).filter((rule) => rule.source === g)).toHaveLength(2);
   });
 });

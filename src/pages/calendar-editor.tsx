@@ -227,6 +227,26 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
         </span>
         <span class="chevron">›</span>
       </summary>
+      <div class="source-cals">
+        <span class="dest-to">{t.editor.calendarsFrom(source.name)}</span>
+        <span class="cal-chips">
+          {source.calendars.map((calendar) => (
+            <form method="post" action={`/rules/source-calendar/${calendar.id}`}>
+              <input type="hidden" name="isSource" value={calendar.isSource ? "0" : "1"} />
+              <button
+                type="submit"
+                class={calendar.isSource ? "member cal-chip" : "member cal-chip out"}
+                data-calendar={calendar.id}
+              >
+                {calendar.isMain ? t.editor.mainCalendar : calendar.name}
+              </button>
+            </form>
+          ))}
+        </span>
+      </div>
+      {targets.length > 0 && !source.calendars.some((calendar) => calendar.isSource) ? (
+        <div class="dest-note faint none-chosen">{t.editor.noSource}</div>
+      ) : null}
       {targets.map((target) => {
         const direction = directionOf(state, source.id, target.id);
         return direction ? (

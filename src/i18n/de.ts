@@ -145,6 +145,10 @@ export const de: Messages = {
     settingsTitle: "Für alle Kalender",
     settingsLead: "Diese Einstellungen gelten für alle Richtungen oben.",
     window: "Zeitraum",
+    calendarsFrom: (name: string) => `Kalender aus ${name}:`,
+    mainCalendar: "Hauptkalender",
+    noSource:
+      "Kein Kalender gewählt. Schalte mindestens einen ein, dann gehen seine Termine in die Kalender unten.",
     skipAllDayTitle: "Ganztägige Termine auslassen",
     skipAllDayHint:
       "Urlaub, Feiertage und Geburtstage würden sonst in den anderen Kalendern den ganzen Tag blocken.",

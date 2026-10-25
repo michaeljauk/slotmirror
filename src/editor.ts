@@ -5,9 +5,11 @@ import { accountSync } from "./durable";
 import type { CurrentUser } from "./users";
 
 /**
- * The calendar editor shows one choice per direction between two accounts: from the main calendar
- * of one account into the main calendar of another. Each choice is a rule in D1, so the sync engine
- * stays unaware of the editor.
+ * The calendar editor shows one choice per direction between two accounts: from the source
+ * calendars of one account into the main calendar of the other. A direction is one rule in D1 per
+ * source calendar, all with the same choice, so the sync engine stays unaware of the editor. The
+ * main calendar is a source until the user turns it off; other calendars, such as subscriptions,
+ * are sources only once the user turns them on.
  *
  * Accounts in the block group see each other as busy. Those rules have origin "group". A choice
  * that differs from the group is a rule with origin "custom". "Off" between two group members is a
@@ -27,6 +29,14 @@ export interface EditorAccount {
   name: string;
   /** Main calendar; null until the calendars are loaded or if the account has none it can write. */
   calendar: { id: string; remoteId: string; canEdit: boolean } | null;
+  /** Every calendar of the account, for the choice of sources. */
+  calendars: { id: string; name: string; isMain: boolean; isSource: boolean }[];
+}
+
+/** The rule of one source calendar within a direction; null if it has none yet. */
+interface Slot {
+  sourceCalendarId: string;
+  rule: { id: string; enabled: boolean; origin: "group" | "custom"; options: RuleOptions } | null;
 }
 
 export interface EditorDirection {
@@ -41,6 +51,8 @@ export interface EditorDirection {
   /** The highest choice the org caps allow. */
   maxChoice: Choice;
   options: RuleOptions | null;
+  /** One entry per source calendar. ruleId, choice and options above come from the first rule. */
+  slots: Slot[];
 }
 
 /** Settings for all rules of a user. The editor shows them once, not per direction. */
@@ -95,13 +107,9 @@ function toChoice(level: DetailLevel): Choice {
 
 export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
   const { results: accountRows } = await env.DB.prepare(
-    `SELECT a.id, a.provider, a.email, a.tenant_id AS tenantId, a.in_block_group AS inGroup,
-            a.display_name AS displayName,
-            c.id AS calendarId, c.remote_id AS remoteId, c.can_edit AS canEdit
-     FROM accounts a
-     LEFT JOIN calendars c ON c.account_id = a.id AND c.is_default = 1
-     WHERE a.user_id = ?
-     ORDER BY a.created_at, a.id`,
+    `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
+            display_name AS displayName
+     FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
   )
     .bind(userId)
     .all<{
@@ -111,23 +119,43 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       tenantId: string | null;
       inGroup: number;
       displayName: string | null;
-      calendarId: string | null;
-      remoteId: string | null;
-      canEdit: number | null;
+    }>();
+  const { results: calendarRows } = await env.DB.prepare(
+    `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
+            c.can_edit AS canEdit, c.is_default AS isMain, c.is_source AS isSource
+     FROM calendars c JOIN accounts a ON a.id = c.account_id
+     WHERE a.user_id = ? ORDER BY c.is_default DESC, c.name`,
+  )
+    .bind(userId)
+    .all<{
+      id: string;
+      accountId: string;
+      remoteId: string;
+      name: string;
+      canEdit: number;
+      isMain: number;
+      isSource: number;
     }>();
   const names = shortNames(accountRows.map((row) => row.email));
-  const accounts: EditorAccount[] = accountRows.map((row, index) => ({
-    id: row.id,
-    provider: row.provider,
-    email: row.email,
-    tenantId: row.tenantId,
-    inGroup: row.inGroup === 1,
-    name: row.displayName ?? names[index] ?? row.email,
-    calendar:
-      row.calendarId && row.remoteId
-        ? { id: row.calendarId, remoteId: row.remoteId, canEdit: row.canEdit === 1 }
-        : null,
-  }));
+  const accounts: EditorAccount[] = accountRows.map((row, index) => {
+    const own = calendarRows.filter((calendar) => calendar.accountId === row.id);
+    const main = own.find((calendar) => calendar.isMain === 1);
+    return {
+      id: row.id,
+      provider: row.provider,
+      email: row.email,
+      tenantId: row.tenantId,
+      inGroup: row.inGroup === 1,
+      name: row.displayName ?? names[index] ?? row.email,
+      calendar: main ? { id: main.id, remoteId: main.remoteId, canEdit: main.canEdit === 1 } : null,
+      calendars: own.map((calendar) => ({
+        id: calendar.id,
+        name: calendar.name,
+        isMain: calendar.isMain === 1,
+        isSource: calendar.isSource === 1,
+      })),
+    };
+  });
 
   const { results: ruleRows } = await env.DB.prepare(
     `SELECT r.id, r.source_calendar_id AS sourceId, r.target_calendar_id AS targetId, r.options,
@@ -155,31 +183,49 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
 
   const directions: EditorDirection[] = [];
   for (const from of accounts) {
+    const sources = from.calendars.filter((calendar) => calendar.isSource);
     for (const to of accounts) {
-      if (from.id === to.id || !from.calendar || !to.calendar) continue;
-      const row = byPair.get(`${from.calendar.id}>${to.calendar.id}`);
-      const options = row ? parseRuleOptions(row.options) : null;
-      const choice = row && options ? choiceOf(options, row.enabled === 1) : "off";
+      if (from.id === to.id || sources.length === 0 || !to.calendar) continue;
+      const slots: Slot[] = sources.map((source) => {
+        const row = byPair.get(`${source.id}>${to.calendar?.id}`);
+        return {
+          sourceCalendarId: source.id,
+          rule: row
+            ? {
+                id: row.id,
+                enabled: row.enabled === 1,
+                origin: row.origin,
+                options: parseRuleOptions(row.options),
+              }
+            : null,
+        };
+      });
+      const first = slots.find((slot) => slot.rule)?.rule ?? null;
+      const choice = first ? choiceOf(first.options, first.enabled) : "off";
       const max = toChoice(detailLevelFor(env, "full", from, to).level);
       const effective = RANK[choice] > RANK[max] ? max : choice;
       directions.push({
         from: from.id,
         to: to.id,
-        ruleId: row?.id ?? null,
+        ruleId: first?.id ?? null,
         choice,
-        origin: row?.origin ?? null,
+        origin: first?.origin ?? null,
         effective,
         capped: effective !== choice,
         maxChoice: max,
-        options,
+        options: first?.options ?? null,
+        slots,
       });
     }
   }
-  const mainCalendars = new Set(accounts.flatMap((account) => account.calendar?.id ?? []));
+  // Every rule the directions above do not cover shows in its own list, so that none hides.
+  const covered = new Set(
+    directions.flatMap((direction) => direction.slots.flatMap((slot) => slot.rule?.id ?? [])),
+  );
   const nameOf = (accountId: string) =>
     accounts.find((account) => account.id === accountId)?.name ?? "?";
   const others = ruleRows
-    .filter((row) => !mainCalendars.has(row.sourceId) || !mainCalendars.has(row.targetId))
+    .filter((row) => !covered.has(row.id))
     .map((row) => ({
       ruleId: row.id,
       source: `${nameOf(row.sourceAccountId)} · ${row.sourceName}`,
@@ -327,51 +373,128 @@ export async function setDirection(
   choice: Choice,
 ): Promise<void> {
   const state = await loadEditorState(env, user.id);
-  const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
+  const from = state.accounts.find((account) => account.id === fromId);
   const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
-  if (!from?.calendar || !to?.calendar?.canEdit || !direction) return;
+  if (!from || !to?.calendar?.canEdit || !direction) return;
+  const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
   const bothInGroup = from.inGroup && to.inGroup;
   // The sync applies the caps anyway; storing the capped value keeps the page honest.
   if (RANK[choice] > RANK[direction.maxChoice]) choice = direction.maxChoice;
 
-  if (choice === "off") {
-    if (!direction.ruleId) return;
-    if (!bothInGroup) {
-      await deleteRuleWithBlocks(env, user, direction.ruleId);
-      return;
+  for (const slot of direction.slots) {
+    const { rule } = slot;
+    if (choice === "off") {
+      if (!rule) {
+        // Between group members, a disabled exception keeps the group from adding the rule.
+        if (bothInGroup) {
+          const ruleId = crypto.randomUUID();
+          const options = newRuleOptions(state.settings, "busy");
+          await insertRule(
+            env,
+            user,
+            ruleId,
+            slot.sourceCalendarId,
+            to.calendar.id,
+            options,
+            "custom",
+            false,
+          );
+        }
+        continue;
+      }
+      if (!bothInGroup) {
+        await deleteRuleWithBlocks(env, user, rule.id);
+        continue;
+      }
+      await queueRemoval(env, rule.id, target);
+      await env.DB.prepare(
+        "UPDATE rules SET enabled = 0, origin = 'custom' WHERE id = ? AND user_id = ?",
+      )
+        .bind(rule.id, user.id)
+        .run();
+      await audit(env, user, to.id, rule.id, "rule_updated", { choice });
+      continue;
     }
-    await queueRemoval(env, direction.ruleId, {
-      accountId: to.id,
-      remoteCalendarId: to.calendar.remoteId,
-    });
-    await env.DB.prepare(
-      "UPDATE rules SET enabled = 0, origin = 'custom' WHERE id = ? AND user_id = ?",
+
+    const options = {
+      ...(rule?.options ?? direction.options ?? newRuleOptions(state.settings, choice)),
+      detailLevel: choice,
+    };
+    const origin = bothInGroup && choice === "busy" ? "group" : "custom";
+    if (rule) {
+      await env.DB.prepare(
+        "UPDATE rules SET options = ?, enabled = 1, origin = ? WHERE id = ? AND user_id = ?",
+      )
+        .bind(JSON.stringify(options), origin, rule.id, user.id)
+        .run();
+      await audit(env, user, to.id, rule.id, "rule_updated", { choice });
+    } else {
+      const ruleId = crypto.randomUUID();
+      await insertRule(env, user, ruleId, slot.sourceCalendarId, to.calendar.id, options, origin);
+      await audit(env, user, to.id, ruleId, "rule_created", { choice });
+    }
+  }
+  if (choice !== "off") await accountSync(env, to.id).requestSync();
+}
+
+/**
+ * Turn a calendar on or off as a source of its account. On: it gets a rule for every direction
+ * of the account, with that direction's choice. Off: its rules go, with their blocks.
+ */
+export async function setSourceCalendar(
+  env: Env,
+  user: CurrentUser,
+  calendarId: string,
+  isSource: boolean,
+): Promise<void> {
+  const updated = await env.DB.prepare(
+    `UPDATE calendars SET is_source = ?
+     WHERE id = ? AND is_source <> ?
+       AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)`,
+  )
+    .bind(isSource ? 1 : 0, calendarId, isSource ? 1 : 0, user.id)
+    .run();
+  if (updated.meta.changes === 0) return;
+  const state = await loadEditorState(env, user.id);
+  const account = state.accounts.find((a) => a.calendars.some((c) => c.id === calendarId));
+  if (!account) return;
+
+  if (!isSource) {
+    const { results } = await env.DB.prepare(
+      "SELECT id FROM rules WHERE source_calendar_id = ? AND user_id = ?",
     )
-      .bind(direction.ruleId, user.id)
-      .run();
-    await audit(env, user, to.id, direction.ruleId, "rule_updated", { choice });
+      .bind(calendarId, user.id)
+      .all<{ id: string }>();
+    for (const row of results) await deleteRuleWithBlocks(env, user, row.id);
     return;
   }
 
-  const options = {
-    ...(direction.options ?? newRuleOptions(state.settings, choice)),
-    detailLevel: choice,
-  };
-  const origin = bothInGroup && choice === "busy" ? "group" : "custom";
-  if (direction.ruleId) {
-    await env.DB.prepare(
-      "UPDATE rules SET options = ?, enabled = 1, origin = ? WHERE id = ? AND user_id = ?",
-    )
-      .bind(JSON.stringify(options), origin, direction.ruleId, user.id)
-      .run();
-    await audit(env, user, to.id, direction.ruleId, "rule_updated", { choice });
-  } else {
+  for (const direction of state.directions) {
+    if (
+      direction.from !== account.id ||
+      (direction.choice === "off" && direction.origin !== "custom")
+    ) {
+      continue;
+    }
+    const to = state.accounts.find((a) => a.id === direction.to);
+    const slot = direction.slots.find((s) => s.sourceCalendarId === calendarId);
+    const model = direction.slots.find((s) => s.rule)?.rule;
+    if (!to?.calendar?.canEdit || !slot || slot.rule || !model) continue;
     const ruleId = crypto.randomUUID();
-    await insertRule(env, user, ruleId, from.calendar.id, to.calendar.id, options, origin);
-    await audit(env, user, to.id, ruleId, "rule_created", { choice });
+    await insertRule(
+      env,
+      user,
+      ruleId,
+      calendarId,
+      to.calendar.id,
+      model.options,
+      model.origin,
+      model.enabled,
+    );
+    await audit(env, user, to.id, ruleId, "rule_created", { choice: direction.choice });
+    if (model.enabled) await accountSync(env, to.id).requestSync();
   }
-  await accountSync(env, to.id).requestSync();
 }
 
 /** Undo an exception: back to the group's busy, or no rule outside the group. */
@@ -419,32 +542,36 @@ export async function setGroupMembership(
     if (direction.from !== accountId && direction.to !== accountId) continue;
     const from = state.accounts.find((account) => account.id === direction.from);
     const to = state.accounts.find((account) => account.id === direction.to);
-    if (!from?.calendar || !to?.calendar?.canEdit) continue;
+    if (!from || !to?.calendar?.canEdit) continue;
 
-    if (inGroup && from.inGroup && to.inGroup) {
-      if (!direction.ruleId) {
-        const ruleId = crypto.randomUUID();
-        await insertRule(
-          env,
-          user,
-          ruleId,
-          from.calendar.id,
-          to.calendar.id,
-          newRuleOptions(state.settings, "busy"),
-          "group",
-        );
-        await audit(env, user, to.id, ruleId, "rule_created", { choice: "busy" });
-        touched.add(to.id);
-      } else if (
-        direction.choice === "busy" &&
-        hasDefaultOptions(direction.options, state.settings)
-      ) {
-        await env.DB.prepare("UPDATE rules SET origin = 'group' WHERE id = ?")
-          .bind(direction.ruleId)
-          .run();
+    for (const slot of direction.slots) {
+      const { rule } = slot;
+      if (inGroup && from.inGroup && to.inGroup) {
+        if (!rule) {
+          const ruleId = crypto.randomUUID();
+          await insertRule(
+            env,
+            user,
+            ruleId,
+            slot.sourceCalendarId,
+            to.calendar.id,
+            newRuleOptions(state.settings, "busy"),
+            "group",
+          );
+          await audit(env, user, to.id, ruleId, "rule_created", { choice: "busy" });
+          touched.add(to.id);
+        } else if (
+          rule.enabled &&
+          choiceOf(rule.options, true) === "busy" &&
+          hasDefaultOptions(rule.options, state.settings)
+        ) {
+          await env.DB.prepare("UPDATE rules SET origin = 'group' WHERE id = ?")
+            .bind(rule.id)
+            .run();
+        }
+      } else if (!inGroup && rule?.origin === "group") {
+        await deleteRuleWithBlocks(env, user, rule.id);
       }
-    } else if (!inGroup && direction.ruleId && direction.origin === "group") {
-      await deleteRuleWithBlocks(env, user, direction.ruleId);
     }
   }
   for (const id of touched) await accountSync(env, id).requestSync();
@@ -465,12 +592,21 @@ async function insertRule(
   targetCalendarId: string,
   options: RuleOptions,
   origin: "group" | "custom",
+  enabled = true,
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
-     VALUES (?, ?, ?, ?, ?, 1, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(ruleId, user.id, sourceCalendarId, targetCalendarId, JSON.stringify(options), origin)
+    .bind(
+      ruleId,
+      user.id,
+      sourceCalendarId,
+      targetCalendarId,
+      JSON.stringify(options),
+      enabled ? 1 : 0,
+      origin,
+    )
     .run();
 }
 

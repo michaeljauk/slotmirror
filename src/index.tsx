@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import type { AppEnv } from "./app-env";
+import { purgeAuditEvents } from "./audit";
 import { setupStatus } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
@@ -123,6 +124,7 @@ async function scheduled(_controller: ScheduledController, env: Env): Promise<vo
   for (const { id } of results) {
     await env.ACCOUNT_SYNC.getByName(id).requestSync();
   }
+  await purgeAuditEvents(env.DB);
 }
 
 export default { fetch: app.fetch, scheduled } satisfies ExportedHandler<Env>;

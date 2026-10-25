@@ -93,6 +93,23 @@ The daily quotas (100,000 Worker requests, 100,000 Durable Object requests) cove
 small team. Each connected account needs a few hundred requests a day, so a large team needs
 Workers Paid ($5/month).
 
+## Provider rate limits
+
+Microsoft and Google throttle a client that sends too many requests. freebusy-sync stays inside
+their limits and recovers when it is throttled.
+
+- **Outlook** allows four concurrent requests per app and mailbox, and 10,000 requests in 10
+  minutes. One `$batch` already uses the four slots. All calls to a mailbox start in the
+  Durable Object of its account, and that instance runs them one at a time.
+- **Google** allows 600 requests per minute per user. Each call in a batch counts as one
+  request.
+- **If a provider throttles**, the throttled writes stay open and the next alarm waits for
+  `Retry-After`. Graph answers 429 or 503. Google answers 429, or 403 with the reason
+  `rateLimitExceeded` or `userRateLimitExceeded`, and sends no `Retry-After`. Without the header,
+  the wait is 30 seconds.
+- **The activity log** shows the HTTP status and the provider's error code of each failed or
+  throttled write, for example `HTTP 429 ApplicationThrottled ×13`.
+
 ## Development
 
 ```sh
@@ -118,8 +135,10 @@ pnpm dev
 - **D1:** orgs, users, accounts, calendars, rules and sync runs (`migrations/`). A self-hosted
   deployment has one org; its access policy follows the variables above.
 - **Durable Object `AccountSync`, one per connected account:** encrypted tokens, webhook
-  subscriptions, and the mapping from source events to the blocks it wrote. A rule runs in the
-  instance of its target account and reads busy times from the source account's instance.
+  subscriptions and the queue of rules to run. A rule runs in the instance of its target account
+  and reads busy times from the source account's instance. Each block carries a marker with the
+  rule and the source occurrence, so the target calendar itself records which blocks exist. No
+  mapping table can drift.
 
 ## Contributing and security
 

@@ -47,6 +47,11 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
   log tokens.
 - **Recurring events are read per occurrence** (Graph `calendarView`, Google `singleEvents=true`).
   Never sync series masters.
+- **Provider calls go through `client()` in `AccountSync`.** It runs them one at a time, because
+  Outlook allows four concurrent requests per mailbox and one `$batch` uses all four. Do not call
+  `calendarClient()` directly or start provider calls in parallel. On 429 or 503, and on Google's
+  403 `rateLimitExceeded`, wait for `Retry-After` through the alarm, never inside the invocation
+  (`src/sync/throttle.ts`).
 - **Plain `fetch` for Graph and Google.** No `googleapis`, MSAL or Graph SDK: they do not fit
   workerd or the bundle.
 - **No Node-only APIs.** Use Web Crypto, `fetch`, `TextEncoder`.

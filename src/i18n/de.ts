@@ -141,6 +141,8 @@ export const de: Messages = {
     changes: (count: number) => (count === 1 ? "1 Änderung" : `${count} Änderungen`),
     cancel: "Abbrechen",
     saveFailed: "Speichern fehlgeschlagen. Bitte noch einmal.",
+    discard: "Verwerfen",
+    cellChanged: "geändert",
     checking: "Wird geprüft …",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
       create + update + remove === 0

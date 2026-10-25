@@ -139,6 +139,8 @@ export const en = {
     changes: (count: number) => (count === 1 ? "1 change" : `${count} changes`),
     cancel: "Cancel",
     saveFailed: "Saving failed. Try again.",
+    discard: "Discard",
+    cellChanged: "changed",
     checking: "Checking…",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
       create + update + remove === 0

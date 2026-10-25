@@ -216,27 +216,39 @@ describe("editor script endpoints", () => {
       body,
     });
 
-  it("saves several choices at once and answers with the updated card", async () => {
-    const { user, cookie, w, o, g } = await setup("batch");
-    const response = await fragment(
-      `/rules/source/${w}/choices`,
-      cookie,
-      new URLSearchParams({ [`choice.${o}`]: "busy", [`choice.${g}`]: "full" }),
-    );
-    expect(response.status).toBe(200);
-    const html = await response.text();
-    expect(html.startsWith(`<details class="card source" id="src-${w}" open`)).toBe(true);
-    expect(html).not.toContain("<!doctype");
-    expect((await rulesOf(user.id)).map((rule) => rule.level).sort()).toEqual(["busy", "full"]);
-  });
-
   it("refuses an unknown choice", async () => {
     const { cookie, w, o } = await setup("badchoice");
     const response = await fragment(
-      `/rules/source/${w}/choices`,
+      `/rules/choices`,
       cookie,
-      new URLSearchParams({ [`choice.${o}`]: "everything" }),
+      new URLSearchParams({ [`choice.${w}.${o}`]: "everything" }),
     );
     expect(response.status).toBe(400);
+  });
+});
+
+describe("page save", () => {
+  it("saves the choices of several sources in one request", async () => {
+    const { user, cookie, w, o, g } = await setup("pagesave");
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ [`choice.${w}.${g}`]: "full", [`choice.${g}.${o}`]: "busy" }),
+    });
+    expect(response.status).toBe(204);
+    expect(await rulesOf(user.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: w, target: g, level: "full" }),
+        expect.objectContaining({ source: g, target: o, level: "busy" }),
+      ]),
+    );
+
+    const page = await (
+      await exports.default.fetch(`${BASE}/rules?open=${w},${g}`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain(`id="src-${w}" open`);
+    expect(page).toContain(`id="src-${g}" open`);
+    expect(page).toContain('id="page-bar"');
   });
 });

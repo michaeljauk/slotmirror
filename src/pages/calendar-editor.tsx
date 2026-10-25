@@ -170,21 +170,6 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
           <DestinationRow state={state} source={source} target={target} direction={direction} />
         ) : null;
       })}
-      <div
-        class="edit-bar"
-        hidden
-        data-one={t.editor.changes(1)}
-        data-many={t.editor.changes(0).replace("0", "{n}")}
-        data-failed={t.editor.saveFailed}
-      >
-        <span class="edit-count" />
-        <button type="button" class="link-button edit-cancel">
-          {t.editor.cancel}
-        </button>
-        <button type="button" class="button small primary edit-save">
-          {t.editor.save}
-        </button>
-      </div>
       <details class="more">
         <summary>{t.editor.moreOptions}</summary>
         <form
@@ -235,7 +220,10 @@ export function SourcePills(props: { state: EditorState; source: EditorAccount }
           if (!direction) return null;
           const exception = direction.origin === "custom" && props.source.inGroup && target.inGroup;
           return (
-            <span class={exception ? "pill exception" : "pill"}>
+            <span
+              class={exception ? "pill exception" : "pill"}
+              data-key={`${props.source.id}>${target.id}`}
+            >
               <span class="pill-arrow" aria-label={t.editor.to}>
                 →
               </span>
@@ -284,7 +272,7 @@ export function Overview(props: { state: EditorState }) {
                       ? t.editor.cellException
                       : "";
                 return (
-                  <td class={`cell level-${choice}`}>
+                  <td class={`cell level-${choice}`} data-key={`${from.id}>${to.id}`}>
                     <a href={`/rules?open=${from.id}#src-${from.id}`} data-open={from.id}>
                       {t.editor.short[choice]}
                       <small>{label}</small>
@@ -304,7 +292,8 @@ export function Overview(props: { state: EditorState }) {
 export function CalendarEditorPage(props: {
   user: CurrentUser;
   state: EditorState;
-  open: string | null;
+  /** Source accounts whose cards start open. */
+  open: string[];
   notice?: Notice;
   status?: Child;
 }) {
@@ -327,15 +316,39 @@ export function CalendarEditorPage(props: {
             <div class="empty">{t.editor.needTwo}</div>
           </div>
         ) : (
-          <div class="editor-grid">
-            <div class="editor-main">
-              <GroupCard state={props.state} />
-              {ready.map((source) => (
-                <SourceCard state={props.state} source={source} open={props.open === source.id} />
-              ))}
+          <>
+            <div class="editor-grid">
+              <div class="editor-main">
+                <GroupCard state={props.state} />
+                {ready.map((source) => (
+                  <SourceCard
+                    state={props.state}
+                    source={source}
+                    open={props.open.includes(source.id)}
+                  />
+                ))}
+              </div>
+              <Overview state={props.state} />
             </div>
-            <Overview state={props.state} />
-          </div>
+            <div
+              class="page-bar"
+              id="page-bar"
+              hidden
+              data-one={t.editor.changes(1)}
+              data-many={t.editor.changes(0).replace("0", "{n}")}
+              data-failed={t.editor.saveFailed}
+              data-changed={t.editor.cellChanged}
+              data-short={JSON.stringify(t.editor.short)}
+            >
+              <span class="edit-count" />
+              <button type="button" class="link-button edit-cancel">
+                {t.editor.discard}
+              </button>
+              <button type="button" class="button primary edit-save">
+                {t.editor.save}
+              </button>
+            </div>
+          </>
         )}
 
         {props.state.others.length > 0 ? (

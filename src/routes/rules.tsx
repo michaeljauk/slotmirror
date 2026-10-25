@@ -14,8 +14,8 @@ import {
   setSourceOptions,
   type Choice,
 } from "../editor";
-import { CalendarEditorPage, Overview, SourceCard, type Notice } from "../pages/calendar-editor";
-import { render, renderFragment } from "../render";
+import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
+import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
 
@@ -41,7 +41,7 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
     <CalendarEditorPage
       user={user}
       state={await loadEditorState(c.env, user.id)}
-      open={c.req.query("open") ?? null}
+      open={(c.req.query("open") ?? "").split(",").filter(Boolean)}
       notice={notice}
       status={<SyncStatus outcomes={await latestRuleOutcomes(c.env.DB, user.id)} />}
     />
@@ -80,11 +80,6 @@ async function targetAccountOf(db: D1Database, ruleId: string, userId: string) {
 }
 
 rules.get("/", (c) => renderPage(c));
-
-// The overview column alone, for the editor script after a save.
-rules.get("/overview", async (c) =>
-  renderFragment(c, <Overview state={await loadEditorState(c.env, currentUser(c).id)} />),
-);
 
 rules.post("/calendars/refresh", async (c) => {
   await refreshUserCalendars(c.env, currentUser(c).id);
@@ -145,17 +140,8 @@ function wantsFragment(c: Context<AppEnv>): boolean {
   return c.req.header("x-fragment") === "1";
 }
 
-/**
- * Where to go after a change: the updated card for the editor script, otherwise back to the list
- * with the source open.
- */
-async function backTo(c: Context<AppEnv>, sourceId: string) {
-  if (wantsFragment(c)) {
-    const state = await loadEditorState(c.env, currentUser(c).id);
-    const source = state.accounts.find((account) => account.id === sourceId);
-    if (!source) return c.notFound();
-    return renderFragment(c, <SourceCard state={state} source={source} open />);
-  }
+/** Where to go after a change without the editor script: back to the list with the source open. */
+function backTo(c: Context<AppEnv>, sourceId: string) {
   return c.redirect(
     `/rules?open=${encodeURIComponent(sourceId)}#src-${encodeURIComponent(sourceId)}`,
   );
@@ -182,17 +168,24 @@ rules.post("/direction", async (c) => {
   return backTo(c, from);
 });
 
-// Several choices of one source at once, sent by the editor script: fields "choice.<target ID>".
-rules.post("/source/:accountId/choices", async (c) => {
+// All unsaved choices of the page, sent by the editor script: fields "choice.<from>.<to>".
+rules.post("/choices", async (c) => {
   const user = currentUser(c);
-  const from = c.req.param("accountId");
   const form = await c.req.formData();
+  const changes: { from: string; to: string; choice: Choice }[] = [];
   for (const [name, value] of form.entries()) {
-    if (!name.startsWith("choice.") || typeof value !== "string") continue;
-    if (!(CHOICES as readonly string[]).includes(value)) return c.text("Bad choice", 400);
-    await setDirection(c.env, user, from, name.slice("choice.".length), value as Choice);
+    const [prefix, from, to, ...rest] = name.split(".");
+    if (prefix !== "choice" || !from || !to || rest.length > 0) continue;
+    if (typeof value !== "string" || !(CHOICES as readonly string[]).includes(value)) {
+      return c.text("Bad choice", 400);
+    }
+    changes.push({ from, to, choice: value as Choice });
   }
-  return backTo(c, from);
+  for (const change of changes) {
+    await setDirection(c.env, user, change.from, change.to, change.choice);
+  }
+  if (wantsFragment(c)) return c.body(null, 204);
+  return c.redirect("/rules");
 });
 
 rules.post("/direction/reset", async (c) => {

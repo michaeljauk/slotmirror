@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { accountOwner, errorCode, recordAudit, type SyncRunDetail } from "./audit";
 import { GRAPH_BATCH_LIMIT, GraphCalendar, type CalendarInfo } from "./providers/graph-calendar";
 import * as microsoft from "./providers/microsoft";
 import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
@@ -112,6 +113,7 @@ export class AccountSync extends DurableObject<Env> {
    * write nothing.
    */
   async runRule(ruleId: string, options: { dryRun?: boolean } = {}): Promise<RunResult> {
+    const startedAt = Date.now();
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
     if (rule.target.accountId !== this.accountId()) {
@@ -137,8 +139,36 @@ export class AccountSync extends DurableObject<Env> {
     const existing = await graph.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
     const plan = planSync(await desiredBlocks(rule.id, sourceEvents, rule.options), existing);
 
+    // One audit event per run, written once the outcome is known. Counts only, no event content.
+    const audit = async (result: RunResult) => {
+      const detail: SyncRunDetail = {
+        dryRun: result.dryRun,
+        ...plan.stats,
+        applied: result.applied,
+        failed: result.failed,
+        remaining: result.remaining,
+        durationMs: Date.now() - startedAt,
+      };
+      await recordAudit(this.env.DB, {
+        orgId: rule.orgId,
+        userId: rule.userId,
+        accountId: rule.target.accountId,
+        ruleId,
+        kind: "sync_run",
+        detail: { ...detail },
+      });
+      return result;
+    };
+
     if (options.dryRun) {
-      return { ruleId, dryRun: true, stats: plan.stats, applied: 0, failed: 0, remaining: 0 };
+      return audit({
+        ruleId,
+        dryRun: true,
+        stats: plan.stats,
+        applied: 0,
+        failed: 0,
+        remaining: 0,
+      });
     }
 
     const batches = chunk(plan.actions, GRAPH_BATCH_LIMIT);
@@ -154,7 +184,7 @@ export class AccountSync extends DurableObject<Env> {
       // Continue soon; the next run plans again from the calendars, so nothing is lost.
       await this.ctx.storage.setAlarm(Date.now() + 1_000);
     }
-    return { ruleId, dryRun: false, stats: plan.stats, applied, failed, remaining };
+    return audit({ ruleId, dryRun: false, stats: plan.stats, applied, failed, remaining });
   }
 
   /** Run every rule that targets this account, one after another. */
@@ -165,8 +195,9 @@ export class AccountSync extends DurableObject<Env> {
       try {
         await this.runRule(ruleId);
       } catch (error) {
-        // One broken rule must not stop the others; the audit log records it (next step).
+        // One broken rule must not stop the others; the audit log records it.
         console.error("Rule run failed", ruleId, error);
+        await this.auditFailure(ruleId, accountId, error);
       }
     }
   }
@@ -185,17 +216,49 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   private async refresh(accountId: string, refreshToken: string): Promise<string> {
-    const response = await microsoft.refreshToken({
-      clientId: this.env.MICROSOFT_CLIENT_ID,
-      clientSecret: this.env.MICROSOFT_CLIENT_SECRET,
-      refreshToken,
-    });
+    let response: microsoft.TokenResponse;
+    try {
+      response = await microsoft.refreshToken({
+        clientId: this.env.MICROSOFT_CLIENT_ID,
+        clientSecret: this.env.MICROSOFT_CLIENT_SECRET,
+        refreshToken,
+      });
+    } catch (error) {
+      const owner = await accountOwner(this.env.DB, accountId);
+      if (owner) {
+        await recordAudit(this.env.DB, {
+          ...owner,
+          accountId,
+          kind: "token_refresh_failed",
+          detail: { code: errorCode(error) },
+        });
+      }
+      throw error;
+    }
     await this.storeTokens(accountId, {
       refreshToken: response.refresh_token ?? refreshToken,
       accessToken: response.access_token,
       accessExpiresAt: Date.now() + response.expires_in * 1000,
     });
     return response.access_token;
+  }
+
+  /** Record that a rule run threw. Looks up the owner itself, because the run may not have got far. */
+  private async auditFailure(ruleId: string, accountId: string, error: unknown): Promise<void> {
+    try {
+      const rule = await loadRule(this.env.DB, ruleId);
+      if (!rule) return;
+      await recordAudit(this.env.DB, {
+        orgId: rule.orgId,
+        userId: rule.userId,
+        accountId,
+        ruleId,
+        kind: "sync_failed",
+        detail: { code: errorCode(error) },
+      });
+    } catch (lookupError) {
+      console.error("Audit lookup failed", ruleId, lookupError);
+    }
   }
 
   private async readTokens(): Promise<{ accountId: string; tokens: StoredTokens }> {

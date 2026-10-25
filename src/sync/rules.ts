@@ -4,6 +4,7 @@ import { parseRuleOptions, type RuleOptions } from "../config";
 export interface RuleContext {
   id: string;
   userId: string;
+  orgId: string;
   options: RuleOptions;
   enabled: boolean;
   source: { accountId: string; provider: string; remoteCalendarId: string };
@@ -13,6 +14,7 @@ export interface RuleContext {
 interface RuleRow {
   id: string;
   userId: string;
+  orgId: string;
   options: string;
   enabled: number;
   sourceAccountId: string;
@@ -24,10 +26,11 @@ interface RuleRow {
 }
 
 const RULE_SELECT = `
-  SELECT r.id, r.user_id AS userId, r.options, r.enabled,
+  SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
          ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId
   FROM rules r
+  JOIN users u ON u.id = r.user_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
   JOIN accounts sa ON sa.id = sc.account_id
   JOIN calendars tc ON tc.id = r.target_calendar_id
@@ -37,6 +40,7 @@ function toContext(row: RuleRow): RuleContext {
   return {
     id: row.id,
     userId: row.userId,
+    orgId: row.orgId,
     options: parseRuleOptions(row.options),
     enabled: row.enabled === 1,
     source: {

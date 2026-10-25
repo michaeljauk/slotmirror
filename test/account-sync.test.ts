@@ -1,3 +1,4 @@
+import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MARKER_PROPERTY_ID } from "../src/sync/graph-events";
@@ -183,5 +184,87 @@ describe("AccountSync.runRule", () => {
       message = (error as Error).message;
     }
     expect(message).toMatch(/target account/);
+  });
+});
+
+/** Audit rows of one rule, oldest first, with the detail parsed. */
+async function auditOf(ruleId: string, kind?: string) {
+  const { results } = await env.DB.prepare(
+    "SELECT kind, org_id, user_id, account_id, detail FROM audit_events WHERE rule_id = ? ORDER BY id",
+  )
+    .bind(ruleId)
+    .all<{ kind: string; org_id: string; user_id: string; account_id: string; detail: string }>();
+  return results
+    .filter((row) => !kind || row.kind === kind)
+    .map((row) => ({ ...row, detail: JSON.parse(row.detail) as Record<string, unknown> }));
+}
+
+describe("AccountSync audit events", () => {
+  it("writes one sync_run per run, marks a dry run, and keeps content out", async () => {
+    const { stub, ruleId } = await setupRule("acc-audit");
+    await stub.storeTokens("acc-audit", {
+      refreshToken: "r-secret",
+      accessToken: "a-secret",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    fakeGraph();
+
+    await stub.runRule(ruleId, { dryRun: true });
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
+    await stub.runRule(ruleId);
+
+    const events = await auditOf(ruleId, "sync_run");
+    expect(events).toHaveLength(2);
+    expect(events[0]?.detail).toMatchObject({
+      dryRun: true,
+      create: 15,
+      update: 0,
+      delete: 0,
+      applied: 0,
+    });
+    expect(events[1]?.detail).toMatchObject({
+      dryRun: false,
+      create: 15,
+      applied: 15,
+      failed: 0,
+      remaining: 0,
+    });
+    expect(typeof events[1]?.detail.durationMs).toBe("number");
+    expect(events[1]).toMatchObject({ account_id: "acc-audit", org_id: "default" });
+    expect(events[1]?.user_id).toBeTruthy();
+
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("secret");
+    for (const event of fixture.value) {
+      if (event.subject) expect(serialized).not.toContain(event.subject);
+    }
+  });
+
+  it("records token_refresh_failed and sync_failed when an alarm run throws", async () => {
+    const { stub, ruleId } = await setupRule("acc-fail");
+    await stub.storeTokens("acc-fail", {
+      refreshToken: "r-secret",
+      accessToken: "a-secret",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        { error: "invalid_grant", error_description: "refresh token revoked" },
+        { status: 400 },
+      ),
+    );
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+
+    const events = await auditOf(ruleId);
+    const failed = events.find((event) => event.kind === "sync_failed");
+    expect(failed?.detail).toEqual({ code: "token_invalid_grant" });
+    const refresh = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE account_id = 'acc-fail' AND kind = 'token_refresh_failed'",
+    ).first<{ detail: string }>();
+    expect(JSON.parse(refresh?.detail ?? "{}")).toEqual({ code: "token_invalid_grant" });
+    expect(JSON.stringify(events)).not.toContain("secret");
   });
 });

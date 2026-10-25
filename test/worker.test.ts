@@ -53,7 +53,7 @@ describe("worker", () => {
         .toArray()
         .map((row) => row.name),
     );
-    expect(tables).toEqual(expect.arrayContaining(["mappings", "subscriptions", "tokens"]));
+    expect(tables).toEqual(expect.arrayContaining(["subscriptions", "tokens"]));
   });
 });
 

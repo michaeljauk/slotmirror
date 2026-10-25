@@ -39,10 +39,11 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
 
 /** Marker for a block: SHA-256 of rule ID and occurrence key, so no source ID leaves the source. */
 export async function markerFor(ruleId: string, occurrenceKey: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(`${ruleId}\u0000${occurrenceKey}`),
-  );
+  return shortHash(`${ruleId}\u0000${occurrenceKey}`);
+}
+
+async function shortHash(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest).slice(0, 16), (b) =>
     b.toString(16).padStart(2, "0"),
   ).join("");
@@ -58,21 +59,20 @@ export async function desiredBlocks(
   for (const event of events) {
     if (!isIncluded(event, options)) continue;
     const marker = await markerFor(ruleId, event.occurrenceKey);
-    blocks.set(marker, { marker, ...blockContent(event, options) });
+    const content = blockContent(event, options);
+    const contentHash = await shortHash(JSON.stringify(content));
+    blocks.set(marker, { marker, contentHash, ...content });
   }
   return [...blocks.values()];
 }
 
-function sameContent(a: BlockContent, b: BlockContent): boolean {
+/** Times are compared directly, so that a block moved by hand in the target is moved back. */
+function sameContent(existing: ExistingBlock, desired: DesiredBlock): boolean {
   return (
-    sameInstant(a.start, b.start) &&
-    sameInstant(a.end, b.end) &&
-    a.allDay === b.allDay &&
-    a.showAs === b.showAs &&
-    a.isPrivate === b.isPrivate &&
-    a.subject === b.subject &&
-    a.location === b.location &&
-    a.body === b.body
+    existing.contentHash === desired.contentHash &&
+    existing.allDay === desired.allDay &&
+    sameInstant(existing.start, desired.start) &&
+    sameInstant(existing.end, desired.end)
   );
 }
 

@@ -1,0 +1,18 @@
+/**
+ * Worker secrets. `wrangler types` only sees secrets that exist in a local `.dev.vars`, so they are
+ * declared here; the generated types then do not depend on a developer's local files.
+ */
+interface WorkerSecrets {
+  SESSION_SECRET: string;
+  TOKEN_ENCRYPTION_KEY: string;
+  MICROSOFT_CLIENT_ID: string;
+  MICROSOFT_CLIENT_SECRET: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
+}
+
+interface Env extends WorkerSecrets {}
+
+declare namespace Cloudflare {
+  interface Env extends WorkerSecrets {}
+}

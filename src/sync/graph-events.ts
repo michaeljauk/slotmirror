@@ -1,7 +1,10 @@
 import * as z from "zod/mini";
 import type { ShowAs, SourceEvent } from "./types";
 
-/** Name of the single-value extended property that marks blocks written by freebusy-sync. */
+/**
+ * Single-value extended property that marks blocks written by freebusy-sync.
+ * Its value is `<marker>.<contentHash>`.
+ */
 export const MARKER_PROPERTY_ID =
   "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10} Name freebusySyncMarker";
 
@@ -50,6 +53,12 @@ export const GRAPH_EVENT_SELECT = [
   "location",
   "bodyPreview",
 ].join(",");
+
+/** Split a marker property value into marker and content hash. */
+export function parseMarkerValue(value: string): { marker: string; contentHash: string } {
+  const [marker = "", contentHash = ""] = value.split(".");
+  return { marker, contentHash };
+}
 
 const SHOW_AS: Record<string, ShowAs> = {
   free: "free",

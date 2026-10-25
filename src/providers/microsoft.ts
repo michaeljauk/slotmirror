@@ -79,6 +79,23 @@ export async function exchangeCode(params: ExchangeParams): Promise<TokenRespons
   });
 }
 
+export interface RefreshParams {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}
+
+/** Get a new access token. Microsoft returns a new refresh token, which the caller must store. */
+export async function refreshToken(params: RefreshParams): Promise<TokenResponse> {
+  return requestToken({
+    client_id: params.clientId,
+    client_secret: params.clientSecret,
+    grant_type: "refresh_token",
+    refresh_token: params.refreshToken,
+    scope: CONNECT_SCOPES.join(" "),
+  });
+}
+
 async function requestToken(form: Record<string, string>): Promise<TokenResponse> {
   const response = await fetch(`${AUTHORITY}/token`, {
     method: "POST",

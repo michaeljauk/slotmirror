@@ -43,12 +43,21 @@ export interface BlockContent {
 export interface DesiredBlock extends BlockContent {
   /** Opaque marker written into the block; a hash of rule and occurrence key. */
   marker: string;
+  /**
+   * Hash of the block content, stored next to the marker. Graph changes text slightly when it
+   * stores it (line breaks, previews), so content is compared by hash, not field by field.
+   */
+  contentHash: string;
 }
 
 /** A block that freebusy-sync finds in the target calendar, recognised by its marker. */
-export interface ExistingBlock extends BlockContent {
+export interface ExistingBlock {
   targetId: string;
   marker: string;
+  contentHash: string;
+  start: string;
+  end: string;
+  allDay: boolean;
 }
 
 export type SyncAction =

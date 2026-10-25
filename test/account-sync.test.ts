@@ -365,3 +365,31 @@ describe("sync status in the UI", () => {
     );
   });
 });
+
+describe("alarm queue", () => {
+  it("runs one rule per alarm and schedules the next one", async () => {
+    const { stub, ruleId } = await setupRule("acc-queue");
+    // A second rule in the other direction; it also targets this account.
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-queue-rule-2', user_id, target_calendar_id, source_calendar_id FROM rules WHERE id = ?",
+    )
+      .bind(ruleId)
+      .run();
+    await stub.storeTokens("acc-queue", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    fakeGraph();
+    const runs = async () =>
+      (await auditOf(ruleId)).length + (await auditOf("acc-queue-rule-2")).length;
+
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await runs()).toBe(1);
+    // The second rule is still queued and its alarm is set.
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await runs()).toBe(2);
+    expect(await runDurableObjectAlarm(stub)).toBe(false);
+  });
+});

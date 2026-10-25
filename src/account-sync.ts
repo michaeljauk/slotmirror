@@ -33,6 +33,9 @@ export interface RunResult {
 /** Wait this long after a change notification before syncing, so that bursts collapse into one run. */
 const DEBOUNCE_MS = 5_000;
 
+/** Durable Object storage key of the rules still to run in the current cycle. */
+const RULE_QUEUE_KEY = "ruleQueue";
+
 /** Refresh the access token this long before it expires. */
 const REFRESH_MARGIN_MS = 60_000;
 
@@ -230,17 +233,33 @@ export class AccountSync extends DurableObject<Env> {
     return { removed, remaining: actions.length - removed };
   }
 
-  /** Run every rule that targets this account, one after another. */
+  /**
+   * Run the next rule that targets this account. Each alarm runs one rule, so that every rule gets
+   * the full subrequest budget of an invocation; the alarm then schedules itself for the next one.
+   * A rule with writes left stays at the front of the queue.
+   */
   override async alarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
-    for (const ruleId of await rulesTargetingAccount(this.env.DB, accountId)) {
-      try {
-        await this.runRule(ruleId);
-      } catch (error) {
-        // One broken rule must not stop the others; runRule has recorded the failure.
-        console.error("Rule run failed", ruleId, error);
-      }
+    let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
+    if (queue.length === 0) queue = await rulesTargetingAccount(this.env.DB, accountId);
+    const [ruleId, ...rest] = queue;
+    if (!ruleId) return;
+
+    let unfinished = false;
+    try {
+      unfinished = (await this.runRule(ruleId)).remaining > 0;
+    } catch (error) {
+      // One broken rule must not stop the others; runRule has recorded the failure.
+      console.error("Rule run failed", ruleId, error);
+    }
+
+    const next = unfinished ? [ruleId, ...rest] : rest;
+    if (next.length > 0) {
+      await this.ctx.storage.put(RULE_QUEUE_KEY, next);
+      await this.ctx.storage.setAlarm(Date.now() + 1_000);
+    } else {
+      await this.ctx.storage.delete(RULE_QUEUE_KEY);
     }
   }
 

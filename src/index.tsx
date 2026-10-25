@@ -10,6 +10,7 @@ import { MessagePage } from "./pages/message";
 import { SetupPage } from "./pages/setup";
 import { render } from "./render";
 import { auth } from "./routes/auth";
+import { rules } from "./routes/rules";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
 
@@ -60,6 +61,7 @@ app.use("*", async (c, next) => {
 });
 
 app.route("/auth", auth);
+app.route("/rules", rules);
 
 app.get("/", async (c) => {
   const user = c.get("user");

@@ -1,0 +1,154 @@
+import type { CalendarRow } from "../calendars";
+import type { RuleOptions } from "../config";
+import { useI18n } from "../i18n";
+import type { CurrentUser } from "../users";
+import { Layout } from "./layout";
+
+export interface RuleRow {
+  id: string;
+  sourceCalendarId: string;
+  targetCalendarId: string;
+  options: RuleOptions;
+}
+
+export type Notice = { kind: "info" | "error"; text: string };
+
+const DETAIL_LEVELS = ["busy", "title", "title_location", "full"] as const;
+
+function calendarLabel(calendar: CalendarRow | undefined): string {
+  return calendar ? `${calendar.accountEmail} · ${calendar.name}` : "?";
+}
+
+export function RulesPage(props: {
+  user: CurrentUser;
+  calendars: CalendarRow[];
+  rules: RuleRow[];
+  notice?: Notice;
+}) {
+  const { t } = useI18n();
+  const byId = new Map(props.calendars.map((calendar) => [calendar.id, calendar]));
+  const writable = props.calendars.filter((calendar) => calendar.canEdit);
+
+  return (
+    <Layout title={t.rules.title} user={props.user} active="rules">
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h1>{t.rules.title}</h1>
+            <p class="lead">{t.rules.lead}</p>
+          </div>
+        </div>
+
+        {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
+
+        <div class="card">
+          {props.rules.length === 0 ? (
+            <div class="empty">
+              <strong>{t.rules.emptyTitle}</strong>
+              {t.rules.emptyText}
+            </div>
+          ) : (
+            <ul class="list">
+              {props.rules.map((rule) => (
+                <li>
+                  <div class="item-main">
+                    <div class="item-title">
+                      {`${calendarLabel(byId.get(rule.sourceCalendarId))} → ${calendarLabel(byId.get(rule.targetCalendarId))}`}
+                    </div>
+                    <div class="item-meta">
+                      {`${t.rules.detailLevels[rule.options.detailLevel]} · ${rule.options.daysAhead} ${t.rules.daysAhead}`}
+                      {rule.options.markPrivate ? ` · ${t.rules.markPrivate}` : ""}
+                    </div>
+                  </div>
+                  <form method="post" action={`/rules/${rule.id}/preview`}>
+                    <button type="submit" class="button small">
+                      {t.rules.preview}
+                    </button>
+                  </form>
+                  <form method="post" action={`/rules/${rule.id}/run`}>
+                    <button type="submit" class="button small primary">
+                      {t.rules.runNow}
+                    </button>
+                  </form>
+                  <form method="post" action={`/rules/${rule.id}/delete`}>
+                    <button type="submit" class="link-button danger">
+                      {t.rules.delete}
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.rules.newRule}</h2>
+            <p class="lead">{t.rules.privateNote}</p>
+          </div>
+          <form method="post" action="/rules/calendars/refresh">
+            <button type="submit" class="link-button">
+              {t.rules.refreshCalendars}
+            </button>
+          </form>
+        </div>
+
+        {props.calendars.length === 0 ? (
+          <div class="card">
+            <div class="empty">{t.rules.noCalendars}</div>
+          </div>
+        ) : (
+          <form method="post" action="/rules" class="card form">
+            <label>
+              <span>{t.rules.from}</span>
+              <select name="source" required>
+                {props.calendars.map((calendar) => (
+                  <option value={calendar.id}>{calendarLabel(calendar)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{t.rules.to}</span>
+              <select name="target" required>
+                {writable.map((calendar) => (
+                  <option value={calendar.id}>{calendarLabel(calendar)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{t.rules.detail}</span>
+              <select name="detailLevel">
+                {DETAIL_LEVELS.map((level) => (
+                  <option value={level}>{t.rules.detailLevels[level]}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{t.rules.daysAhead}</span>
+              <input type="number" name="daysAhead" value="60" min="1" max="180" />
+            </label>
+            <label class="check-row">
+              <input type="checkbox" name="markPrivate" checked />
+              <span>{t.rules.markPrivate}</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" name="skipAllDay" checked />
+              <span>{t.rules.skipAllDay}</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" name="skipTentative" />
+              <span>{t.rules.skipTentative}</span>
+            </label>
+            <div class="actions">
+              <button type="submit" class="button primary">
+                {t.rules.create}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+    </Layout>
+  );
+}

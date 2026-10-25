@@ -121,12 +121,9 @@ export function HomePage(props: {
             <h2>{t.rules.title}</h2>
             <p class="lead">{t.rules.lead}</p>
           </div>
-        </div>
-        <div class="card">
-          <div class="empty">
-            <strong>{t.rules.emptyTitle}</strong>
-            {t.rules.emptyText}
-          </div>
+          <a class="button" href="/rules">
+            {t.rules.manage}
+          </a>
         </div>
       </section>
     </Layout>

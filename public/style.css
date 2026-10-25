@@ -563,3 +563,75 @@ h2 {
   color: var(--text);
   box-shadow: var(--shadow);
 }
+
+/* Forms and notices */
+
+.button.small {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  padding: 18px;
+}
+
+.form label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.form select,
+.form input[type="number"] {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+
+.form .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  color: var(--text);
+  font-weight: 400;
+}
+
+.form .actions {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+.notice {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.notice.info {
+  background: #e7edfb;
+  color: #1f3f8a;
+}
+
+.notice.error {
+  background: #f6e4e2;
+  color: #8a2a23;
+}
+
+@media (max-width: 560px) {
+  .form {
+    grid-template-columns: 1fr;
+  }
+}

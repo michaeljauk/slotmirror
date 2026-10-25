@@ -5,6 +5,7 @@
 export const en = {
   nav: {
     accounts: "Accounts",
+    rules: "Rules",
     admin: "Admin",
     accountMenu: "Account menu",
     signOut: "Sign out",
@@ -35,10 +36,37 @@ export const en = {
   },
   rules: {
     title: "Rules",
-    lead: "Which calendar shows busy blocks for which other calendar.",
+    lead: "Each rule copies events from one calendar into another, in one direction.",
     emptyTitle: "No rules yet",
     emptyText:
-      "Rules arrive with the sync engine. A rule will mirror busy times from one calendar into another, for example from your work calendar into your client calendar.",
+      "Add a rule below. For two-way sync, add one rule per direction, each with its own detail level.",
+    manage: "Manage rules",
+    newRule: "New rule",
+    from: "From",
+    to: "To",
+    detail: "Detail",
+    detailLevels: {
+      busy: "Busy only",
+      title: "Title",
+      title_location: "Title and location",
+      full: "All details",
+    },
+    markPrivate: "Mark blocks as private",
+    skipAllDay: "Skip all-day events",
+    skipTentative: "Skip tentative events",
+    daysAhead: "Days ahead",
+    create: "Add rule",
+    preview: "Preview",
+    runNow: "Run now",
+    delete: "Delete",
+    refreshCalendars: "Reload calendars",
+    noCalendars: "Connect an account first; its calendars appear here.",
+    previewResult: (create: number, update: number, remove: number, unchanged: number) =>
+      `Preview: ${create} to create, ${update} to update, ${remove} to delete, ${unchanged} unchanged. Nothing was written.`,
+    runResult: (applied: number, failed: number, remaining: number) =>
+      `Run finished: ${applied} changes written, ${failed} failed, ${remaining} left for the next run.`,
+    invalid: "Choose two different calendars. The target calendar must be writable.",
+    privateNote: "Events marked private in the source never carry more than Busy.",
   },
   admin: {
     title: "Users",

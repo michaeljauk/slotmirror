@@ -3,6 +3,7 @@ import type { Messages } from "./en";
 export const de: Messages = {
   nav: {
     accounts: "Konten",
+    rules: "Regeln",
     admin: "Verwaltung",
     accountMenu: "Kontomenü",
     signOut: "Abmelden",
@@ -33,10 +34,38 @@ export const de: Messages = {
   },
   rules: {
     title: "Regeln",
-    lead: "Welcher Kalender für welchen anderen Kalender Belegt-Blöcke zeigt.",
+    lead: "Jede Regel kopiert Termine aus einem Kalender in einen anderen, in eine Richtung.",
     emptyTitle: "Noch keine Regeln",
     emptyText:
-      "Regeln kommen mit dem Sync. Eine Regel spiegelt Belegt-Zeiten aus einem Kalender in einen anderen, zum Beispiel aus deinem Arbeitskalender in deinen Kundenkalender.",
+      "Lege unten eine Regel an. Für beide Richtungen braucht es zwei Regeln, jede mit eigener Detailstufe.",
+    manage: "Regeln verwalten",
+    newRule: "Neue Regel",
+    from: "Von",
+    to: "Nach",
+    detail: "Details",
+    detailLevels: {
+      busy: "Nur belegt",
+      title: "Titel",
+      title_location: "Titel und Ort",
+      full: "Alle Details",
+    },
+    markPrivate: "Blöcke als privat markieren",
+    skipAllDay: "Ganztägige Termine auslassen",
+    skipTentative: "Vorläufige Termine auslassen",
+    daysAhead: "Tage voraus",
+    create: "Regel anlegen",
+    preview: "Vorschau",
+    runNow: "Jetzt ausführen",
+    delete: "Löschen",
+    refreshCalendars: "Kalender neu laden",
+    noCalendars: "Verbinde zuerst ein Konto, dann erscheinen hier seine Kalender.",
+    previewResult: (create, update, remove, unchanged) =>
+      `Vorschau: ${create} anlegen, ${update} ändern, ${remove} löschen, ${unchanged} unverändert. Es wurde nichts geschrieben.`,
+    runResult: (applied, failed, remaining) =>
+      `Lauf beendet: ${applied} Änderungen geschrieben, ${failed} fehlgeschlagen, ${remaining} für den nächsten Lauf.`,
+    invalid:
+      "Wähle zwei verschiedene Kalender. In den Zielkalender muss geschrieben werden dürfen.",
+    privateNote: "Termine, die im Quellkalender privat sind, tragen nie mehr als „Belegt“.",
   },
   admin: {
     title: "Nutzer",

@@ -3,7 +3,7 @@ import { APP_NAME } from "../brand";
 import { LOCALE_NAMES, LOCALES, useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 
-export type NavItem = "accounts" | "admin";
+export type NavItem = "accounts" | "rules" | "admin";
 
 /** The logo mark: two calendars, the event mirrored as a hatched busy block. */
 function BrandMark() {
@@ -86,6 +86,9 @@ export function Layout(props: {
                 <nav class="nav">
                   <a href="/" aria-current={props.active === "accounts" ? "page" : undefined}>
                     {t.nav.accounts}
+                  </a>
+                  <a href="/rules" aria-current={props.active === "rules" ? "page" : undefined}>
+                    {t.nav.rules}
                   </a>
                   {user.role === "admin" ? (
                     <a href="/admin" aria-current={props.active === "admin" ? "page" : undefined}>

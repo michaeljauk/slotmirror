@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
+import { recordAudit } from "../audit";
 import type { Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
@@ -60,7 +62,9 @@ async function startFlow(c: Context<AppEnv>, provider: Provider, purpose: OAuthP
   );
 }
 
-auth.post("/logout", (c) => {
+auth.post("/logout", async (c) => {
+  const user = c.get("user");
+  if (user) await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_out" });
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
   return c.redirect("/");
 });
@@ -123,12 +127,19 @@ auth.get("/:provider/callback", async (c) => {
   if (stored.purpose === "sign-in") {
     const user = await signInUser(c.env, identity);
     if (!user) {
+      // No user exists for a refused identity; the log keeps the reason, not the address.
+      await recordAudit(c.env.DB, {
+        orgId: DEFAULT_ORG_ID,
+        kind: "sign_in_refused",
+        detail: { reason: "policy" },
+      });
       return message(c, 403, t.messages.notAllowed, t.messages.notAllowedToSignIn(identity.email));
     }
     const session = await signSession(
       { userId: user.id, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS },
       c.env.SESSION_SECRET,
     );
+    await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_in" });
     setCookie(c, SESSION_COOKIE, session, {
       path: "/",
       httpOnly: true,
@@ -167,6 +178,13 @@ auth.get("/:provider/callback", async (c) => {
     refreshToken: tokens.refresh_token,
     accessToken: tokens.access_token,
     accessExpiresAt: Date.now() + tokens.expires_in * 1000,
+  });
+  await recordAudit(c.env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    accountId: account.id,
+    kind: "account_connected",
+    detail: { provider },
   });
   return c.redirect("/");
 });

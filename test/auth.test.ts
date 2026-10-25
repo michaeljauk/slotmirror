@@ -180,3 +180,86 @@ describe("identityFromIdToken", () => {
     expect(() => identityFromIdToken(fakeIdToken({ tid: "t", oid: "o" }))).toThrow();
   });
 });
+
+/** All audit rows of a kind, with the detail parsed. */
+async function auditRows(kind: string) {
+  const { results } = await env.DB.prepare(
+    "SELECT org_id, user_id, account_id, kind, detail FROM audit_events WHERE kind = ? ORDER BY id",
+  )
+    .bind(kind)
+    .all<{ org_id: string; user_id: string | null; account_id: string | null; detail: string }>();
+  return results;
+}
+
+describe("audit events of the auth routes", () => {
+  it("records a sign-in and a refusal without tokens or addresses", async () => {
+    const before = (await auditRows("sign_in")).length;
+    const refusedBefore = (await auditRows("sign_in_refused")).length;
+
+    let flow = await startFlow("/auth/microsoft/login");
+    mockTokenEndpoint({
+      access_token: "secret-access-token",
+      refresh_token: "secret-refresh-token",
+      expires_in: 3600,
+      id_token: fakeIdToken({ tid: "t1", oid: "o1", preferred_username: "owner@example.com" }),
+    });
+    await exports.default.fetch(`${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`, {
+      headers: { cookie: flow.cookie },
+      redirect: "manual",
+    });
+    vi.restoreAllMocks();
+
+    flow = await startFlow("/auth/microsoft/login");
+    mockTokenEndpoint({
+      access_token: "secret-access-token",
+      expires_in: 3600,
+      id_token: fakeIdToken({ tid: "t1", oid: "o9", email: "stranger@example.com" }),
+    });
+    await exports.default.fetch(`${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`, {
+      headers: { cookie: flow.cookie },
+      redirect: "manual",
+    });
+
+    const signIns = await auditRows("sign_in");
+    const refused = await auditRows("sign_in_refused");
+    expect(signIns).toHaveLength(before + 1);
+    expect(refused).toHaveLength(refusedBefore + 1);
+    expect(signIns.at(-1)?.user_id).toBeTruthy();
+    expect(refused.at(-1)).toMatchObject({ user_id: null, org_id: "default" });
+
+    const { results } = await env.DB.prepare("SELECT * FROM audit_events").all();
+    const serialized = JSON.stringify(results);
+    expect(serialized).not.toContain("secret-");
+    expect(serialized).not.toContain("stranger@example.com");
+  });
+
+  it("records a connect and a sign-out", async () => {
+    const { user, cookie: session } = await signIn("owner@example.com");
+    const flow = await startFlow("/auth/microsoft/connect", session);
+    mockTokenEndpoint({
+      access_token: "secret-access-token",
+      refresh_token: "secret-refresh-token",
+      expires_in: 3600,
+      id_token: fakeIdToken({ tid: "t", oid: "o", preferred_username: "audited@example.com" }),
+    });
+    await exports.default.fetch(`${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`, {
+      headers: { cookie: `${flow.cookie}; ${session}` },
+      redirect: "manual",
+    });
+    const account = await env.DB.prepare("SELECT id FROM accounts WHERE email = ?")
+      .bind("audited@example.com")
+      .first<{ id: string }>();
+    const connected = (await auditRows("account_connected")).filter(
+      (row) => row.account_id === account?.id,
+    );
+    expect(connected).toHaveLength(1);
+    expect(connected[0]).toMatchObject({ user_id: user.id, detail: '{"provider":"microsoft"}' });
+
+    await exports.default.fetch(`${BASE}/auth/logout`, {
+      method: "POST",
+      headers: { cookie: session },
+      redirect: "manual",
+    });
+    expect((await auditRows("sign_out")).some((row) => row.user_id === user.id)).toBe(true);
+  });
+});

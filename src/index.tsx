@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import type { AppEnv } from "./app-env";
-import { purgeAuditEvents } from "./audit";
+import { purgeAuditEvents, recordAudit } from "./audit";
 import { setupStatus } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
@@ -92,6 +92,12 @@ app.post("/accounts/:id/disconnect", async (c) => {
   await c.env.DB.prepare("DELETE FROM accounts WHERE id = ? AND user_id = ?")
     .bind(accountId, user.id)
     .run();
+  await recordAudit(c.env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    accountId,
+    kind: "account_disconnected",
+  });
   return c.redirect("/");
 });
 

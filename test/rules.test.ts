@@ -54,6 +54,31 @@ describe("rules", () => {
       skipAllDay: false,
       skipTentative: false,
     });
+
+    const event = await env.DB.prepare(
+      "SELECT user_id, account_id, detail FROM audit_events WHERE kind = 'rule_created'",
+    ).first<{ user_id: string; account_id: string; detail: string }>();
+    expect(event).toMatchObject({ user_id: user.id, account_id: "acc-r1" });
+    expect(JSON.parse(event?.detail ?? "{}")).toEqual({ detailLevel: "title", daysAhead: 30 });
+  });
+
+  it("records the deletion of a rule once", async () => {
+    const { user, cookie } = await signIn("owner@example.com");
+    await setupCalendars("acc-rdel", user.id);
+    await post("/rules", cookie, { source: "acc-rdel-work", target: "acc-rdel-test" });
+    const rule = await env.DB.prepare(
+      "SELECT id FROM rules WHERE user_id = ? AND source_calendar_id = 'acc-rdel-work'",
+    )
+      .bind(user.id)
+      .first<{ id: string }>();
+    await post(`/rules/${rule?.id}/delete`, cookie);
+    await post(`/rules/${rule?.id}/delete`, cookie);
+    const { results } = await env.DB.prepare(
+      "SELECT account_id FROM audit_events WHERE kind = 'rule_deleted' AND rule_id = ?",
+    )
+      .bind(rule?.id)
+      .all<{ account_id: string }>();
+    expect(results).toEqual([{ account_id: "acc-rdel" }]);
   });
 
   it("refuses a target calendar that is not writable, and identical calendars", async () => {

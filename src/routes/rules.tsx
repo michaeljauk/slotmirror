@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
+import { recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { parseRuleOptions, ruleOptionsSchema } from "../config";
 import { i18nFromContext } from "../i18n";
@@ -94,12 +95,21 @@ rules.post("/", async (c) => {
     calendars.get(target)?.canEdit === true;
   if (!valid) return renderPage(c, { kind: "error", text: t.rules.invalid }, 400);
 
+  const ruleId = crypto.randomUUID();
   await c.env.DB.prepare(
     `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options)
      VALUES (?, ?, ?, ?, ?)`,
   )
-    .bind(crypto.randomUUID(), user.id, source, target, JSON.stringify(parsed.data))
+    .bind(ruleId, user.id, source, target, JSON.stringify(parsed.data))
     .run();
+  await recordAudit(c.env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    accountId: calendars.get(target)?.accountId,
+    ruleId,
+    kind: "rule_created",
+    detail: { detailLevel: parsed.data.detailLevel, daysAhead: parsed.data.daysAhead },
+  });
   return c.redirect("/rules");
 });
 
@@ -128,8 +138,20 @@ for (const action of ["preview", "run"] as const) {
 }
 
 rules.post("/:id/delete", async (c) => {
-  await c.env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?")
-    .bind(c.req.param("id"), currentUser(c).id)
+  const user = currentUser(c);
+  const ruleId = c.req.param("id");
+  const target = await targetAccountOf(c.env.DB, ruleId, user.id);
+  const deleted = await c.env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?")
+    .bind(ruleId, user.id)
     .run();
+  if (deleted.meta.changes > 0) {
+    await recordAudit(c.env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      accountId: target?.accountId,
+      ruleId,
+      kind: "rule_deleted",
+    });
+  }
   return c.redirect("/rules");
 });

@@ -130,6 +130,11 @@ describe("account actions", () => {
     expect(response.status).toBe(302);
     expect(await env.DB.prepare("SELECT 1 FROM accounts WHERE id = 'acc-del'").first()).toBeNull();
     expect(await stub.hasTokens()).toBe(false);
+
+    const event = await env.DB.prepare(
+      "SELECT user_id, account_id FROM audit_events WHERE kind = 'account_disconnected'",
+    ).first<{ user_id: string; account_id: string }>();
+    expect(event).toEqual({ user_id: user.id, account_id: "acc-del" });
   });
 
   it("does not let a user disconnect someone else's account", async () => {

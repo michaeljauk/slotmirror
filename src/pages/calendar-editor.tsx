@@ -89,6 +89,7 @@ function DestinationRow(props: {
   return (
     <div class="dest">
       <div class="dest-name">
+        <span class="dest-to">{t.editor.to}</span>
         <AccountName account={target} />
       </div>
       <form method="post" action="/rules/direction" class="choices">
@@ -205,6 +206,9 @@ export function SourcePills(props: { state: EditorState; source: EditorAccount }
           const exception = direction.origin === "custom" && props.source.inGroup && target.inGroup;
           return (
             <span class={exception ? "pill exception" : "pill"}>
+              <span class="pill-arrow" aria-label={t.editor.to}>
+                →
+              </span>
               <AccountName account={target} />
               {": "}
               <b>{t.editor.short[direction.effective]}</b>

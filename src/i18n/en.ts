@@ -115,6 +115,8 @@ export const en = {
     groupAdd: "Add to the group",
     groupRemove: "Remove from the group",
     sourceTitle: (name: string) => `Events from ${name}`,
+    to: "to",
+    manage: "Edit",
     choices: { off: "Not", busy: "As busy", title: "With title", full: "Everything" },
     short: { off: "no", busy: "busy", title: "title", full: "all" },
     looksLike: "Looks like this there:",

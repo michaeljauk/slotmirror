@@ -1111,3 +1111,46 @@ details.rename summary::-webkit-details-marker {
 .rename-form .button {
   justify-self: start;
 }
+
+/* Editor polish */
+
+.dest-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.dest-to {
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.pill-arrow {
+  margin-right: 4px;
+  color: var(--faint);
+}
+
+.pill.exception {
+  background: #e3eaf9;
+  box-shadow: inset 0 0 0 1px #c9d6f2;
+}
+
+.group-text {
+  text-wrap: pretty;
+}
+
+.editor-foot .link-button {
+  line-height: inherit;
+}
+
+.editor-foot form {
+  display: flex;
+}
+
+.plain-link {
+  color: var(--text);
+}
+
+.plain-link:hover {
+  text-decoration: underline;
+}

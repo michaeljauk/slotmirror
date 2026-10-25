@@ -180,7 +180,7 @@ export function HomePage(props: {
             <p class="lead">{t.editor.lead}</p>
           </div>
           <a class="button" href="/rules">
-            {t.rules.manage}
+            {t.editor.manage}
           </a>
         </div>
 
@@ -194,7 +194,10 @@ export function HomePage(props: {
                 .map((account) => (
                   <li>
                     <div class="item-main">
-                      <a class="item-title" href={`/rules?open=${account.id}#src-${account.id}`}>
+                      <a
+                        class="item-title plain-link"
+                        href={`/rules?open=${account.id}#src-${account.id}`}
+                      >
                         {t.editor.sourceTitle(account.name)}
                       </a>
                       <SourcePills state={props.editor} source={account} />

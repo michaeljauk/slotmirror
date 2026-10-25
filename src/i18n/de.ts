@@ -116,6 +116,8 @@ export const de: Messages = {
     groupAdd: "Zur Gruppe hinzufügen",
     groupRemove: "Aus der Gruppe nehmen",
     sourceTitle: (name: string) => `Termine aus ${name}`,
+    to: "nach",
+    manage: "Bearbeiten",
     choices: { off: "Nicht", busy: "Als belegt", title: "Mit Titel", full: "Alles" },
     short: { off: "nicht", busy: "belegt", title: "Titel", full: "alles" },
     looksLike: "So sieht es dort aus:",

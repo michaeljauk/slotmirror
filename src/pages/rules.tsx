@@ -26,6 +26,8 @@ export function RulesPage(props: {
   user: CurrentUser;
   calendars: CalendarRow[];
   rules: RuleRow[];
+  /** Rules whose detail level an org cap lowers, with the level they run with. */
+  capped: Map<string, RuleOptions["detailLevel"]>;
   /** Latest finished run or failure per rule ID. */
   outcomes: Map<string, RuleOutcome>;
   notice?: Notice;
@@ -76,6 +78,11 @@ export function RulesPage(props: {
                       {`${t.rules.detailLevels[rule.options.detailLevel]} · ${t.rules.days(rule.options.daysAhead)}`}
                       {rule.options.markPrivate ? ` · ${t.rules.markPrivate}` : ""}
                     </div>
+                    {props.capped.has(rule.id) ? (
+                      <div class="item-meta">
+                        {t.rules.capped(t.rules.detailLevels[props.capped.get(rule.id) ?? "busy"])}
+                      </div>
+                    ) : null}
                     {rule.enabled ? (
                       lastRun(props.outcomes.get(rule.id))
                     ) : (

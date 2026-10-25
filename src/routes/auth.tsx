@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
 import { recordAudit } from "../audit";
-import type { Provider } from "../config";
+import { signInProviders, type Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
 import { PROVIDER_LABEL } from "../pages/home";
@@ -13,6 +13,7 @@ import type { Identity, TokenResponse } from "../providers/oauth-token";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "../session";
 import { render } from "../render";
 import { signInUser } from "../users";
+import { accountSync } from "../durable";
 
 export const auth = new Hono<AppEnv>();
 
@@ -79,6 +80,16 @@ auth.post("/logout", async (c) => {
 auth.get("/:provider/login", async (c) => {
   const provider = parseProvider(c.req.param("provider"));
   if (!provider) return c.notFound();
+  const configured = Boolean(clientCredentials(c.env, provider).clientId);
+  if (configured && !signInProviders(c.env)[provider]) {
+    const { t } = i18nFromContext(c);
+    return message(
+      c,
+      403,
+      t.messages.notAllowed,
+      t.messages.signInProviderOff(PROVIDER_LABEL[provider]),
+    );
+  }
   return startFlow(c, provider, "sign-in");
 });
 
@@ -180,7 +191,7 @@ auth.get("/:provider/callback", async (c) => {
     );
   }
 
-  await c.env.ACCOUNT_SYNC.getByName(account.id).storeTokens(
+  await accountSync(c.env, account.id).storeTokens(
     account.id,
     {
       refreshToken: tokens.refresh_token,

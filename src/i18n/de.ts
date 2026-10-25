@@ -81,6 +81,7 @@ export const de: Messages = {
       `${blocks} Blöcke · letzter Lauf ${time} · ${changes} Änderungen`,
     lastRunFailed: (time: string, code: string) =>
       `letzter Lauf fehlgeschlagen · ${time} · ${code}`,
+    capped: (level: string) => `Durch die Richtlinie dieser Installation begrenzt auf: ${level}`,
     privateNote: "Termine, die im Quellkalender privat sind, tragen nie mehr als „Belegt“.",
   },
   privacy: {
@@ -121,6 +122,11 @@ export const de: Messages = {
     lastSignIn: "Letzte Anmeldung",
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
+    capsTitle: "Detail-Grenzen",
+    capsLead:
+      "Wie viel Detail eine Regel höchstens zwischen Konten der Organisation und anderen Konten kopiert. Gesetzt über MAX_DETAIL_TO_EXTERNAL und MAX_DETAIL_FROM_EXTERNAL; Konten der Organisation passen zu ALLOWED_TENANT_IDS oder ALLOWED_DOMAINS.",
+    capToExternal: "Vom Konto der Organisation in ein anderes Konto",
+    capFromExternal: "Von einem anderen Konto in ein Konto der Organisation",
   },
   activity: {
     title: "Aktivität",
@@ -162,7 +168,7 @@ export const de: Messages = {
     sessionHint: "Mindestens 32 Zeichen. Erzeugen mit: openssl rand -base64 48",
     keyHint: "Ein Base64-kodierter 32-Byte-Schlüssel. Erzeugen mit: openssl rand -base64 32",
     providerHint:
-      "Mindestens ein Anbieter. Die Schritte zur App-Registrierung stehen in der README.",
+      "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Die Schritte zur App-Registrierung stehen in der README.",
   },
   messages: {
     back: "Zurück zur Startseite",
@@ -182,6 +188,8 @@ export const de: Messages = {
     connectFailed: "Verbinden fehlgeschlagen",
     noRefreshToken: (provider) =>
       `${provider} hat kein Refresh-Token geliefert (offline_access fehlt).`,
+    signInProviderOff: (provider: string) =>
+      `Diese Installation bietet keine Anmeldung mit ${provider} an. Nach der Anmeldung kannst du ${provider}-Konten trotzdem verbinden.`,
     alreadyConnected: "Bereits verbunden",
     alreadyConnectedText: (email) =>
       `${email} ist bereits von einem anderen Nutzer dieser Installation verbunden.`,

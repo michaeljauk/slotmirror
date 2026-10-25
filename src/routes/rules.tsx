@@ -3,10 +3,12 @@ import type { AppEnv } from "../app-env";
 import { latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { parseRuleOptions, ruleOptionsSchema } from "../config";
+import { detailLevelFor } from "../detail-policy";
 import { i18nFromContext } from "../i18n";
 import { RulesPage, type Notice, type RuleRow } from "../pages/rules";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
+import { accountSync } from "../durable";
 
 export const rules = new Hono<AppEnv>();
 
@@ -50,11 +52,27 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
     await refreshUserCalendars(c.env, user.id);
     calendars = await userCalendars(c.env.DB, user.id);
   }
+  const ruleRows = await userRules(c.env.DB, user.id);
+  const byId = new Map(calendars.map((calendar) => [calendar.id, calendar]));
+  const capped = new Map<string, RuleRow["options"]["detailLevel"]>();
+  for (const rule of ruleRows) {
+    const source = byId.get(rule.sourceCalendarId);
+    const target = byId.get(rule.targetCalendarId);
+    if (!source || !target) continue;
+    const effective = detailLevelFor(
+      c.env,
+      rule.options.detailLevel,
+      { email: source.accountEmail, tenantId: source.accountTenantId },
+      { email: target.accountEmail, tenantId: target.accountTenantId },
+    );
+    if (effective.capped) capped.set(rule.id, effective.level);
+  }
   const page = (
     <RulesPage
       user={user}
       calendars={calendars}
-      rules={await userRules(c.env.DB, user.id)}
+      rules={ruleRows}
+      capped={capped}
       outcomes={new Map((await latestRuleOutcomes(c.env.DB, user.id)).map((o) => [o.ruleId, o]))}
       notice={notice}
     />
@@ -133,7 +151,7 @@ for (const action of ["preview", "run"] as const) {
     const target = await targetAccountOf(c.env.DB, ruleId, user.id);
     if (!target) return c.notFound();
     try {
-      const result = await c.env.ACCOUNT_SYNC.getByName(target.accountId).runRule(ruleId, {
+      const result = await accountSync(c.env, target.accountId).runRule(ruleId, {
         dryRun: action === "preview",
       });
       const { create, update, delete: remove, unchanged } = result.stats;
@@ -171,7 +189,7 @@ for (const [action, enabled] of [
         kind: enabled ? "rule_enabled" : "rule_paused",
       });
       // Start the first run now instead of waiting for the next cron.
-      if (enabled && target) await c.env.ACCOUNT_SYNC.getByName(target.accountId).requestSync();
+      if (enabled && target) await accountSync(c.env, target.accountId).requestSync();
     }
     return c.redirect("/rules");
   });
@@ -192,7 +210,7 @@ rules.post("/:id/delete", async (c) => {
   // Remove the rule's blocks first; the rule's tag is the only way to find them later.
   let cleanup: { removed: number; remaining: number } | null = null;
   try {
-    cleanup = await c.env.ACCOUNT_SYNC.getByName(target.accountId).removeRuleBlocks(
+    cleanup = await accountSync(c.env, target.accountId).removeRuleBlocks(
       ruleId,
       target.remoteCalendarId,
     );

@@ -36,7 +36,9 @@ export interface SetupStatus {
   sessionSecret: boolean;
   tokenEncryptionKey: boolean;
   providers: Record<Provider, boolean>;
-  /** True if the dashboard can be used: access, both secrets, and at least one provider. */
+  /** At least one configured provider is allowed for sign-in. */
+  signIn: boolean;
+  /** True if the dashboard can be used: access, both secrets, and a sign-in provider. */
   ready: boolean;
 }
 
@@ -49,12 +51,31 @@ export function setupStatus(env: Env): SetupStatus {
     microsoft: Boolean(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET),
     google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
   };
-  const ready =
-    accessConfigured &&
-    sessionSecret &&
-    tokenEncryptionKey &&
-    (providers.microsoft || providers.google);
-  return { accessConfigured, sessionSecret, tokenEncryptionKey, providers, ready };
+  const allowed = signInProviders(env);
+  const signIn = allowed.microsoft || allowed.google;
+  const ready = accessConfigured && sessionSecret && tokenEncryptionKey && signIn;
+  return { accessConfigured, sessionSecret, tokenEncryptionKey, providers, signIn, ready };
+}
+
+/**
+ * Providers offered for sign-in: the configured ones, limited by SIGN_IN_PROVIDERS if it is set.
+ * Connecting accounts is not limited; an org can require sign-in through Entra and still let
+ * people connect any Microsoft or Google account.
+ */
+export function signInProviders(env: Env): Record<Provider, boolean> {
+  const configured = {
+    microsoft: Boolean(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET),
+    google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+  };
+  const listed = (env.SIGN_IN_PROVIDERS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  if (listed.length === 0) return configured;
+  return {
+    microsoft: configured.microsoft && listed.includes("microsoft"),
+    google: configured.google && listed.includes("google"),
+  };
 }
 
 function isBase64Key(value: string | undefined, bytes: number): boolean {

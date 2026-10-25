@@ -1,5 +1,6 @@
 import type { Role } from "../access";
 import type { ActivityRow } from "../audit";
+import type { DetailCaps } from "../detail-policy";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ActivityTable } from "./activity";
@@ -17,6 +18,7 @@ export function AdminPage(props: {
   user: CurrentUser;
   users: AdminUserRow[];
   activity: ActivityRow[];
+  caps: DetailCaps;
 }) {
   const { t, formatTimestamp } = useI18n();
   return (
@@ -53,6 +55,29 @@ export function AdminPage(props: {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.admin.capsTitle}</h2>
+            <p class="lead">{t.admin.capsLead}</p>
+          </div>
+        </div>
+        <div class="card">
+          <table class="table">
+            <tbody>
+              <tr>
+                <td>{t.admin.capToExternal}</td>
+                <td>{t.rules.detailLevels[props.caps.toExternal]}</td>
+              </tr>
+              <tr>
+                <td>{t.admin.capFromExternal}</td>
+                <td>{t.rules.detailLevels[props.caps.fromExternal]}</td>
+              </tr>
             </tbody>
           </table>
         </div>

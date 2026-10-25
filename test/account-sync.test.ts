@@ -502,3 +502,74 @@ describe("mailbox concurrency", () => {
     expect(maxInFlight).toBe(1);
   });
 });
+
+describe("detail caps", () => {
+  /** A rule between two accounts of one user, each with one calendar. */
+  async function setupPair(prefix: string, sourceEmail: string, targetEmail: string) {
+    const { user } = await signIn("owner@example.com");
+    const statements = [
+      [`${prefix}-a`, sourceEmail, SOURCE_CAL],
+      [`${prefix}-b`, targetEmail, TARGET_CAL],
+    ].flatMap(([id, email, remote]) => [
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
+      ).bind(id, user.id, email),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Cal')",
+      ).bind(`${id}-cal`, id, remote),
+    ]);
+    await env.DB.batch([
+      ...statements,
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options) VALUES (?, ?, ?, ?, ?)",
+      ).bind(
+        `${prefix}-rule`,
+        user.id,
+        `${prefix}-a-cal`,
+        `${prefix}-b-cal`,
+        JSON.stringify({ detailLevel: "full" }),
+      ),
+    ]);
+    for (const id of [`${prefix}-a`, `${prefix}-b`]) {
+      await env.ACCOUNT_SYNC.getByName(id).storeTokens(id, {
+        refreshToken: "r",
+        accessToken: "a",
+        accessExpiresAt: Date.now() + 3_600_000,
+      });
+    }
+    return { stub: env.ACCOUNT_SYNC.getByName(`${prefix}-b`), ruleId: `${prefix}-rule` };
+  }
+
+  function sentBlocks(calls: { url: string; init?: RequestInit }[]) {
+    const batch = calls.find((call) => call.url.endsWith("/$batch"));
+    return (
+      JSON.parse(batch?.init?.body as string) as {
+        requests: {
+          body: { subject: string; body: { content: string }; location: { displayName: string } };
+        }[];
+      }
+    ).requests.map((request) => request.body);
+  }
+
+  it("copies at most the title from an org account to another account", async () => {
+    const { stub, ruleId } = await setupPair("cap-out", "me@org.example", "me@private.example");
+    const calls = fakeGraph();
+    await stub.runRule(ruleId);
+
+    const blocks = sentBlocks(calls);
+    const titled = fixture.value.filter((event) => event.subject).map((event) => event.subject);
+    expect(blocks.some((block) => titled.includes(block.subject))).toBe(true);
+    for (const block of blocks) {
+      expect(block.body.content).toBe("");
+      expect(block.location.displayName).toBe("");
+    }
+  });
+
+  it("copies only busy from another account to an org account", async () => {
+    const { stub, ruleId } = await setupPair("cap-in", "in@private.example", "in@org.example");
+    const calls = fakeGraph();
+    await stub.runRule(ruleId);
+
+    for (const block of sentBlocks(calls)) expect(block.subject).toBe("Busy");
+  });
+});

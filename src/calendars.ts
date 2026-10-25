@@ -1,9 +1,11 @@
 import type { CalendarInfo } from "./providers/calendar-client";
+import { accountSync } from "./durable";
 
 export interface CalendarRow {
   id: string;
   accountId: string;
   accountEmail: string;
+  accountTenantId: string | null;
   name: string;
   canEdit: boolean;
   isDefault: boolean;
@@ -13,7 +15,8 @@ export interface CalendarRow {
 export async function userCalendars(db: D1Database, userId: string): Promise<CalendarRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT c.id, c.account_id AS accountId, a.email AS accountEmail, c.name,
+      `SELECT c.id, c.account_id AS accountId, a.email AS accountEmail,
+              a.tenant_id AS accountTenantId, c.name,
               c.can_edit AS canEdit, c.is_default AS isDefault
        FROM calendars c JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ?
@@ -24,6 +27,7 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
       id: string;
       accountId: string;
       accountEmail: string;
+      accountTenantId: string | null;
       name: string;
       canEdit: number;
       isDefault: number;
@@ -47,7 +51,7 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
     // One account with expired or missing tokens must not block the calendars of the others.
     let calendars: CalendarInfo[];
     try {
-      calendars = await env.ACCOUNT_SYNC.getByName(account.id).listCalendars();
+      calendars = await accountSync(env, account.id).listCalendars();
     } catch (error) {
       console.error("Loading calendars failed", account.id, error);
       continue;

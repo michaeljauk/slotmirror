@@ -82,6 +82,7 @@ export const en = {
       `${blocks} blocks · last run ${time} · ${changes} changes`,
     lastRunFailed: (time: string, code: string) => `last run failed · ${time} · ${code}`,
     privateNote: "Events marked private in the source never carry more than Busy.",
+    capped: (level: string) => `Limited to ${level} by this deployment's policy`,
   },
   privacy: {
     title: "Privacy",
@@ -121,6 +122,11 @@ export const en = {
     lastSignIn: "Last sign-in",
     never: "never",
     onlyAdmins: "Only admins can open this page.",
+    capsTitle: "Detail limits",
+    capsLead:
+      "The most detail a rule may copy between org accounts and other accounts. Set with MAX_DETAIL_TO_EXTERNAL and MAX_DETAIL_FROM_EXTERNAL; org accounts match ALLOWED_TENANT_IDS or ALLOWED_DOMAINS.",
+    capToExternal: "From an org account to another account",
+    capFromExternal: "From another account to an org account",
   },
   activity: {
     title: "Activity",
@@ -161,7 +167,8 @@ export const en = {
       "Who may sign in. Your own address for a personal deployment, your email domain for a team.",
     sessionHint: "At least 32 characters. Generate with: openssl rand -base64 48",
     keyHint: "A base64-encoded 32-byte key. Generate with: openssl rand -base64 32",
-    providerHint: "At least one provider. See the README for the app registration steps.",
+    providerHint:
+      "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. See the README for the app registration steps.",
   },
   messages: {
     back: "Back to the start page",
@@ -180,6 +187,8 @@ export const en = {
     connectFailed: "Connect failed",
     noRefreshToken: (provider: string) =>
       `${provider} returned no refresh token (offline_access missing).`,
+    signInProviderOff: (provider: string) =>
+      `This deployment does not offer sign-in with ${provider}. You can still connect ${provider} accounts after signing in.`,
     alreadyConnected: "Already connected",
     alreadyConnectedText: (email: string) =>
       `${email} is already connected by another user of this deployment.`,

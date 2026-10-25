@@ -10,7 +10,7 @@ import {
   recordAudit,
   userActivity,
 } from "./audit";
-import { setupStatus } from "./config";
+import { setupStatus, signInProviders } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
@@ -23,6 +23,8 @@ import { auth } from "./routes/auth";
 import { rules } from "./routes/rules";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
+import { detailCapsFromEnv } from "./detail-policy";
+import { accountSync } from "./durable";
 
 export { AccountSync } from "./account-sync";
 
@@ -88,7 +90,7 @@ app.get("/", async (c) => {
   const user = c.get("user");
   const { providers } = setupStatus(c.env);
   if (!user) {
-    return render(c, <SignInPage providers={providers} />);
+    return render(c, <SignInPage providers={signInProviders(c.env)} />);
   }
   const { results } = await c.env.DB.prepare(
     `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt
@@ -129,7 +131,7 @@ app.post("/accounts/:id/disconnect", async (c) => {
   let cleanupFailed = 0;
   for (const rule of affected) {
     try {
-      const result = await c.env.ACCOUNT_SYNC.getByName(rule.targetAccountId).removeRuleBlocks(
+      const result = await accountSync(c.env, rule.targetAccountId).removeRuleBlocks(
         rule.ruleId,
         rule.remoteCalendarId,
       );
@@ -140,7 +142,7 @@ app.post("/accounts/:id/disconnect", async (c) => {
     }
   }
 
-  await c.env.ACCOUNT_SYNC.getByName(accountId).forget();
+  await accountSync(c.env, accountId).forget();
   // Deleting the account also deletes its calendars and every rule that uses them.
   await c.env.DB.prepare("DELETE FROM accounts WHERE id = ? AND user_id = ?")
     .bind(accountId, user.id)
@@ -183,13 +185,16 @@ app.get("/admin", async (c) => {
     .bind(user.orgId)
     .all<AdminUserRow>();
   const activity = await orgActivity(c.env.DB, user.orgId);
-  return render(c, <AdminPage user={user} users={results} activity={activity} />);
+  return render(
+    c,
+    <AdminPage user={user} users={results} activity={activity} caps={detailCapsFromEnv(c.env)} />,
+  );
 });
 
 async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
   const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();
   for (const { id } of results) {
-    await env.ACCOUNT_SYNC.getByName(id).requestSync();
+    await accountSync(env, id).requestSync();
   }
   await purgeAuditEvents(env.DB);
 }

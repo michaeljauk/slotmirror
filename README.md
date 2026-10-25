@@ -58,19 +58,37 @@ Requirements:
 One deployment serves one person or one team. Each user signs in, connects their own calendars
 and sets their own rules. Nobody sees another user's calendars.
 
-| Name                              | Kind     | Purpose                                                                                  |
-| --------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
-| `ALLOWED_EMAILS`                  | variable | Comma-separated addresses that may sign in. For a personal deployment, your own address. |
-| `ALLOWED_DOMAINS`                 | variable | Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team.   |
-| `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.           |
-| `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).    |
-| `ORG_NAME`                        | variable | Optional display name.                                                                   |
-| `SESSION_SECRET`                  | secret   | At least 32 characters. Signs the session cookie. `openssl rand -base64 48`              |
-| `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`       |
-| `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                     |
-| `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                      |
+| Name                              | Kind     | Purpose                                                                                    |
+| --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| `ALLOWED_EMAILS`                  | variable | Comma-separated addresses that may sign in. For a personal deployment, your own address.   |
+| `ALLOWED_DOMAINS`                 | variable | Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team.     |
+| `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.             |
+| `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).      |
+| `ORG_NAME`                        | variable | Optional display name.                                                                     |
+| `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
+| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in; connecting accounts stays open.   |
+| `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set before the first account connects. |
+| `MAX_DETAIL_TO_EXTERNAL`          | variable | Optional cap from org accounts to other accounts: `busy`, `title`, `title_location`.       |
+| `MAX_DETAIL_FROM_EXTERNAL`        | variable | Optional cap from other accounts to org accounts. Same values.                             |
+| `SESSION_SECRET`                  | secret   | At least 32 characters. Signs the session cookie. `openssl rand -base64 48`                |
+| `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`         |
+| `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                       |
+| `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                        |
 
 If you remove someone from these settings, their access ends at their next request.
+
+**Org accounts** are accounts whose Entra tenant is in `ALLOWED_TENANT_IDS` or whose domain is in
+`ALLOWED_DOMAINS`. The detail caps apply between them and every other account, at every run. A
+lower cap also rewrites the blocks a rule already wrote. An invalid cap value counts as `busy`.
+
+**For a team on Microsoft 365**, set `ALLOWED_DOMAINS` to your domain, `ALLOWED_TENANT_IDS` to
+your tenant and `SIGN_IN_PROVIDERS=microsoft`. Only then is sign-in limited to your Entra
+tenant: anyone can create a Google account on an address at your domain.
+
+**Data location.** With `DATA_JURISDICTION=eu`, tokens and the sync itself, which reads event
+contents, stay in the EU. Create the D1 database in the EU too:
+`wrangler d1 create freebusy-sync --jurisdiction=eu`. Neither setting can change for existing
+data. Changing `DATA_JURISDICTION` later disconnects every account.
 
 Until all required settings are present, every dashboard page shows a setup checklist. The
 checklist names missing settings and never shows values.

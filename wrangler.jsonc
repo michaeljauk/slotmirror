@@ -26,5 +26,9 @@
     "ALLOWED_TENANT_IDS": "",
     "ADMIN_EMAILS": "",
     "PRIVACY_CONTACT": "",
+    "SIGN_IN_PROVIDERS": "",
+    "DATA_JURISDICTION": "",
+    "MAX_DETAIL_TO_EXTERNAL": "",
+    "MAX_DETAIL_FROM_EXTERNAL": "",
   },
 }

@@ -7,8 +7,17 @@ export interface RuleContext {
   orgId: string;
   options: RuleOptions;
   enabled: boolean;
-  source: { accountId: string; provider: string; remoteCalendarId: string };
-  target: { accountId: string; provider: string; remoteCalendarId: string };
+  source: RuleEnd;
+  target: RuleEnd;
+}
+
+interface RuleEnd {
+  accountId: string;
+  provider: string;
+  remoteCalendarId: string;
+  /** Address and Entra tenant of the account; they decide whether it belongs to the org. */
+  email: string;
+  tenantId: string | null;
 }
 
 interface RuleRow {
@@ -20,15 +29,21 @@ interface RuleRow {
   sourceAccountId: string;
   sourceProvider: string;
   sourceRemoteId: string;
+  sourceEmail: string;
+  sourceTenantId: string | null;
   targetAccountId: string;
   targetProvider: string;
   targetRemoteId: string;
+  targetEmail: string;
+  targetTenantId: string | null;
 }
 
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
-         ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId
+         sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+         ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
+         ta.email AS targetEmail, ta.tenant_id AS targetTenantId
   FROM rules r
   JOIN users u ON u.id = r.user_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
@@ -47,11 +62,15 @@ function toContext(row: RuleRow): RuleContext {
       accountId: row.sourceAccountId,
       provider: row.sourceProvider,
       remoteCalendarId: row.sourceRemoteId,
+      email: row.sourceEmail,
+      tenantId: row.sourceTenantId,
     },
     target: {
       accountId: row.targetAccountId,
       provider: row.targetProvider,
       remoteCalendarId: row.targetRemoteId,
+      email: row.targetEmail,
+      tenantId: row.targetTenantId,
     },
   };
 }

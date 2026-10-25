@@ -46,8 +46,8 @@ export function SetupPage(props: { status: SetupStatus }) {
               hint={t.setup.keyHint}
             />
             <Item
-              ok={status.providers.microsoft || status.providers.google}
-              name="MICROSOFT_CLIENT_ID + _SECRET or GOOGLE_CLIENT_ID + _SECRET"
+              ok={status.signIn}
+              name="MICROSOFT_CLIENT_ID + _SECRET or GOOGLE_CLIENT_ID + _SECRET, allowed by SIGN_IN_PROVIDERS"
               hint={t.setup.providerHint}
             />
           </ul>

@@ -14,6 +14,8 @@ import { cleanupWindow, loadRule, rulesTargetingAccount, syncWindow } from "./sy
 import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
 import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
+import { detailLevelFor } from "./detail-policy";
+import { accountSync } from "./durable";
 
 export interface StoredTokens {
   refreshToken: string;
@@ -156,11 +158,17 @@ export class AccountSync extends DurableObject<Env> {
     }
 
     const window = syncWindow(rule.options);
-    const withBody = rule.options.detailLevel === "full";
+    // The org's caps apply at every run, so lowering a cap also changes the blocks already written.
+    const ruleOptions = {
+      ...rule.options,
+      detailLevel: detailLevelFor(this.env, rule.options.detailLevel, rule.source, rule.target)
+        .level,
+    };
+    const withBody = ruleOptions.detailLevel === "full";
     const sourceEvents =
       rule.source.accountId === this.accountId()
         ? await this.readSourceEvents(rule.source.remoteCalendarId, window, withBody)
-        : await this.env.ACCOUNT_SYNC.getByName(rule.source.accountId).readSourceEvents(
+        : await accountSync(this.env, rule.source.accountId).readSourceEvents(
             rule.source.remoteCalendarId,
             window,
             withBody,
@@ -169,7 +177,7 @@ export class AccountSync extends DurableObject<Env> {
     const target = await this.client();
     const ruleTag = await ruleTagFor(rule.id);
     const existing = await target.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
-    const plan = planSync(await desiredBlocks(rule.id, sourceEvents, rule.options), existing);
+    const plan = planSync(await desiredBlocks(rule.id, sourceEvents, ruleOptions), existing);
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

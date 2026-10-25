@@ -2,10 +2,19 @@ import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
 import { latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
-import { parseRuleOptions, ruleOptionsSchema } from "../config";
-import { detailLevelFor } from "../detail-policy";
-import { i18nFromContext } from "../i18n";
-import { RulesPage, type Notice, type RuleRow } from "../pages/rules";
+import { ruleOptionsSchema } from "../config";
+import { i18nFromContext, useI18n as i18nForStatus } from "../i18n";
+import {
+  CHOICES,
+  deleteRuleWithBlocks,
+  loadEditorState,
+  resetDirection,
+  setDirection,
+  setGroupMembership,
+  setSourceOptions,
+  type Choice,
+} from "../editor";
+import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
@@ -23,61 +32,41 @@ function currentUser(c: Context<AppEnv>): CurrentUser {
   return user;
 }
 
-export async function userRules(db: D1Database, userId: string): Promise<RuleRow[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT id, source_calendar_id AS sourceCalendarId, target_calendar_id AS targetCalendarId,
-              options, enabled
-       FROM rules WHERE user_id = ? ORDER BY rowid`,
-    )
-    .bind(userId)
-    .all<{
-      id: string;
-      sourceCalendarId: string;
-      targetCalendarId: string;
-      options: string;
-      enabled: number;
-    }>();
-  return results.map((row) => ({
-    ...row,
-    enabled: row.enabled === 1,
-    options: parseRuleOptions(row.options),
-  }));
-}
-
 async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400 = 200) {
   const user = currentUser(c);
-  let calendars = await userCalendars(c.env.DB, user.id);
-  if (calendars.length === 0) {
+  if ((await userCalendars(c.env.DB, user.id)).length === 0) {
     await refreshUserCalendars(c.env, user.id);
-    calendars = await userCalendars(c.env.DB, user.id);
   }
-  const ruleRows = await userRules(c.env.DB, user.id);
-  const byId = new Map(calendars.map((calendar) => [calendar.id, calendar]));
-  const capped = new Map<string, RuleRow["options"]["detailLevel"]>();
-  for (const rule of ruleRows) {
-    const source = byId.get(rule.sourceCalendarId);
-    const target = byId.get(rule.targetCalendarId);
-    if (!source || !target) continue;
-    const effective = detailLevelFor(
-      c.env,
-      rule.options.detailLevel,
-      { email: source.accountEmail, tenantId: source.accountTenantId },
-      { email: target.accountEmail, tenantId: target.accountTenantId },
-    );
-    if (effective.capped) capped.set(rule.id, effective.level);
-  }
+  const view = c.req.query("view") === "matrix" ? "matrix" : "list";
   const page = (
-    <RulesPage
+    <CalendarEditorPage
       user={user}
-      calendars={calendars}
-      rules={ruleRows}
-      capped={capped}
-      outcomes={new Map((await latestRuleOutcomes(c.env.DB, user.id)).map((o) => [o.ruleId, o]))}
+      state={await loadEditorState(c.env, user.id)}
+      view={view}
+      open={c.req.query("open") ?? null}
       notice={notice}
+      status={<SyncStatus outcomes={await latestRuleOutcomes(c.env.DB, user.id)} />}
     />
   );
   return render(c, page, status);
+}
+
+/** One line for the whole page: the newest run, or the first failure. */
+function SyncStatus(props: { outcomes: Awaited<ReturnType<typeof latestRuleOutcomes>> }) {
+  const { t, formatRelative, formatTimestamp } = i18nForStatus();
+  if (props.outcomes.length === 0) return null;
+  const failed = props.outcomes.find(
+    (outcome) => outcome.kind === "sync_failed" || (outcome.detail.failed ?? 0) > 0,
+  );
+  const newest = props.outcomes.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+  const shown = failed ?? newest;
+  return (
+    <span class={failed ? "status error" : "status ok"} title={formatTimestamp(shown.createdAt)}>
+      {failed
+        ? t.editor.statusFailed(formatRelative(shown.createdAt), failed.detail.code ?? "")
+        : t.editor.statusOk(formatRelative(shown.createdAt))}
+    </span>
+  );
 }
 
 /** The target account of a rule, if the rule belongs to the user. */
@@ -143,6 +132,58 @@ rules.post("/", async (c) => {
   return c.redirect("/rules");
 });
 
+function formText(form: FormData, name: string): string {
+  const value = form.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+/** Where to go after a change: back to the list with the source open. */
+function backTo(c: Context<AppEnv>, sourceId: string) {
+  return c.redirect(
+    `/rules?open=${encodeURIComponent(sourceId)}#src-${encodeURIComponent(sourceId)}`,
+  );
+}
+
+rules.post("/group/:accountId", async (c) => {
+  const form = await c.req.formData();
+  await setGroupMembership(
+    c.env,
+    currentUser(c),
+    c.req.param("accountId"),
+    form.get("inGroup") === "1",
+  );
+  return c.redirect("/rules");
+});
+
+rules.post("/direction", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const to = formText(form, "to");
+  const choice = formText(form, "choice");
+  if (!(CHOICES as readonly string[]).includes(choice)) return c.text("Bad choice", 400);
+  await setDirection(c.env, currentUser(c), from, to, choice as Choice);
+  return backTo(c, from);
+});
+
+rules.post("/direction/reset", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  await resetDirection(c.env, currentUser(c), from, formText(form, "to"));
+  return backTo(c, from);
+});
+
+rules.post("/source/:accountId/options", async (c) => {
+  const form = await c.req.formData();
+  const days = Number(form.get("daysAhead") ?? 90);
+  await setSourceOptions(c.env, currentUser(c), c.req.param("accountId"), {
+    daysAhead: [30, 90, 180, 365].includes(days) ? days : 90,
+    skipAllDay: form.has("skipAllDay"),
+    skipTentative: form.has("skipTentative"),
+    markPrivate: form.has("markPrivate"),
+  });
+  return backTo(c, c.req.param("accountId"));
+});
+
 for (const action of ["preview", "run"] as const) {
   rules.post(`/:id/${action}`, async (c) => {
     const user = currentUser(c);
@@ -196,40 +237,6 @@ for (const [action, enabled] of [
 }
 
 rules.post("/:id/delete", async (c) => {
-  const user = currentUser(c);
-  const ruleId = c.req.param("id");
-  const target = await c.env.DB.prepare(
-    `SELECT tc.account_id AS accountId, tc.remote_id AS remoteCalendarId FROM rules r
-     JOIN calendars tc ON tc.id = r.target_calendar_id
-     WHERE r.id = ? AND r.user_id = ?`,
-  )
-    .bind(ruleId, user.id)
-    .first<{ accountId: string; remoteCalendarId: string }>();
-  if (!target) return c.redirect("/rules");
-
-  // Remove the rule's blocks first; the rule's tag is the only way to find them later.
-  let cleanup: { removed: number; remaining: number } | null = null;
-  try {
-    cleanup = await accountSync(c.env, target.accountId).removeRuleBlocks(
-      ruleId,
-      target.remoteCalendarId,
-    );
-  } catch (error) {
-    console.error("Removing blocks failed", ruleId, error);
-  }
-
-  await c.env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?")
-    .bind(ruleId, user.id)
-    .run();
-  await recordAudit(c.env.DB, {
-    orgId: user.orgId,
-    userId: user.id,
-    accountId: target.accountId,
-    ruleId,
-    kind: "rule_deleted",
-    detail: cleanup
-      ? { removed: cleanup.removed, remaining: cleanup.remaining }
-      : { cleanupFailed: true },
-  });
+  await deleteRuleWithBlocks(c.env, currentUser(c), c.req.param("id"));
   return c.redirect("/rules");
 });

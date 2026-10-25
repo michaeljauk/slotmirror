@@ -10,7 +10,6 @@ import {
   recordAudit,
   userActivity,
 } from "./audit";
-import { userCalendars } from "./calendars";
 import { setupStatus, signInProviders } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage } from "./pages/activity";
@@ -22,7 +21,8 @@ import { PrivacyPage } from "./pages/privacy";
 import { SetupPage } from "./pages/setup";
 import { render } from "./render";
 import { auth } from "./routes/auth";
-import { rules, userRules } from "./routes/rules";
+import { rules } from "./routes/rules";
+import { loadEditorState } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
 import { detailCapsFromEnv } from "./detail-policy";
@@ -100,10 +100,9 @@ app.get("/", async (c) => {
   )
     .bind(user.id)
     .all<AccountRow>();
-  const [outcomes, rulesOfUser, calendars] = await Promise.all([
+  const [outcomes, editor] = await Promise.all([
     latestRuleOutcomes(c.env.DB, user.id),
-    userRules(c.env.DB, user.id),
-    userCalendars(c.env.DB, user.id),
+    loadEditorState(c.env, user.id),
   ]);
   return render(
     c,
@@ -112,9 +111,7 @@ app.get("/", async (c) => {
       accounts={results}
       providers={providers}
       statuses={accountStatuses(outcomes)}
-      rules={rulesOfUser}
-      calendars={calendars}
-      outcomes={new Map(outcomes.map((outcome) => [outcome.ruleId, outcome]))}
+      editor={editor}
     />,
   );
 });

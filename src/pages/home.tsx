@@ -1,12 +1,11 @@
-import type { AccountSyncStatus, RuleOutcome } from "../audit";
-import type { CalendarRow } from "../calendars";
+import type { AccountSyncStatus } from "../audit";
 import type { Provider } from "../config";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
-import { calendarLabel, RuleLastRun } from "./rule-summary";
-import type { RuleRow } from "./rules";
+import type { EditorState } from "../editor";
+import { SourcePills } from "./calendar-editor";
 
 export interface AccountRow {
   id: string;
@@ -61,13 +60,9 @@ export function HomePage(props: {
   providers: Record<Provider, boolean>;
   /** Sync status per account ID; accounts without an entry were never synced. */
   statuses: Map<string, AccountSyncStatus>;
-  rules: RuleRow[];
-  calendars: CalendarRow[];
-  /** Latest finished run or failure per rule ID. */
-  outcomes: Map<string, RuleOutcome>;
+  editor: EditorState;
 }) {
   const { t, formatDate, formatTimestamp, formatRelative } = useI18n();
-  const calendarsById = new Map(props.calendars.map((calendar) => [calendar.id, calendar]));
 
   function syncStatus(status: AccountSyncStatus | undefined) {
     if (!status) return <span class="status">{t.accounts.notSynced}</span>;
@@ -159,8 +154,8 @@ export function HomePage(props: {
       <section class="section">
         <div class="section-head">
           <div>
-            <h2>{t.rules.title}</h2>
-            <p class="lead">{t.rules.lead}</p>
+            <h2>{t.editor.title}</h2>
+            <p class="lead">{t.editor.lead}</p>
           </div>
           <a class="button" href="/rules">
             {t.rules.manage}
@@ -168,24 +163,22 @@ export function HomePage(props: {
         </div>
 
         <div class="card">
-          {props.rules.length === 0 ? (
+          {props.editor.directions.every((direction) => direction.effective === "off") ? (
             <div class="empty">{t.rules.overviewEmpty}</div>
           ) : (
             <ul class="list">
-              {props.rules.map((rule) => (
-                <li>
-                  <div class="item-main">
-                    <div class="item-title">
-                      {`${calendarLabel(calendarsById.get(rule.sourceCalendarId))} → ${calendarLabel(calendarsById.get(rule.targetCalendarId))}`}
+              {props.editor.accounts
+                .filter((account) => account.calendar)
+                .map((account) => (
+                  <li>
+                    <div class="item-main">
+                      <a class="item-title" href={`/rules?open=${account.id}#src-${account.id}`}>
+                        {t.editor.sourceTitle(account.name)}
+                      </a>
+                      <SourcePills state={props.editor} source={account} />
                     </div>
-                    <div class="item-meta">{t.rules.detailLevels[rule.options.detailLevel]}</div>
-                    {rule.enabled ? <RuleLastRun outcome={props.outcomes.get(rule.id)} /> : null}
-                  </div>
-                  <span class={rule.enabled ? "badge ok" : "badge"}>
-                    {rule.enabled ? t.rules.active : t.rules.pausedShort}
-                  </span>
-                </li>
-              ))}
+                  </li>
+                ))}
             </ul>
           )}
         </div>

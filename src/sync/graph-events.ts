@@ -3,7 +3,7 @@ import type { ShowAs, SourceEvent } from "./types";
 
 /**
  * Single-value extended property that marks blocks written by freebusy-sync.
- * Its value is `<marker>.<contentHash>`.
+ * Its value is `<ruleTag>.<marker>.<contentHash>`.
  */
 export const MARKER_PROPERTY_ID =
   "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10} Name freebusySyncMarker";
@@ -54,10 +54,19 @@ export const GRAPH_EVENT_SELECT = [
   "bodyPreview",
 ].join(",");
 
-/** Split a marker property value into marker and content hash. */
-export function parseMarkerValue(value: string): { marker: string; contentHash: string } {
-  const [marker = "", contentHash = ""] = value.split(".");
-  return { marker, contentHash };
+/**
+ * Split a marker property value. Values from before rule tags existed have two parts; they
+ * belong to no rule and are left alone.
+ */
+export function parseMarkerValue(value: string): {
+  ruleTag: string;
+  marker: string;
+  contentHash: string;
+} {
+  const parts = value.split(".");
+  if (parts.length !== 3) return { ruleTag: "", marker: parts[0] ?? "", contentHash: "" };
+  const [ruleTag = "", marker = "", contentHash = ""] = parts;
+  return { ruleTag, marker, contentHash };
 }
 
 const SHOW_AS: Record<string, ShowAs> = {

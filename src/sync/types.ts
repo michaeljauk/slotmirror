@@ -53,6 +53,8 @@ export interface DesiredBlock extends BlockContent {
 /** A block that freebusy-sync finds in the target calendar, recognised by its marker. */
 export interface ExistingBlock {
   targetId: string;
+  /** Tag of the rule that wrote the block; see `ruleTagFor`. */
+  ruleTag: string;
   marker: string;
   contentHash: string;
   start: string;

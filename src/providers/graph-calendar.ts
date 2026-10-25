@@ -98,8 +98,15 @@ export class GraphCalendar {
     return events;
   }
 
-  /** Blocks in the target calendar that carry a freebusy-sync marker. */
-  async existingBlocks(calendarId: string, window: TimeWindow): Promise<ExistingBlock[]> {
+  /**
+   * Blocks in the target calendar that one rule wrote. Blocks of other rules carry another tag
+   * and are not returned, so a rule never deletes them.
+   */
+  async existingBlocks(
+    calendarId: string,
+    window: TimeWindow,
+    ruleTag: string,
+  ): Promise<ExistingBlock[]> {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.calendarView(calendarId, window)) {
       const event = graphEventSchema.parse(raw);
@@ -108,9 +115,11 @@ export class GraphCalendar {
       )?.value;
       const source = fromGraphEvent(raw);
       if (!value || !source) continue;
+      const parsed = parseMarkerValue(value);
+      if (parsed.ruleTag !== ruleTag) continue;
       blocks.push({
         targetId: event.id,
-        ...parseMarkerValue(value),
+        ...parsed,
         start: source.start,
         end: source.end,
         allDay: source.allDay,
@@ -123,7 +132,11 @@ export class GraphCalendar {
    * Apply up to GRAPH_BATCH_LIMIT actions in one `$batch` request. Returns the IDs of failed
    * actions; the next run plans them again.
    */
-  async applyBatch(calendarId: string, actions: SyncAction[]): Promise<{ failed: number }> {
+  async applyBatch(
+    calendarId: string,
+    ruleTag: string,
+    actions: SyncAction[],
+  ): Promise<{ failed: number }> {
     if (actions.length === 0) return { failed: 0 };
     if (actions.length > GRAPH_BATCH_LIMIT) throw new Error("Batch too large");
     const requests = actions.map((action, index) => {
@@ -135,7 +148,7 @@ export class GraphCalendar {
             method: "POST",
             url: `/me/calendars/${encodeURIComponent(calendarId)}/events`,
             headers: { "Content-Type": "application/json" },
-            body: toGraphBlock(action.block),
+            body: toGraphBlock(action.block, ruleTag),
           };
         case "update":
           return {
@@ -143,7 +156,7 @@ export class GraphCalendar {
             method: "PATCH",
             url: `/me/events/${encodeURIComponent(action.targetId)}`,
             headers: { "Content-Type": "application/json" },
-            body: toGraphBlock(action.block),
+            body: toGraphBlock(action.block, ruleTag),
           };
         case "delete":
           return { id, method: "DELETE", url: `/me/events/${encodeURIComponent(action.targetId)}` };
@@ -203,7 +216,7 @@ export class GraphCalendar {
 }
 
 /** Graph event body for a block. No attendees, so that no invitations are sent. */
-export function toGraphBlock(block: DesiredBlock) {
+export function toGraphBlock(block: DesiredBlock, ruleTag: string) {
   const time = (value: string) =>
     block.allDay
       ? { dateTime: `${value}T00:00:00`, timeZone: "UTC" }
@@ -220,7 +233,7 @@ export function toGraphBlock(block: DesiredBlock) {
     location: { displayName: block.location },
     body: { contentType: "text", content: block.body },
     singleValueExtendedProperties: [
-      { id: MARKER_PROPERTY_ID, value: `${block.marker}.${block.contentHash}` },
+      { id: MARKER_PROPERTY_ID, value: `${ruleTag}.${block.marker}.${block.contentHash}` },
     ],
   };
 }

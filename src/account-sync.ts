@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { GRAPH_BATCH_LIMIT, GraphCalendar, type CalendarInfo } from "./providers/graph-calendar";
 import * as microsoft from "./providers/microsoft";
-import { desiredBlocks, planSync } from "./sync/plan";
+import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
 import { loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
 import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
@@ -133,7 +133,8 @@ export class AccountSync extends DurableObject<Env> {
           );
 
     const graph = new GraphCalendar(await this.accessToken());
-    const existing = await graph.existingBlocks(rule.target.remoteCalendarId, window);
+    const ruleTag = await ruleTagFor(rule.id);
+    const existing = await graph.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
     const plan = planSync(await desiredBlocks(rule.id, sourceEvents, rule.options), existing);
 
     if (options.dryRun) {
@@ -144,7 +145,7 @@ export class AccountSync extends DurableObject<Env> {
     let applied = 0;
     let failed = 0;
     for (const batch of batches.slice(0, MAX_BATCHES_PER_RUN)) {
-      const result = await graph.applyBatch(rule.target.remoteCalendarId, batch);
+      const result = await graph.applyBatch(rule.target.remoteCalendarId, ruleTag, batch);
       applied += batch.length - result.failed;
       failed += result.failed;
     }

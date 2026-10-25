@@ -17,7 +17,7 @@ function sourceEvents(raw: unknown[] = fixture.value): SourceEvent[] {
 
 /** Pretend the target already holds exactly these blocks. */
 function asExisting(blocks: DesiredBlock[]): ExistingBlock[] {
-  return blocks.map((block, index) => ({ ...block, targetId: `target-${index}` }));
+  return blocks.map((block, index) => ({ ...block, ruleTag: "tag", targetId: `target-${index}` }));
 }
 
 function bySubject(subject: string) {
@@ -200,7 +200,7 @@ describe("planSync", () => {
     const desired = await desiredBlocks(RULE, sourceEvents(), options());
     const [first] = desired;
     if (!first) throw new Error("no block");
-    const existing = [...asExisting(desired), { ...first, targetId: "duplicate" }];
+    const existing = [...asExisting(desired), { ...first, ruleTag: "tag", targetId: "duplicate" }];
     const plan = planSync(desired, existing);
     expect(plan.actions).toEqual([{ kind: "delete", targetId: "duplicate", marker: first.marker }]);
   });

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MARKER_PROPERTY_ID } from "../src/sync/graph-events";
 import fixture from "./fixtures/graph/calendar-view.json";
 import { signIn } from "./helpers";
 
@@ -109,9 +110,37 @@ describe("AccountSync.runRule", () => {
       };
       expect(body.subject).toBe("Busy");
       expect(body.sensitivity).toBe("private");
-      expect(body.singleValueExtendedProperties[0]?.value).toMatch(/^[0-9a-f]{32}\.[0-9a-f]{32}$/);
+      expect(body.singleValueExtendedProperties[0]?.value).toMatch(
+        /^[0-9a-f]{12}\.[0-9a-f]{32}\.[0-9a-f]{32}$/,
+      );
       expect(body).not.toHaveProperty("attendees");
     }
+  });
+
+  it("never deletes blocks that another rule wrote into the same target calendar", async () => {
+    const { stub, ruleId } = await setupRule("acc-shared-target");
+    await stub.storeTokens("acc-shared-target", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [template] = fixture.value;
+    const foreignBlock = (id: string, value: string) => ({
+      ...template,
+      id,
+      singleValueExtendedProperties: [{ id: MARKER_PROPERTY_ID, value }],
+    });
+    const calls = fakeGraph([
+      foreignBlock(
+        "other-rule",
+        "aaaaaaaaaaaa.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef",
+      ),
+      foreignBlock("legacy", "0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef"),
+    ]);
+
+    const result = await stub.runRule(ruleId, { dryRun: true });
+    expect(result.stats).toMatchObject({ create: 15, delete: 0 });
+    expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(false);
   });
 
   it("refreshes an expired token once and stores the rotated refresh token", async () => {

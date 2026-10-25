@@ -42,6 +42,14 @@ export async function markerFor(ruleId: string, occurrenceKey: string): Promise<
   return shortHash(`${ruleId}\u0000${occurrenceKey}`);
 }
 
+/**
+ * Tag of a rule, written into each of its blocks. A rule only ever updates or deletes blocks with
+ * its own tag, so several rules can write into one target calendar.
+ */
+export async function ruleTagFor(ruleId: string): Promise<string> {
+  return (await shortHash(`rule\u0000${ruleId}`)).slice(0, 12);
+}
+
 async function shortHash(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest).slice(0, 16), (b) =>

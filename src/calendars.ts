@@ -1,4 +1,4 @@
-import type { CalendarInfo } from "./providers/graph-calendar";
+import type { CalendarInfo } from "./providers/calendar-client";
 
 export interface CalendarRow {
   id: string;
@@ -38,7 +38,7 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
 /** Load the calendar list of every account of a user from the provider into the registry. */
 export async function refreshUserCalendars(env: Env, userId: string): Promise<void> {
   const { results: accounts } = await env.DB.prepare(
-    "SELECT id, email FROM accounts WHERE user_id = ? AND provider = 'microsoft'",
+    "SELECT id, email FROM accounts WHERE user_id = ?",
   )
     .bind(userId)
     .all<{ id: string; email: string }>();
@@ -67,7 +67,7 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
           calendar.name,
           // Only the account's own calendars are targets. A colleague's calendar shared with edit
           // rights must never receive blocks by accident.
-          calendar.canEdit && calendar.ownerAddress === account.email.toLowerCase() ? 1 : 0,
+          calendar.canEdit && calendar.owned ? 1 : 0,
           calendar.isDefault ? 1 : 0,
         ),
       ),

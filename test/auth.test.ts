@@ -173,7 +173,7 @@ describe("identityFromIdToken", () => {
     const identity = identityFromIdToken(
       fakeIdToken({ tid: "t", oid: "o", email: "A@B.com", preferred_username: "x@y.com" }),
     );
-    expect(identity).toEqual({ email: "a@b.com", tenantId: "t", objectId: "o" });
+    expect(identity).toEqual({ email: "a@b.com", tenantId: "t" });
   });
 
   it("throws without any address claim", () => {

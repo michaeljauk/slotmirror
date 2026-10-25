@@ -31,7 +31,7 @@ describe("worker", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Sign in with Microsoft 365");
-    expect(html).not.toContain("Sign in with Google");
+    expect(html).toContain("Sign in with Google");
   });
 
   it("schedules one debounced sync per account on cron", async () => {

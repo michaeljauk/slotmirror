@@ -8,7 +8,8 @@ import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } fr
 import { i18nFromContext } from "../i18n";
 import { PROVIDER_LABEL } from "../pages/home";
 import { MessagePage } from "../pages/message";
-import * as microsoft from "../providers/microsoft";
+import { clientCredentials, oauthClient } from "../providers/oauth-clients";
+import type { Identity, TokenResponse } from "../providers/oauth-token";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "../session";
 import { render } from "../render";
 import { signInUser } from "../users";
@@ -36,8 +37,14 @@ function message(
 
 async function startFlow(c: Context<AppEnv>, provider: Provider, purpose: OAuthPurpose) {
   const { t } = i18nFromContext(c);
-  if (provider !== "microsoft") {
-    return message(c, 501, t.messages.notAvailable, t.messages.googleNotImplemented);
+  const { clientId } = clientCredentials(c.env, provider);
+  if (!clientId) {
+    return message(
+      c,
+      501,
+      t.messages.notAvailable,
+      t.messages.providerNotConfigured(PROVIDER_LABEL[provider]),
+    );
   }
   const { cookie, state, codeChallenge } = await createOAuthState(
     provider,
@@ -52,12 +59,12 @@ async function startFlow(c: Context<AppEnv>, provider: Provider, purpose: OAuthP
     maxAge: 600,
   });
   return c.redirect(
-    microsoft.authorizeUrl({
-      clientId: c.env.MICROSOFT_CLIENT_ID,
+    oauthClient(provider).authorizeUrl({
+      clientId,
       redirectUri: redirectUri(c, provider),
-      scopes: purpose === "sign-in" ? microsoft.SIGN_IN_SCOPES : microsoft.CONNECT_SCOPES,
       state,
       codeChallenge,
+      purpose,
     }),
   );
 }
@@ -84,7 +91,7 @@ auth.get("/:provider/connect", async (c) => {
 
 auth.get("/:provider/callback", async (c) => {
   const provider = parseProvider(c.req.param("provider"));
-  if (provider !== "microsoft") return c.notFound();
+  if (!provider) return c.notFound();
   const { t } = i18nFromContext(c);
   const label = PROVIDER_LABEL[provider];
 
@@ -107,20 +114,19 @@ auth.get("/:provider/callback", async (c) => {
   const code = c.req.query("code");
   if (!code) return message(c, 400, t.messages.signInFailed, t.messages.noCode(label));
 
-  let tokens: microsoft.TokenResponse;
-  let identity: microsoft.Identity;
+  let tokens: TokenResponse;
+  let identity: Identity;
   try {
-    tokens = await microsoft.exchangeCode({
-      clientId: c.env.MICROSOFT_CLIENT_ID,
-      clientSecret: c.env.MICROSOFT_CLIENT_SECRET,
+    const client = oauthClient(provider);
+    tokens = await client.exchangeCode({
+      ...clientCredentials(c.env, provider),
       redirectUri: redirectUri(c, provider),
       code,
       codeVerifier: stored.codeVerifier,
     });
-    if (!tokens.id_token) throw new Error("Token response carries no ID token");
-    identity = microsoft.identityFromIdToken(tokens.id_token);
+    identity = client.identity(tokens);
   } catch (error) {
-    console.error("Microsoft token exchange failed", error);
+    console.error(`${provider} token exchange failed`, error);
     return message(c, 502, t.messages.signInFailed, t.messages.exchangeFailed(label));
   }
 
@@ -158,12 +164,12 @@ auth.get("/:provider/callback", async (c) => {
   }
   // The WHERE clause keeps an account that belongs to another user untouched; RETURNING is then empty.
   const account = await c.env.DB.prepare(
-    `INSERT INTO accounts (id, user_id, provider, email, tenant_id) VALUES (?, ?, 'microsoft', ?, ?)
+    `INSERT INTO accounts (id, user_id, provider, email, tenant_id) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (provider, email) DO UPDATE SET tenant_id = excluded.tenant_id
        WHERE accounts.user_id = excluded.user_id
      RETURNING id`,
   )
-    .bind(crypto.randomUUID(), user.id, identity.email, identity.tenantId)
+    .bind(crypto.randomUUID(), user.id, provider, identity.email, identity.tenantId)
     .first<{ id: string }>();
   if (!account) {
     return message(
@@ -174,11 +180,15 @@ auth.get("/:provider/callback", async (c) => {
     );
   }
 
-  await c.env.ACCOUNT_SYNC.getByName(account.id).storeTokens(account.id, {
-    refreshToken: tokens.refresh_token,
-    accessToken: tokens.access_token,
-    accessExpiresAt: Date.now() + tokens.expires_in * 1000,
-  });
+  await c.env.ACCOUNT_SYNC.getByName(account.id).storeTokens(
+    account.id,
+    {
+      refreshToken: tokens.refresh_token,
+      accessToken: tokens.access_token,
+      accessExpiresAt: Date.now() + tokens.expires_in * 1000,
+    },
+    provider,
+  );
   await recordAudit(c.env.DB, {
     orgId: user.orgId,
     userId: user.id,

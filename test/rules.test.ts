@@ -127,15 +127,17 @@ describe("calendar refresh", () => {
       accessToken: "a",
       accessExpiresAt: Date.now() + 3_600_000,
     });
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      Response.json({
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/me?")) return Response.json({ mail: "Me@Example.com" });
+      return Response.json({
         value: [
           {
             id: "own",
             name: "Calendar",
             canEdit: true,
             isDefaultCalendar: true,
-            owner: { address: "Me@Example.com" },
+            owner: { address: "me@example.com" },
           },
           {
             id: "shared",
@@ -144,8 +146,8 @@ describe("calendar refresh", () => {
             owner: { address: "colleague@example.com" },
           },
         ],
-      }),
-    );
+      });
+    });
     expect((await post("/rules/calendars/refresh", cookie)).status).toBe(302);
     const { results } = await env.DB.prepare(
       "SELECT remote_id AS id, can_edit AS canEdit FROM calendars WHERE account_id = 'acc-share' ORDER BY remote_id",

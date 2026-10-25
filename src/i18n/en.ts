@@ -129,7 +129,8 @@ export const en = {
     back: "Back to the start page",
     notAllowed: "Not allowed",
     notAvailable: "Not available yet",
-    googleNotImplemented: "Google sign-in is not implemented yet.",
+    providerNotConfigured: (provider: string) =>
+      `${provider} is not set up for this deployment. Ask the administrator to add its client ID.`,
     signInExpired: "Sign-in expired",
     signInExpiredText: "The sign-in took too long or was started elsewhere. Start again.",
     providerRefused: (provider: string) => `${provider} refused the sign-in`,

@@ -1,0 +1,90 @@
+{
+  "_comment": "Google Calendar events.list with singleEvents=true, written after the API reference. A weekly series has one moved and one cancelled occurrence.",
+  "items": [
+    {
+      "id": "single1",
+      "status": "confirmed",
+      "summary": "Dentist",
+      "location": "Graz",
+      "start": { "dateTime": "2026-10-27T14:00:00+01:00" },
+      "end": { "dateTime": "2026-10-27T15:00:00+01:00" }
+    },
+    {
+      "id": "allday1",
+      "status": "confirmed",
+      "summary": "Holiday",
+      "start": { "date": "2026-10-29" },
+      "end": { "date": "2026-10-30" }
+    },
+    {
+      "id": "free1",
+      "status": "confirmed",
+      "summary": "Reminder",
+      "transparency": "transparent",
+      "start": { "dateTime": "2026-10-28T09:00:00Z" },
+      "end": { "dateTime": "2026-10-28T09:30:00Z" }
+    },
+    {
+      "id": "private1",
+      "status": "confirmed",
+      "summary": "Therapy",
+      "visibility": "private",
+      "start": { "dateTime": "2026-10-30T08:00:00Z" },
+      "end": { "dateTime": "2026-10-30T09:00:00Z" }
+    },
+    {
+      "id": "declined1",
+      "status": "confirmed",
+      "summary": "Optional talk",
+      "attendees": [{ "self": true, "responseStatus": "declined" }],
+      "start": { "dateTime": "2026-10-28T16:00:00Z" },
+      "end": { "dateTime": "2026-10-28T17:00:00Z" }
+    },
+    {
+      "id": "tentative1",
+      "status": "confirmed",
+      "summary": "Maybe",
+      "attendees": [{ "self": true, "responseStatus": "tentative" }],
+      "start": { "dateTime": "2026-10-28T18:00:00Z" },
+      "end": { "dateTime": "2026-10-28T19:00:00Z" }
+    },
+    {
+      "id": "weekly_20261102T090000Z",
+      "status": "confirmed",
+      "summary": "Football",
+      "recurringEventId": "weekly",
+      "originalStartTime": { "dateTime": "2026-11-02T10:00:00+01:00" },
+      "start": { "dateTime": "2026-11-02T10:00:00+01:00" },
+      "end": { "dateTime": "2026-11-02T11:30:00+01:00" }
+    },
+    {
+      "id": "weekly_20261109T090000Z",
+      "status": "cancelled",
+      "recurringEventId": "weekly",
+      "originalStartTime": { "dateTime": "2026-11-09T10:00:00+01:00" },
+      "start": { "dateTime": "2026-11-09T10:00:00+01:00" },
+      "end": { "dateTime": "2026-11-09T11:30:00+01:00" }
+    },
+    {
+      "id": "weekly_20261116T090000Z",
+      "status": "confirmed",
+      "summary": "Football",
+      "recurringEventId": "weekly",
+      "originalStartTime": { "dateTime": "2026-11-16T10:00:00+01:00" },
+      "start": { "dateTime": "2026-11-17T18:00:00+01:00" },
+      "end": { "dateTime": "2026-11-17T19:30:00+01:00" }
+    },
+    {
+      "id": "mirror1",
+      "status": "confirmed",
+      "summary": "Busy",
+      "extendedProperties": {
+        "private": {
+          "freebusySyncMarker": "aaaaaaaaaaaa.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef"
+        }
+      },
+      "start": { "dateTime": "2026-10-31T10:00:00Z" },
+      "end": { "dateTime": "2026-10-31T11:00:00Z" }
+    }
+  ]
+}

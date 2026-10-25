@@ -7,6 +7,7 @@ import {
   parseMarkerValue,
 } from "../sync/graph-events";
 import type { DesiredBlock, ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
+import type { CalendarClient, CalendarInfo, TimeWindow } from "./calendar-client";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -15,20 +16,6 @@ export const GRAPH_BATCH_LIMIT = 20;
 
 /** Page size for calendarView. Fewer pages mean fewer subrequests on the Free plan. */
 const PAGE_SIZE = 500;
-
-export interface CalendarInfo {
-  id: string;
-  name: string;
-  canEdit: boolean;
-  isDefault: boolean;
-  /** Mailbox that owns the calendar; differs from the account for calendars shared by others. */
-  ownerAddress: string;
-}
-
-export interface TimeWindow {
-  start: Date;
-  end: Date;
-}
 
 const calendarsSchema = z.object({
   value: z.array(
@@ -40,6 +27,11 @@ const calendarsSchema = z.object({
       owner: z.optional(z.object({ address: z.optional(z.nullable(z.string())) })),
     }),
   ),
+});
+
+const meSchema = z.object({
+  mail: z.optional(z.nullable(z.string())),
+  userPrincipalName: z.optional(z.nullable(z.string())),
 });
 
 const pageSchema = z.object({
@@ -63,21 +55,26 @@ export class GraphError extends Error {
 }
 
 /** Minimal Microsoft Graph calendar client on plain `fetch`, for one access token. */
-export class GraphCalendar {
+export class GraphCalendar implements CalendarClient {
+  readonly batchLimit = GRAPH_BATCH_LIMIT;
+
   constructor(private readonly accessToken: string) {}
 
   async listCalendars(): Promise<CalendarInfo[]> {
-    const body = calendarsSchema.parse(
-      await this.get(
-        `${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar,owner&$top=100`,
-      ),
+    const [me, body] = await Promise.all([
+      this.get(`${GRAPH}/me?$select=mail,userPrincipalName`),
+      this.get(`${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar,owner&$top=100`),
+    ]);
+    const profile = meSchema.parse(me);
+    const own = new Set(
+      [profile.mail, profile.userPrincipalName].filter(Boolean).map((a) => String(a).toLowerCase()),
     );
-    return body.value.map((calendar) => ({
+    return calendarsSchema.parse(body).value.map((calendar) => ({
       id: calendar.id,
       name: calendar.name,
       canEdit: calendar.canEdit ?? false,
       isDefault: calendar.isDefaultCalendar ?? false,
-      ownerAddress: (calendar.owner?.address ?? "").toLowerCase(),
+      owned: own.has((calendar.owner?.address ?? "").toLowerCase()),
     }));
   }
 

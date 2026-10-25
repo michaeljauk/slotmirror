@@ -130,7 +130,8 @@ export const de: Messages = {
     back: "Zurück zur Startseite",
     notAllowed: "Nicht erlaubt",
     notAvailable: "Noch nicht verfügbar",
-    googleNotImplemented: "Die Anmeldung mit Google gibt es noch nicht.",
+    providerNotConfigured: (provider) =>
+      `${provider} ist für diese Installation nicht eingerichtet. Die Verwaltung muss die Client-ID hinterlegen.`,
     signInExpired: "Anmeldung abgelaufen",
     signInExpiredText:
       "Die Anmeldung hat zu lange gedauert oder wurde woanders gestartet. Bitte neu beginnen.",

@@ -1,7 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { accountOwner, errorCode, recordAudit, type SyncRunDetail } from "./audit";
-import { GRAPH_BATCH_LIMIT, GraphCalendar, type CalendarInfo } from "./providers/graph-calendar";
-import * as microsoft from "./providers/microsoft";
+import type { Provider } from "./config";
+import {
+  calendarClient,
+  type CalendarClient,
+  type CalendarInfo,
+} from "./providers/calendar-client";
+import { clientCredentials, oauthClient } from "./providers/oauth-clients";
+import type { TokenResponse } from "./providers/oauth-token";
 import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
 import { cleanupWindow, loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
 import type { SourceEvent, SyncPlan } from "./sync/types";
@@ -64,17 +70,23 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /** Replace the stored tokens. Called after an OAuth connect and after every refresh. */
-  async storeTokens(accountId: string, tokens: StoredTokens): Promise<void> {
+  async storeTokens(
+    accountId: string,
+    tokens: StoredTokens,
+    provider: Provider = "microsoft",
+  ): Promise<void> {
     const blob = await encryptJson(tokens, this.env.TOKEN_ENCRYPTION_KEY, accountId);
     this.ctx.storage.sql.exec(
-      `INSERT INTO tokens (id, account_id, ciphertext, iv, access_expires_at)
-       VALUES (1, ?, ?, ?, ?)
+      `INSERT INTO tokens (id, account_id, provider, ciphertext, iv, access_expires_at)
+       VALUES (1, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          account_id = excluded.account_id,
+         provider = excluded.provider,
          ciphertext = excluded.ciphertext,
          iv = excluded.iv,
          access_expires_at = excluded.access_expires_at`,
       accountId,
+      provider,
       blob.ciphertext,
       blob.iv,
       tokens.accessExpiresAt,
@@ -94,7 +106,7 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   async listCalendars(): Promise<CalendarInfo[]> {
-    return new GraphCalendar(await this.accessToken()).listCalendars();
+    return (await this.client()).listCalendars();
   }
 
   /** Source events of one calendar of this account. Called by the target account's instance. */
@@ -103,7 +115,7 @@ export class AccountSync extends DurableObject<Env> {
     window: { start: Date; end: Date },
     withBody: boolean,
   ): Promise<SourceEvent[]> {
-    return new GraphCalendar(await this.accessToken()).sourceEvents(remoteCalendarId, window, {
+    return (await this.client()).sourceEvents(remoteCalendarId, window, {
       withBody,
     });
   }
@@ -129,9 +141,6 @@ export class AccountSync extends DurableObject<Env> {
     if (rule.target.accountId !== this.accountId()) {
       throw new Error("A rule runs in the instance of its target account");
     }
-    if (rule.source.provider !== "microsoft" || rule.target.provider !== "microsoft") {
-      throw new Error("Only Microsoft 365 calendars are supported so far");
-    }
 
     const window = syncWindow(rule.options);
     const withBody = rule.options.detailLevel === "full";
@@ -144,9 +153,9 @@ export class AccountSync extends DurableObject<Env> {
             withBody,
           );
 
-    const graph = new GraphCalendar(await this.accessToken());
+    const target = await this.client();
     const ruleTag = await ruleTagFor(rule.id);
-    const existing = await graph.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
+    const existing = await target.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
     const plan = planSync(await desiredBlocks(rule.id, sourceEvents, rule.options), existing);
 
     // One audit event per run, written once the outcome is known. Counts only, no event content.
@@ -181,11 +190,11 @@ export class AccountSync extends DurableObject<Env> {
       });
     }
 
-    const batches = chunk(plan.actions, GRAPH_BATCH_LIMIT);
+    const batches = chunk(plan.actions, target.batchLimit);
     let applied = 0;
     let failed = 0;
     for (const batch of batches.slice(0, MAX_BATCHES_PER_RUN)) {
-      const result = await graph.applyBatch(rule.target.remoteCalendarId, ruleTag, batch);
+      const result = await target.applyBatch(rule.target.remoteCalendarId, ruleTag, batch);
       applied += batch.length - result.failed;
       failed += result.failed;
     }
@@ -205,17 +214,17 @@ export class AccountSync extends DurableObject<Env> {
     ruleId: string,
     remoteCalendarId: string,
   ): Promise<{ removed: number; remaining: number }> {
-    const graph = new GraphCalendar(await this.accessToken());
+    const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
-    const blocks = await graph.existingBlocks(remoteCalendarId, cleanupWindow(), ruleTag);
+    const blocks = await target.existingBlocks(remoteCalendarId, cleanupWindow(), ruleTag);
     const actions = blocks.map((block) => ({
       kind: "delete" as const,
       targetId: block.targetId,
       marker: block.marker,
     }));
     let removed = 0;
-    for (const batch of chunk(actions, GRAPH_BATCH_LIMIT).slice(0, MAX_BATCHES_PER_RUN)) {
-      const result = await graph.applyBatch(remoteCalendarId, ruleTag, batch);
+    for (const batch of chunk(actions, target.batchLimit).slice(0, MAX_BATCHES_PER_RUN)) {
+      const result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
       removed += batch.length - result.failed;
     }
     return { removed, remaining: actions.length - removed };
@@ -242,18 +251,31 @@ export class AccountSync extends DurableObject<Env> {
       return stored.tokens.accessToken;
     }
     // Requests interleave while a refresh waits on the network; refresh only once.
-    this.refreshing ??= this.refresh(stored.accountId, stored.tokens.refreshToken).finally(() => {
+    this.refreshing ??= this.refresh(
+      stored.accountId,
+      stored.provider,
+      stored.tokens.refreshToken,
+    ).finally(() => {
       this.refreshing = null;
     });
     return this.refreshing;
   }
 
-  private async refresh(accountId: string, refreshToken: string): Promise<string> {
-    let response: microsoft.TokenResponse;
+  /** The calendar adapter for this account's provider, with a valid access token. */
+  private async client(): Promise<CalendarClient> {
+    const token = await this.accessToken();
+    return calendarClient(this.providerOrDefault(), token);
+  }
+
+  private async refresh(
+    accountId: string,
+    provider: Provider,
+    refreshToken: string,
+  ): Promise<string> {
+    let response: TokenResponse;
     try {
-      response = await microsoft.refreshToken({
-        clientId: this.env.MICROSOFT_CLIENT_ID,
-        clientSecret: this.env.MICROSOFT_CLIENT_SECRET,
+      response = await oauthClient(provider).refreshToken({
+        ...clientCredentials(this.env, provider),
         refreshToken,
       });
     } catch (error) {
@@ -268,11 +290,15 @@ export class AccountSync extends DurableObject<Env> {
       }
       throw error;
     }
-    await this.storeTokens(accountId, {
-      refreshToken: response.refresh_token ?? refreshToken,
-      accessToken: response.access_token,
-      accessExpiresAt: Date.now() + response.expires_in * 1000,
-    });
+    await this.storeTokens(
+      accountId,
+      {
+        refreshToken: response.refresh_token ?? refreshToken,
+        accessToken: response.access_token,
+        accessExpiresAt: Date.now() + response.expires_in * 1000,
+      },
+      provider,
+    );
     return response.access_token;
   }
 
@@ -294,10 +320,14 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  private async readTokens(): Promise<{ accountId: string; tokens: StoredTokens }> {
+  private async readTokens(): Promise<{
+    accountId: string;
+    provider: Provider;
+    tokens: StoredTokens;
+  }> {
     const row = this.ctx.storage.sql
-      .exec<{ account_id: string; ciphertext: ArrayBuffer; iv: ArrayBuffer }>(
-        `SELECT account_id, ciphertext, iv FROM tokens WHERE id = 1`,
+      .exec<{ account_id: string; provider: Provider; ciphertext: ArrayBuffer; iv: ArrayBuffer }>(
+        `SELECT account_id, provider, ciphertext, iv FROM tokens WHERE id = 1`,
       )
       .toArray()[0];
     if (!row) throw new Error("Account has no tokens");
@@ -306,7 +336,14 @@ export class AccountSync extends DurableObject<Env> {
       this.env.TOKEN_ENCRYPTION_KEY,
       row.account_id,
     );
-    return { accountId: row.account_id, tokens };
+    return { accountId: row.account_id, provider: row.provider, tokens };
+  }
+
+  private providerOrDefault(): Provider {
+    const row = this.ctx.storage.sql
+      .exec<{ provider: Provider }>(`SELECT provider FROM tokens WHERE id = 1`)
+      .toArray()[0];
+    return row?.provider ?? "microsoft";
   }
 
   private accountIdOrNull(): string | null {
@@ -360,4 +397,5 @@ const MIGRATIONS: readonly string[] = [
      calendar_id TEXT NOT NULL,
      expires_at INTEGER NOT NULL
    );`,
+  `ALTER TABLE tokens ADD COLUMN provider TEXT NOT NULL DEFAULT 'microsoft'`,
 ];

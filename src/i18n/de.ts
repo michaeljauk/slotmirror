@@ -145,6 +145,15 @@ export const de: Messages = {
     settingsTitle: "Für alle Kalender",
     settingsLead: "Diese Einstellungen gelten für alle Richtungen oben.",
     window: "Zeitraum",
+    skipAllDayTitle: "Ganztägige Termine auslassen",
+    skipAllDayHint:
+      "Urlaub, Feiertage und Geburtstage würden sonst in den anderen Kalendern den ganzen Tag blocken.",
+    skipTentativeTitle: "Termine mit Vorbehalt auslassen",
+    skipTentativeHint:
+      "Einladungen, die du mit „Vielleicht“ beantwortet hast, und als vorläufig eingetragene Termine blocken dann nicht.",
+    markPrivateTitle: "Kopien als privat markieren",
+    markPrivateHint:
+      "Wer deinen Kalender einsehen kann, etwa Kollegen oder eine Assistenz, sieht „Privat“ statt des Titels. Du selbst siehst alles.",
     days: (days: number) => `${days} Tage`,
     cellChanged: "geändert",
     checking: "Wird geprüft …",

@@ -143,6 +143,15 @@ export const en = {
     settingsTitle: "For all calendars",
     settingsLead: "These settings apply to every direction above.",
     window: "Time window",
+    skipAllDayTitle: "Skip all-day events",
+    skipAllDayHint:
+      "Holidays, birthdays and days off would otherwise block the whole day in the other calendars.",
+    skipTentativeTitle: "Skip tentative events",
+    skipTentativeHint:
+      "Invitations you answered with “maybe”, and events marked as tentative, then do not block.",
+    markPrivateTitle: "Mark copies as private",
+    markPrivateHint:
+      "People who can see your calendar, such as colleagues or an assistant, see “Private” instead of the title. You still see everything.",
     days: (days: number) => `${days} days`,
     cellChanged: "changed",
     checking: "Checking…",

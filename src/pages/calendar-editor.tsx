@@ -50,6 +50,19 @@ function AccountName(props: { account: EditorAccount }) {
   );
 }
 
+/** A setting as a switch with a title and one sentence that explains it. */
+function Switch(props: { name: string; checked: boolean; title: string; hint: string }) {
+  return (
+    <label class="switch-row">
+      <span class="switch-text">
+        <span class="switch-title">{props.title}</span>
+        <span class="switch-hint">{props.hint}</span>
+      </span>
+      <input type="checkbox" role="switch" name={props.name} checked={props.checked} />
+    </label>
+  );
+}
+
 /** Settings for all directions. With the editor script they join the page's unsaved changes. */
 function SettingsCard(props: { state: EditorState }) {
   const { t } = useI18n();
@@ -76,18 +89,24 @@ function SettingsCard(props: { state: EditorState }) {
           ))}
         </span>
       </div>
-      <label class="check-row">
-        <input type="checkbox" name="skipAllDay" checked={settings.skipAllDay} />
-        <span>{t.rules.skipAllDay}</span>
-      </label>
-      <label class="check-row">
-        <input type="checkbox" name="skipTentative" checked={settings.skipTentative} />
-        <span>{t.rules.skipTentative}</span>
-      </label>
-      <label class="check-row">
-        <input type="checkbox" name="markPrivate" checked={settings.markPrivate} />
-        <span>{t.rules.markPrivate}</span>
-      </label>
+      <Switch
+        name="skipAllDay"
+        checked={settings.skipAllDay}
+        title={t.editor.skipAllDayTitle}
+        hint={t.editor.skipAllDayHint}
+      />
+      <Switch
+        name="skipTentative"
+        checked={settings.skipTentative}
+        title={t.editor.skipTentativeTitle}
+        hint={t.editor.skipTentativeHint}
+      />
+      <Switch
+        name="markPrivate"
+        checked={settings.markPrivate}
+        title={t.editor.markPrivateTitle}
+        hint={t.editor.markPrivateHint}
+      />
       <button type="submit" class="button small nojs-only">
         {t.editor.save}
       </button>

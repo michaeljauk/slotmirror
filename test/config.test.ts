@@ -4,6 +4,7 @@ import { parseRuleOptions, setupStatus } from "../src/config";
 describe("parseRuleOptions", () => {
   it("fills defaults for an empty object", () => {
     expect(parseRuleOptions("{}")).toEqual({
+      detailLevel: "busy",
       blockTitle: "Busy",
       daysAhead: 60,
       skipAllDay: true,
@@ -16,6 +17,10 @@ describe("parseRuleOptions", () => {
 
   it("rejects a window beyond 180 days", () => {
     expect(() => parseRuleOptions('{"daysAhead": 365}')).toThrow();
+  });
+
+  it("rejects an unknown detail level", () => {
+    expect(() => parseRuleOptions('{"detailLevel": "everything"}')).toThrow();
   });
 
   it("rejects a blank block title", () => {

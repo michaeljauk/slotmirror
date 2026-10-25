@@ -1,0 +1,599 @@
+{
+  "_comment": "Microsoft Graph calendarView of a test calendar, captured 2026-10-25 with Prefer: outlook.timezone=\"UTC\". IDs replaced by aliases. Weekly series: occurrence 2026-11-02 cancelled, 2026-11-09 renamed, 2026-11-16 moved to 2026-11-17. Daily series crosses the end of daylight saving time on 2026-10-25.",
+  "value": [
+    {
+      "id": "event-01",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-01",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-22T07:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-22T07:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-22T07:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-02",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-02",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-23T07:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-23T07:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-23T07:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-03",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-03",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-24T07:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-24T07:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-24T07:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-04",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-04",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-25T08:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-25T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-25T08:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-05",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-05",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-26T08:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-26T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-26T08:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-06",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-06",
+      "subject": "FBS weekly series",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-26T09:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-02",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-26T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-26T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-07",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-07",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-27T08:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-27T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-27T08:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-08",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-08",
+      "subject": "FBS single",
+      "bodyPreview": "Test body",
+      "sensitivity": "normal",
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": null,
+      "showAs": "busy",
+      "type": "singleInstance",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-27T13:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-27T14:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "Test room",
+        "locationType": "default",
+        "uniqueId": "Test room",
+        "uniqueIdType": "private"
+      }
+    },
+    {
+      "id": "event-09",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-09",
+      "subject": "FBS daily across DST",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-10-28T08:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-01",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-28T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-28T08:15:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-10",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-10",
+      "subject": "FBS free",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": null,
+      "showAs": "free",
+      "type": "singleInstance",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-28T11:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-28T12:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-11",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-11",
+      "subject": "FBS tentative",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": null,
+      "showAs": "tentative",
+      "type": "singleInstance",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-28T14:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-28T15:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-12",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "UTC",
+      "iCalUId": "ical-12",
+      "subject": "FBS all-day",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": null,
+      "isAllDay": true,
+      "isCancelled": false,
+      "seriesMasterId": null,
+      "showAs": "oof",
+      "type": "singleInstance",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-29T00:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-30T00:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-13",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": ["Red category"],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-13",
+      "subject": "FBS private",
+      "bodyPreview": "",
+      "sensitivity": "private",
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": null,
+      "showAs": "busy",
+      "type": "singleInstance",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-10-30T07:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-30T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-14",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-14",
+      "subject": "FBS weekly series (changed)",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-11-09T09:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-02",
+      "showAs": "busy",
+      "type": "exception",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-11-09T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-09T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-15",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-15",
+      "subject": "FBS weekly series",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-11-16T09:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-02",
+      "showAs": "busy",
+      "type": "exception",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-11-17T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-17T10:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-16",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-16",
+      "subject": "FBS weekly series",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-11-23T09:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-02",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-11-23T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-23T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    },
+    {
+      "id": "event-17",
+      "lastModifiedDateTime": "2026-10-25T15:00:00Z",
+      "categories": [],
+      "originalStartTimeZone": "W. Europe Standard Time",
+      "iCalUId": "ical-17",
+      "subject": "FBS weekly series",
+      "bodyPreview": "",
+      "sensitivity": "normal",
+      "originalStart": "2026-11-30T09:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "seriesMasterId": "series-02",
+      "showAs": "busy",
+      "type": "occurrence",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "start": {
+        "dateTime": "2026-11-30T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-30T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "location": {
+        "displayName": "",
+        "locationType": "default",
+        "uniqueIdType": "unknown",
+        "address": {},
+        "coordinates": {}
+      }
+    }
+  ]
+}

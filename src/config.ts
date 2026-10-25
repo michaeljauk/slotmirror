@@ -3,7 +3,13 @@ import { policyAdmitsAnyone, policyFromEnv } from "./access";
 
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */
 export const ruleOptionsSchema = z.object({
-  /** Subject of every block in the target calendar. */
+  /**
+   * How much of each source event reaches the target: "busy" (default), "title",
+   * "title_location" or "full" (adds the body). A rule has one direction, so each direction has
+   * its own level. Events the source marks private never get more than "busy".
+   */
+  detailLevel: z._default(z.enum(["busy", "title", "title_location", "full"]), "busy"),
+  /** Subject of blocks at detail level "busy", and the fallback for events without a title. */
   blockTitle: z._default(z.string().check(z.trim(), z.minLength(1), z.maxLength(255)), "Busy"),
   /** How many days ahead to mirror. */
   daysAhead: z._default(z.int().check(z.minimum(1), z.maximum(180)), 60),

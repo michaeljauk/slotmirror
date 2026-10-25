@@ -6,7 +6,7 @@ describe("parseRuleOptions", () => {
     expect(parseRuleOptions("{}")).toEqual({
       detailLevel: "busy",
       blockTitle: "Busy",
-      daysAhead: 60,
+      daysAhead: 90,
       skipAllDay: true,
       skipFree: true,
       skipTentative: false,
@@ -15,8 +15,8 @@ describe("parseRuleOptions", () => {
     });
   });
 
-  it("rejects a window beyond 180 days", () => {
-    expect(() => parseRuleOptions('{"daysAhead": 365}')).toThrow();
+  it("rejects a window beyond 365 days", () => {
+    expect(() => parseRuleOptions('{"daysAhead": 366}')).toThrow();
   });
 
   it("rejects an unknown detail level", () => {

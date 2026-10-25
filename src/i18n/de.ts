@@ -53,6 +53,8 @@ export const de: Messages = {
     skipAllDay: "Ganztägige Termine auslassen",
     skipTentative: "Vorläufige Termine auslassen",
     daysAhead: "Tage voraus",
+    days: (days) => `${days} Tage voraus`,
+    choose: "Kalender wählen",
     create: "Regel anlegen",
     preview: "Vorschau",
     runNow: "Jetzt ausführen",

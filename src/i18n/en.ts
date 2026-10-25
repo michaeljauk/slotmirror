@@ -55,6 +55,8 @@ export const en = {
     skipAllDay: "Skip all-day events",
     skipTentative: "Skip tentative events",
     daysAhead: "Days ahead",
+    days: (days: number) => `${days} days ahead`,
+    choose: "Choose a calendar",
     create: "Add rule",
     preview: "Preview",
     runNow: "Run now",

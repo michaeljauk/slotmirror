@@ -14,6 +14,7 @@ export interface RuleRow {
 export type Notice = { kind: "info" | "error"; text: string };
 
 const DETAIL_LEVELS = ["busy", "title", "title_location", "full"] as const;
+const DAYS_AHEAD = [30, 90, 180, 365] as const;
 
 function calendarLabel(calendar: CalendarRow | undefined): string {
   return calendar ? `${calendar.accountEmail} · ${calendar.name}` : "?";
@@ -56,7 +57,7 @@ export function RulesPage(props: {
                       {`${calendarLabel(byId.get(rule.sourceCalendarId))} → ${calendarLabel(byId.get(rule.targetCalendarId))}`}
                     </div>
                     <div class="item-meta">
-                      {`${t.rules.detailLevels[rule.options.detailLevel]} · ${rule.options.daysAhead} ${t.rules.daysAhead}`}
+                      {`${t.rules.detailLevels[rule.options.detailLevel]} · ${t.rules.days(rule.options.daysAhead)}`}
                       {rule.options.markPrivate ? ` · ${t.rules.markPrivate}` : ""}
                     </div>
                   </div>
@@ -104,6 +105,9 @@ export function RulesPage(props: {
             <label>
               <span>{t.rules.from}</span>
               <select name="source" required>
+                <option value="" selected disabled>
+                  {t.rules.choose}
+                </option>
                 {props.calendars.map((calendar) => (
                   <option value={calendar.id}>{calendarLabel(calendar)}</option>
                 ))}
@@ -112,6 +116,9 @@ export function RulesPage(props: {
             <label>
               <span>{t.rules.to}</span>
               <select name="target" required>
+                <option value="" selected disabled>
+                  {t.rules.choose}
+                </option>
                 {writable.map((calendar) => (
                   <option value={calendar.id}>{calendarLabel(calendar)}</option>
                 ))}
@@ -127,7 +134,13 @@ export function RulesPage(props: {
             </label>
             <label>
               <span>{t.rules.daysAhead}</span>
-              <input type="number" name="daysAhead" value="60" min="1" max="180" />
+              <select name="daysAhead">
+                {DAYS_AHEAD.map((days) => (
+                  <option value={String(days)} selected={days === 90}>
+                    {t.rules.days(days)}
+                  </option>
+                ))}
+              </select>
             </label>
             <label class="check-row">
               <input type="checkbox" name="markPrivate" checked />

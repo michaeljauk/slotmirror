@@ -21,6 +21,8 @@ export interface CalendarInfo {
   name: string;
   canEdit: boolean;
   isDefault: boolean;
+  /** Mailbox that owns the calendar; differs from the account for calendars shared by others. */
+  ownerAddress: string;
 }
 
 export interface TimeWindow {
@@ -35,6 +37,7 @@ const calendarsSchema = z.object({
       name: z.string(),
       canEdit: z.optional(z.boolean()),
       isDefaultCalendar: z.optional(z.boolean()),
+      owner: z.optional(z.object({ address: z.optional(z.nullable(z.string())) })),
     }),
   ),
 });
@@ -65,13 +68,16 @@ export class GraphCalendar {
 
   async listCalendars(): Promise<CalendarInfo[]> {
     const body = calendarsSchema.parse(
-      await this.get(`${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar&$top=100`),
+      await this.get(
+        `${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar,owner&$top=100`,
+      ),
     );
     return body.value.map((calendar) => ({
       id: calendar.id,
       name: calendar.name,
       canEdit: calendar.canEdit ?? false,
       isDefault: calendar.isDefaultCalendar ?? false,
+      ownerAddress: (calendar.owner?.address ?? "").toLowerCase(),
     }));
   }
 

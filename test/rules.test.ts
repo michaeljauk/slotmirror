@@ -88,3 +88,46 @@ describe("rules", () => {
     expect((await post("/rules/rule-r4/run", cookie)).status).toBe(404);
   });
 });
+
+describe("calendar refresh", () => {
+  it("offers only the account's own calendars as targets, not calendars shared by others", async () => {
+    const { user, cookie } = await signIn("owner@example.com");
+    await env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email) VALUES ('acc-share', ?, 'microsoft', 'me@example.com')",
+    )
+      .bind(user.id)
+      .run();
+    await env.ACCOUNT_SYNC.getByName("acc-share").storeTokens("acc-share", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        value: [
+          {
+            id: "own",
+            name: "Calendar",
+            canEdit: true,
+            isDefaultCalendar: true,
+            owner: { address: "Me@Example.com" },
+          },
+          {
+            id: "shared",
+            name: "Colleague",
+            canEdit: true,
+            owner: { address: "colleague@example.com" },
+          },
+        ],
+      }),
+    );
+    expect((await post("/rules/calendars/refresh", cookie)).status).toBe(302);
+    const { results } = await env.DB.prepare(
+      "SELECT remote_id AS id, can_edit AS canEdit FROM calendars WHERE account_id = 'acc-share' ORDER BY remote_id",
+    ).all<{ id: string; canEdit: number }>();
+    expect(results).toEqual([
+      { id: "own", canEdit: 1 },
+      { id: "shared", canEdit: 0 },
+    ]);
+  });
+});

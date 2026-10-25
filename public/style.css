@@ -589,6 +589,8 @@ h2 {
 
 .form select,
 .form input[type="number"] {
+  width: 100%;
+  min-width: 0;
   height: 36px;
   padding: 0 10px;
   border: 1px solid var(--line-strong);

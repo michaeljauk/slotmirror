@@ -11,8 +11,8 @@ export const ruleOptionsSchema = z.object({
   detailLevel: z._default(z.enum(["busy", "title", "title_location", "full"]), "busy"),
   /** Subject of blocks at detail level "busy", and the fallback for events without a title. */
   blockTitle: z._default(z.string().check(z.trim(), z.minLength(1), z.maxLength(255)), "Busy"),
-  /** How many days ahead to mirror. */
-  daysAhead: z._default(z.int().check(z.minimum(1), z.maximum(180)), 60),
+  /** How many days ahead to mirror. The window moves forward every day. */
+  daysAhead: z._default(z.int().check(z.minimum(1), z.maximum(365)), 90),
   skipAllDay: z._default(z.boolean(), true),
   /** Skip events that do not block time (Graph `showAs: free`, Google `transparency: transparent`). */
   skipFree: z._default(z.boolean(), true),

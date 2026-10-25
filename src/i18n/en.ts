@@ -38,7 +38,18 @@ export const en = {
     syncFailed: (code: string) => `Sync failed: ${code}`,
     changesFailed: (count: number) => `${count} changes failed`,
     disconnect: "Disconnect",
-    connect: (provider: string) => `+ Connect ${provider}`,
+    connect: (provider: string) => `Connect ${provider}`,
+    disconnectTitle: "Disconnect this account?",
+    disconnectText: (email: string) =>
+      `freebusy-sync deletes its tokens for ${email} and stops reading and writing its calendars.`,
+    disconnectRules: (count: number) =>
+      count === 0
+        ? "No rule uses this account."
+        : count === 1
+          ? "1 rule uses this account. It is deleted, and the blocks it wrote are removed."
+          : `${count} rules use this account. They are deleted, and the blocks they wrote are removed.`,
+    disconnectConfirm: "Disconnect account",
+    cancel: "Cancel",
   },
   rules: {
     title: "Rules",
@@ -83,6 +94,9 @@ export const en = {
     lastRunFailed: (time: string, code: string) => `last run failed · ${time} · ${code}`,
     privateNote: "Events marked private in the source never carry more than Busy.",
     capped: (level: string) => `Limited to ${level} by this deployment's policy`,
+    overviewEmpty: "No rules yet. Add the first one on the rules page.",
+    active: "Active",
+    pausedShort: "Paused",
   },
   privacy: {
     title: "Privacy",

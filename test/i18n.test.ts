@@ -2,6 +2,7 @@ import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { de } from "../src/i18n/de";
 import { en } from "../src/i18n/en";
+import { displayTimeZone, i18nFor } from "../src/i18n";
 import { BASE } from "./helpers";
 
 /** Every leaf key of a catalog, e.g. "nav.signOut". */
@@ -12,6 +13,29 @@ function keys(catalog: object, prefix = ""): string[] {
       : [`${prefix}${key}`],
   );
 }
+
+describe("dates and times", () => {
+  const at = "2026-10-25T18:00:00.000Z";
+
+  it("names UTC, but not a local time zone", () => {
+    expect(i18nFor("en").formatTimestamp(at)).toMatch(/6:00\sPM UTC$/);
+    expect(i18nFor("de", "Europe/Vienna").formatTimestamp(at)).toBe("25.10.2026, 19:00");
+  });
+
+  it("formats relative times in the locale", () => {
+    const now = Date.parse(at);
+    expect(i18nFor("en").formatRelative(at, now + 5 * 60_000)).toBe("5 min. ago");
+    expect(i18nFor("de").formatRelative(at, now + 5 * 60_000)).toBe("vor 5 Min.");
+    expect(i18nFor("de").formatRelative(at, now + 20_000)).toBe("jetzt");
+    expect(i18nFor("en").formatRelative(at, now + 3 * 86_400_000)).toBe("3 days ago");
+  });
+
+  it("falls back to UTC for an unknown time zone", () => {
+    expect(displayTimeZone("Europe/Vienna")).toBe("Europe/Vienna");
+    expect(displayTimeZone("Mars/Olympus")).toBe("UTC");
+    expect(displayTimeZone("")).toBe("UTC");
+  });
+});
 
 describe("i18n", () => {
   it("has the same keys in every catalog", () => {

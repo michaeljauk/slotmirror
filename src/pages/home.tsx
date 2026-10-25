@@ -1,9 +1,12 @@
-import type { AccountSyncStatus } from "../audit";
+import type { AccountSyncStatus, RuleOutcome } from "../audit";
+import type { CalendarRow } from "../calendars";
 import type { Provider } from "../config";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
+import { calendarLabel, RuleLastRun } from "./rule-summary";
+import type { RuleRow } from "./rules";
 
 export interface AccountRow {
   id: string;
@@ -58,20 +61,40 @@ export function HomePage(props: {
   providers: Record<Provider, boolean>;
   /** Sync status per account ID; accounts without an entry were never synced. */
   statuses: Map<string, AccountSyncStatus>;
+  rules: RuleRow[];
+  calendars: CalendarRow[];
+  /** Latest finished run or failure per rule ID. */
+  outcomes: Map<string, RuleOutcome>;
 }) {
-  const { t, formatDate, formatTimestamp } = useI18n();
+  const { t, formatDate, formatTimestamp, formatRelative } = useI18n();
+  const calendarsById = new Map(props.calendars.map((calendar) => [calendar.id, calendar]));
 
   function syncStatus(status: AccountSyncStatus | undefined) {
     if (!status) return <span class="status">{t.accounts.notSynced}</span>;
-    const time = formatTimestamp(status.at);
-    if (status.state === "ok") return <span class="status ok">{t.accounts.inSync(time)}</span>;
+    const time = formatRelative(status.at);
+    const title = formatTimestamp(status.at);
+    if (status.state === "ok") {
+      return (
+        <span class="status ok" title={title}>
+          {t.accounts.inSync(time)}
+        </span>
+      );
+    }
     if (status.state === "partial") {
-      return <span class="status">{t.accounts.partlySynced(time)}</span>;
+      return (
+        <span class="status" title={title}>
+          {t.accounts.partlySynced(time)}
+        </span>
+      );
     }
     const reason = status.code
       ? t.accounts.syncFailed(status.code)
       : t.accounts.changesFailed(status.failed ?? 0);
-    return <span class="status error">{`${reason} · ${time}`}</span>;
+    return (
+      <span class="status error" title={title}>
+        {`${reason} · ${time}`}
+      </span>
+    );
   }
 
   function accountKind(account: AccountRow): string {
@@ -106,16 +129,17 @@ export function HomePage(props: {
                   </span>
                   <div class="item-main">
                     <div class="item-title">{account.email}</div>
-                    <div class="item-meta">
-                      {`${accountKind(account)} · ${t.accounts.connectedOn(formatDate(account.createdAt))}`}
+                    <div
+                      class="item-meta"
+                      title={t.accounts.connectedOn(formatDate(account.createdAt))}
+                    >
+                      {accountKind(account)}
                     </div>
                   </div>
                   {syncStatus(props.statuses.get(account.id))}
-                  <form method="post" action={`/accounts/${account.id}/disconnect`}>
-                    <button type="submit" class="link-button danger">
-                      {t.accounts.disconnect}
-                    </button>
-                  </form>
+                  <a class="link-button quiet" href={`/accounts/${account.id}/disconnect`}>
+                    {t.accounts.disconnect}
+                  </a>
                 </li>
               ))}
             </ul>
@@ -123,8 +147,9 @@ export function HomePage(props: {
         </div>
 
         <div class="actions">
-          {enabledProviders(props.providers).map((provider, index) => (
-            <a class={index === 0 ? "button primary" : "button"} href={`/auth/${provider}/connect`}>
+          {enabledProviders(props.providers).map((provider) => (
+            <a class="button" href={`/auth/${provider}/connect`}>
+              <ProviderIcon provider={provider} />
               {t.accounts.connect(PROVIDER_LABEL[provider])}
             </a>
           ))}
@@ -140,6 +165,29 @@ export function HomePage(props: {
           <a class="button" href="/rules">
             {t.rules.manage}
           </a>
+        </div>
+
+        <div class="card">
+          {props.rules.length === 0 ? (
+            <div class="empty">{t.rules.overviewEmpty}</div>
+          ) : (
+            <ul class="list">
+              {props.rules.map((rule) => (
+                <li>
+                  <div class="item-main">
+                    <div class="item-title">
+                      {`${calendarLabel(calendarsById.get(rule.sourceCalendarId))} → ${calendarLabel(calendarsById.get(rule.targetCalendarId))}`}
+                    </div>
+                    <div class="item-meta">{t.rules.detailLevels[rule.options.detailLevel]}</div>
+                    {rule.enabled ? <RuleLastRun outcome={props.outcomes.get(rule.id)} /> : null}
+                  </div>
+                  <span class={rule.enabled ? "badge ok" : "badge"}>
+                    {rule.enabled ? t.rules.active : t.rules.pausedShort}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </section>
     </Layout>

@@ -137,6 +137,38 @@ describe("account actions", () => {
     expect(event).toEqual({ user_id: user.id, account_id: "acc-del" });
   });
 
+  it("asks before disconnecting and names the rules that go with the account", async () => {
+    const { user, cookie } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-ask", "ask-me@example.com");
+
+    const home = await (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
+    expect(home).toContain('href="/accounts/acc-ask/disconnect"');
+
+    const response = await exports.default.fetch(`${BASE}/accounts/acc-ask/disconnect`, {
+      headers: { cookie },
+    });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Disconnect this account?");
+    expect(html).toContain("ask-me@example.com");
+    expect(html).toContain("No rule uses this account.");
+    expect(html).toMatch(/<form[^>]*method="post"[^>]*action="\/accounts\/acc-ask\/disconnect"/);
+    // Showing the page changes nothing.
+    expect(
+      await env.DB.prepare("SELECT 1 FROM accounts WHERE id = 'acc-ask'").first(),
+    ).not.toBeNull();
+  });
+
+  it("does not show the disconnect page for someone else's account", async () => {
+    const other = await signIn("other@elsewhere.org");
+    await addAccount(other.user.id, "acc-foreign", "foreign@elsewhere.org");
+    const { cookie } = await signIn("owner@example.com");
+    const response = await exports.default.fetch(`${BASE}/accounts/acc-foreign/disconnect`, {
+      headers: { cookie },
+    });
+    expect(response.status).toBe(404);
+  });
+
   it("does not let a user disconnect someone else's account", async () => {
     const other = await signIn("other@elsewhere.org");
     await addAccount(other.user.id, "acc-keep", "keep-me@elsewhere.org");

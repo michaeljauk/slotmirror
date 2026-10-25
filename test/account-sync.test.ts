@@ -319,13 +319,18 @@ describe("sync status in the UI", () => {
     fakeGraph();
     await stub.runRule(ruleId);
 
-    expect(await accountsPage()).toMatch(/status ok">In sync · [^<]*UTC/);
+    const home = await accountsPage();
+    expect(home).toMatch(/status ok" title="[^"]*UTC">In sync · now</);
+    // The home page lists the rule with its last run.
+    expect(home).toContain("acc-ui-ok@example.com · Work → acc-ui-ok@example.com · Test");
+    expect(home).toMatch(/badge ok">Active</);
+    expect(home).toMatch(/15 blocks · last run now · 15 changes/);
 
     const { cookie } = await signIn("owner@example.com");
     const rules = await (
       await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
     ).text();
-    expect(rules).toMatch(/15 blocks · last run [^<]*UTC · 15 changes/);
+    expect(rules).toMatch(/title="[^"]*UTC">15 blocks · last run now · 15 changes/);
   });
 
   it("does not count a dry run as a sync", async () => {
@@ -361,7 +366,7 @@ describe("sync status in the UI", () => {
     const html = await accountsPage();
     const row = html.slice(html.indexOf("acc-ui-fail@example.com"));
     expect(row.slice(0, row.indexOf("</li>"))).toMatch(
-      /status error">Sync failed: token_invalid_grant · [^<]*UTC/,
+      /status error" title="[^"]*UTC">Sync failed: token_invalid_grant · now</,
     );
   });
 });

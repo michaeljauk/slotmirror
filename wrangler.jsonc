@@ -30,5 +30,7 @@
     "DATA_JURISDICTION": "",
     "MAX_DETAIL_TO_EXTERNAL": "",
     "MAX_DETAIL_FROM_EXTERNAL": "",
+    // IANA time zone for dates and times in the dashboard, e.g. "Europe/Vienna".
+    "TIME_ZONE": "UTC",
   },
 }

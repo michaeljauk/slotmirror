@@ -36,7 +36,18 @@ export const de: Messages = {
     changesFailed: (count: number) => `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
     disconnect: "Trennen",
-    connect: (provider) => `+ ${provider} verbinden`,
+    connect: (provider) => `${provider} verbinden`,
+    disconnectTitle: "Dieses Konto trennen?",
+    disconnectText: (email) =>
+      `freebusy-sync löscht seine Tokens für ${email} und liest und schreibt dessen Kalender nicht mehr.`,
+    disconnectRules: (count) =>
+      count === 0
+        ? "Keine Regel nutzt dieses Konto."
+        : count === 1
+          ? "1 Regel nutzt dieses Konto. Sie wird gelöscht, und die Blöcke, die sie geschrieben hat, werden entfernt."
+          : `${count} Regeln nutzen dieses Konto. Sie werden gelöscht, und die Blöcke, die sie geschrieben haben, werden entfernt.`,
+    disconnectConfirm: "Konto trennen",
+    cancel: "Abbrechen",
   },
   rules: {
     title: "Regeln",
@@ -83,6 +94,9 @@ export const de: Messages = {
       `letzter Lauf fehlgeschlagen · ${time} · ${code}`,
     capped: (level: string) => `Durch die Richtlinie dieser Installation begrenzt auf: ${level}`,
     privateNote: "Termine, die im Quellkalender privat sind, tragen nie mehr als „Belegt“.",
+    overviewEmpty: "Noch keine Regeln. Lege die erste auf der Regelseite an.",
+    active: "Aktiv",
+    pausedShort: "Pausiert",
   },
   privacy: {
     title: "Datenschutz",

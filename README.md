@@ -65,6 +65,7 @@ and sets their own rules. Nobody sees another user's calendars.
 | `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.             |
 | `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).      |
 | `ORG_NAME`                        | variable | Optional display name.                                                                     |
+| `TIME_ZONE`                       | variable | IANA time zone for dates in the dashboard, e.g. `Europe/Vienna`. Default `UTC`.            |
 | `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
 | `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in; connecting accounts stays open.   |
 | `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set before the first account connects. |

@@ -23,7 +23,7 @@ function currentUser(c: Context<AppEnv>): CurrentUser {
   return user;
 }
 
-async function userRules(db: D1Database, userId: string): Promise<RuleRow[]> {
+export async function userRules(db: D1Database, userId: string): Promise<RuleRow[]> {
   const { results } = await db
     .prepare(
       `SELECT id, source_calendar_id AS sourceCalendarId, target_calendar_id AS targetCalendarId,

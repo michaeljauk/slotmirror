@@ -10,17 +10,19 @@ import {
   recordAudit,
   userActivity,
 } from "./audit";
+import { userCalendars } from "./calendars";
 import { setupStatus, signInProviders } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
+import { DisconnectPage } from "./pages/disconnect";
 import { HomePage, SignInPage, type AccountRow } from "./pages/home";
 import { MessagePage } from "./pages/message";
 import { PrivacyPage } from "./pages/privacy";
 import { SetupPage } from "./pages/setup";
 import { render } from "./render";
 import { auth } from "./routes/auth";
-import { rules } from "./routes/rules";
+import { rules, userRules } from "./routes/rules";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
 import { detailCapsFromEnv } from "./detail-policy";
@@ -98,10 +100,50 @@ app.get("/", async (c) => {
   )
     .bind(user.id)
     .all<AccountRow>();
-  const statuses = accountStatuses(await latestRuleOutcomes(c.env.DB, user.id));
+  const [outcomes, rulesOfUser, calendars] = await Promise.all([
+    latestRuleOutcomes(c.env.DB, user.id),
+    userRules(c.env.DB, user.id),
+    userCalendars(c.env.DB, user.id),
+  ]);
   return render(
     c,
-    <HomePage user={user} accounts={results} providers={providers} statuses={statuses} />,
+    <HomePage
+      user={user}
+      accounts={results}
+      providers={providers}
+      statuses={accountStatuses(outcomes)}
+      rules={rulesOfUser}
+      calendars={calendars}
+      outcomes={new Map(outcomes.map((outcome) => [outcome.ruleId, outcome]))}
+    />,
+  );
+});
+
+// Ask before disconnecting: it deletes the rules that use the account and their blocks.
+app.get("/accounts/:id/disconnect", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  const accountId = c.req.param("id");
+  const account = await c.env.DB.prepare("SELECT email FROM accounts WHERE id = ? AND user_id = ?")
+    .bind(accountId, user.id)
+    .first<{ email: string }>();
+  if (!account) return c.notFound();
+  const usage = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM rules r
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN calendars tc ON tc.id = r.target_calendar_id
+     WHERE sc.account_id = ? OR tc.account_id = ?`,
+  )
+    .bind(accountId, accountId)
+    .first<{ count: number }>();
+  return render(
+    c,
+    <DisconnectPage
+      user={user}
+      accountId={accountId}
+      email={account.email}
+      rules={usage?.count ?? 0}
+    />,
   );
 });
 

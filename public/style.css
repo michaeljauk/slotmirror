@@ -84,7 +84,7 @@ main {
   gap: 10px;
   font-size: 15.5px;
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
@@ -246,12 +246,12 @@ h2 {
 
 h1 {
   font-size: 22px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 h2 {
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .lead {
@@ -308,6 +308,10 @@ h2 {
 .item-meta {
   color: var(--muted);
   font-size: 13px;
+}
+
+.item-meta.error {
+  color: var(--danger);
 }
 
 .provider-icon {
@@ -378,7 +382,7 @@ h2 {
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-weight: 550;
+  font-weight: 600;
   cursor: pointer;
   box-shadow: var(--shadow);
 }
@@ -416,6 +420,24 @@ h2 {
   color: var(--danger);
 }
 
+/* Destructive actions that should not compete with the status next to them. */
+.link-button.quiet {
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.link-button.quiet:hover {
+  color: var(--danger);
+}
+
+.button.danger {
+  color: var(--danger);
+}
+
+.button.danger:hover {
+  background: #fbefee;
+}
+
 /* Sign-in and messages */
 
 .center {
@@ -435,6 +457,10 @@ h2 {
 .center .actions {
   flex-direction: column;
   margin-top: 24px;
+}
+
+.center .lead + .lead {
+  margin-top: 10px;
 }
 
 .center .button {
@@ -506,6 +532,11 @@ h2 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.badge.ok {
+  background: #e3f1e8;
+  color: var(--ok);
 }
 
 .badge.admin {

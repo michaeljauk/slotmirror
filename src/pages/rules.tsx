@@ -4,6 +4,7 @@ import type { RuleOptions } from "../config";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { Layout } from "./layout";
+import { calendarLabel, RuleLastRun } from "./rule-summary";
 
 export interface RuleRow {
   id: string;
@@ -18,10 +19,6 @@ export type Notice = { kind: "info" | "error"; text: string };
 const DETAIL_LEVELS = ["busy", "title", "title_location", "full"] as const;
 const DAYS_AHEAD = [30, 90, 180, 365] as const;
 
-function calendarLabel(calendar: CalendarRow | undefined): string {
-  return calendar ? `${calendar.accountEmail} · ${calendar.name}` : "?";
-}
-
 export function RulesPage(props: {
   user: CurrentUser;
   calendars: CalendarRow[];
@@ -32,21 +29,9 @@ export function RulesPage(props: {
   outcomes: Map<string, RuleOutcome>;
   notice?: Notice;
 }) {
-  const { t, formatTimestamp } = useI18n();
+  const { t } = useI18n();
   const byId = new Map(props.calendars.map((calendar) => [calendar.id, calendar]));
   const writable = props.calendars.filter((calendar) => calendar.canEdit);
-
-  function lastRun(outcome: RuleOutcome | undefined) {
-    if (!outcome) return null;
-    const time = formatTimestamp(outcome.createdAt);
-    if (outcome.kind === "sync_failed") {
-      return <div class="item-meta">{t.rules.lastRunFailed(time, outcome.detail.code ?? "")}</div>;
-    }
-    const { create = 0, update = 0, unchanged = 0, applied = 0 } = outcome.detail;
-    return (
-      <div class="item-meta">{t.rules.lastRun(create + update + unchanged, time, applied)}</div>
-    );
-  }
 
   return (
     <Layout title={t.rules.title} user={props.user} active="rules">
@@ -84,7 +69,7 @@ export function RulesPage(props: {
                       </div>
                     ) : null}
                     {rule.enabled ? (
-                      lastRun(props.outcomes.get(rule.id))
+                      <RuleLastRun outcome={props.outcomes.get(rule.id)} />
                     ) : (
                       <div class="item-meta paused">{t.rules.paused}</div>
                     )}

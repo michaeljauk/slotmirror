@@ -113,6 +113,16 @@ export class AccountSync extends DurableObject<Env> {
    * write nothing.
    */
   async runRule(ruleId: string, options: { dryRun?: boolean } = {}): Promise<RunResult> {
+    try {
+      return await this.executeRule(ruleId, options);
+    } catch (error) {
+      // Record failed real runs whether the alarm or a user started them; previews stay silent.
+      if (!options.dryRun) await this.auditFailure(ruleId, this.accountIdOrNull() ?? "", error);
+      throw error;
+    }
+  }
+
+  private async executeRule(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
     const startedAt = Date.now();
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
@@ -195,9 +205,8 @@ export class AccountSync extends DurableObject<Env> {
       try {
         await this.runRule(ruleId);
       } catch (error) {
-        // One broken rule must not stop the others; the audit log records it.
+        // One broken rule must not stop the others; runRule has recorded the failure.
         console.error("Rule run failed", ruleId, error);
-        await this.auditFailure(ruleId, accountId, error);
       }
     }
   }

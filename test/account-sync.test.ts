@@ -269,6 +269,40 @@ describe("AccountSync audit events", () => {
   });
 });
 
+describe("manual run failures", () => {
+  it("records sync_failed for a manual run, but not for a failing preview", async () => {
+    const { stub, ruleId } = await setupRule("acc-manual-fail");
+    await stub.storeTokens("acc-manual-fail", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ error: "invalid_grant" }, { status: 400 }),
+    );
+
+    await expectRejection(stub.runRule(ruleId, { dryRun: true }));
+    expect((await auditOf(ruleId)).filter((event) => event.kind === "sync_failed")).toHaveLength(0);
+
+    await expectRejection(stub.runRule(ruleId));
+    const failed = (await auditOf(ruleId)).filter((event) => event.kind === "sync_failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.detail).toEqual({ code: "token_invalid_grant" });
+  });
+});
+
+/** RPC rejections must be awaited inside try/catch, or the test runner reports them as unhandled. */
+async function expectRejection(promise: Promise<unknown>): Promise<void> {
+  let rejected = false;
+  try {
+    await promise;
+  } catch {
+    rejected = true;
+  }
+  expect(rejected).toBe(true);
+}
+
 describe("sync status in the UI", () => {
   async function accountsPage(): Promise<string> {
     const { cookie } = await signIn("owner@example.com");

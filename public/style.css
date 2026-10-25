@@ -664,3 +664,7 @@ h2 {
 .prose li {
   margin: 4px 0;
 }
+
+.item-meta.paused {
+  color: var(--faint);
+}

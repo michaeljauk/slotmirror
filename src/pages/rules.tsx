@@ -7,6 +7,7 @@ import { Layout } from "./layout";
 
 export interface RuleRow {
   id: string;
+  enabled: boolean;
   sourceCalendarId: string;
   targetCalendarId: string;
   options: RuleOptions;
@@ -75,16 +76,33 @@ export function RulesPage(props: {
                       {`${t.rules.detailLevels[rule.options.detailLevel]} · ${t.rules.days(rule.options.daysAhead)}`}
                       {rule.options.markPrivate ? ` · ${t.rules.markPrivate}` : ""}
                     </div>
-                    {lastRun(props.outcomes.get(rule.id))}
+                    {rule.enabled ? (
+                      lastRun(props.outcomes.get(rule.id))
+                    ) : (
+                      <div class="item-meta paused">{t.rules.paused}</div>
+                    )}
                   </div>
                   <form method="post" action={`/rules/${rule.id}/preview`}>
                     <button type="submit" class="button small">
                       {t.rules.preview}
                     </button>
                   </form>
-                  <form method="post" action={`/rules/${rule.id}/run`}>
-                    <button type="submit" class="button small primary">
-                      {t.rules.runNow}
+                  {rule.enabled ? (
+                    <form method="post" action={`/rules/${rule.id}/run`}>
+                      <button type="submit" class="button small primary">
+                        {t.rules.runNow}
+                      </button>
+                    </form>
+                  ) : null}
+                  <form
+                    method="post"
+                    action={`/rules/${rule.id}/${rule.enabled ? "pause" : "enable"}`}
+                  >
+                    <button
+                      type="submit"
+                      class={rule.enabled ? "button small" : "button small primary"}
+                    >
+                      {rule.enabled ? t.rules.pause : t.rules.enable}
                     </button>
                   </form>
                   <form method="post" action={`/rules/${rule.id}/delete`}>
@@ -103,7 +121,7 @@ export function RulesPage(props: {
         <div class="section-head">
           <div>
             <h2>{t.rules.newRule}</h2>
-            <p class="lead">{t.rules.privateNote}</p>
+            <p class="lead">{`${t.rules.privateNote} ${t.rules.newRulesPaused}`}</p>
           </div>
           <form method="post" action="/rules/calendars/refresh">
             <button type="submit" class="link-button">

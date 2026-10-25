@@ -158,3 +158,45 @@ describe("calendar refresh", () => {
     ]);
   });
 });
+
+describe("pause and enable", () => {
+  it("creates rules paused, keeps them out of the cron, and turns them on", async () => {
+    const { user, cookie } = await signIn("owner@example.com");
+    await setupCalendars("acc-t1", user.id);
+    await post("/rules", cookie, { source: "acc-t1-work", target: "acc-t1-test" });
+    const rule = await env.DB.prepare(
+      "SELECT id, enabled FROM rules WHERE source_calendar_id = 'acc-t1-work'",
+    ).first<{ id: string; enabled: number }>();
+    expect(rule?.enabled).toBe(0);
+    const { rulesTargetingAccount } = await import("../src/sync/rules");
+    expect(await rulesTargetingAccount(env.DB, "acc-t1")).toEqual([]);
+
+    expect((await post(`/rules/${rule?.id}/enable`, cookie)).status).toBe(302);
+    expect(await rulesTargetingAccount(env.DB, "acc-t1")).toEqual([rule?.id]);
+    const audit = await env.DB.prepare(
+      "SELECT kind FROM audit_events WHERE rule_id = ? ORDER BY id DESC",
+    )
+      .bind(rule?.id)
+      .first<{ kind: string }>();
+    expect(audit?.kind).toBe("rule_enabled");
+
+    expect((await post(`/rules/${rule?.id}/pause`, cookie)).status).toBe(302);
+    expect(await rulesTargetingAccount(env.DB, "acc-t1")).toEqual([]);
+  });
+
+  it("does not let a user switch someone else's rule", async () => {
+    const other = await signIn("other@elsewhere.org");
+    await setupCalendars("acc-t2", other.user.id);
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, enabled) VALUES ('rule-t2', ?, 'acc-t2-work', 'acc-t2-test', 0)",
+    )
+      .bind(other.user.id)
+      .run();
+    const { cookie } = await signIn("owner@example.com");
+    await post("/rules/rule-t2/enable", cookie);
+    const row = await env.DB.prepare("SELECT enabled FROM rules WHERE id = 'rule-t2'").first<{
+      enabled: number;
+    }>();
+    expect(row?.enabled).toBe(0);
+  });
+});

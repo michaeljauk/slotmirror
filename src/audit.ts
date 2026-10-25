@@ -1,3 +1,4 @@
+import { GoogleApiError } from "./providers/google-calendar";
 import { GraphError } from "./providers/graph-calendar";
 import { TokenError } from "./providers/microsoft";
 
@@ -14,6 +15,8 @@ export type AuditKind =
   | "token_refresh_failed"
   | "rule_created"
   | "rule_deleted"
+  | "rule_enabled"
+  | "rule_paused"
   | "sync_run"
   | "sync_failed";
 
@@ -71,6 +74,7 @@ export async function recordAudit(db: D1Database, event: AuditEvent): Promise<vo
 export function errorCode(error: unknown): string {
   if (error instanceof TokenError) return `token_${error.code}`;
   if (error instanceof GraphError) return `graph_${error.status}`;
+  if (error instanceof GoogleApiError) return `google_${error.status}`;
   // Errors thrown by this app carry static messages. Other error types may echo input.
   if (error instanceof Error && error.name === "Error") return error.message.slice(0, 120);
   return error instanceof Error ? error.name : "unknown";

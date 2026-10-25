@@ -25,12 +25,22 @@ async function userRules(db: D1Database, userId: string): Promise<RuleRow[]> {
   const { results } = await db
     .prepare(
       `SELECT id, source_calendar_id AS sourceCalendarId, target_calendar_id AS targetCalendarId,
-              options
+              options, enabled
        FROM rules WHERE user_id = ? ORDER BY rowid`,
     )
     .bind(userId)
-    .all<{ id: string; sourceCalendarId: string; targetCalendarId: string; options: string }>();
-  return results.map((row) => ({ ...row, options: parseRuleOptions(row.options) }));
+    .all<{
+      id: string;
+      sourceCalendarId: string;
+      targetCalendarId: string;
+      options: string;
+      enabled: number;
+    }>();
+  return results.map((row) => ({
+    ...row,
+    enabled: row.enabled === 1,
+    options: parseRuleOptions(row.options),
+  }));
 }
 
 async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400 = 200) {
@@ -98,8 +108,9 @@ rules.post("/", async (c) => {
 
   const ruleId = crypto.randomUUID();
   await c.env.DB.prepare(
-    `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options)
-     VALUES (?, ?, ?, ?, ?)`,
+    // New rules start paused, so that nothing is written before the user checked the preview.
+    `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled)
+     VALUES (?, ?, ?, ?, ?, 0)`,
   )
     .bind(ruleId, user.id, source, target, JSON.stringify(parsed.data))
     .run();
@@ -135,6 +146,34 @@ for (const action of ["preview", "run"] as const) {
       console.error(`Rule ${action} failed`, ruleId, error);
       return renderPage(c, { kind: "error", text: (error as Error).message }, 400);
     }
+  });
+}
+
+for (const [action, enabled] of [
+  ["enable", 1],
+  ["pause", 0],
+] as const) {
+  rules.post(`/:id/${action}`, async (c) => {
+    const user = currentUser(c);
+    const ruleId = c.req.param("id");
+    const updated = await c.env.DB.prepare(
+      "UPDATE rules SET enabled = ? WHERE id = ? AND user_id = ? AND enabled <> ?",
+    )
+      .bind(enabled, ruleId, user.id, enabled)
+      .run();
+    if (updated.meta.changes > 0) {
+      const target = await targetAccountOf(c.env.DB, ruleId, user.id);
+      await recordAudit(c.env.DB, {
+        orgId: user.orgId,
+        userId: user.id,
+        accountId: target?.accountId,
+        ruleId,
+        kind: enabled ? "rule_enabled" : "rule_paused",
+      });
+      // Start the first run now instead of waiting for the next cron.
+      if (enabled && target) await c.env.ACCOUNT_SYNC.getByName(target.accountId).requestSync();
+    }
+    return c.redirect("/rules");
   });
 }
 

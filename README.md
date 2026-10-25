@@ -5,22 +5,43 @@
 Mirror busy blocks between Microsoft 365 and Google calendars. Self-hosted on Cloudflare Workers,
 runs on the Workers Free plan.
 
-> **Status: early development.** The setup page, sign-in shell, webhook endpoints and storage
-> exist. OAuth and the sync itself are not implemented yet.
+> **Status: early development.** Sign-in, connecting Microsoft 365 accounts, users and roles
+> work. The sync itself is in progress; do not use this for real calendars yet.
 
 ## What it does
 
 If you work in more than one calendar (two Microsoft 365 tenants, a work and a private Google
 account, or a mix), colleagues only see the calendar they share a tenant with. freebusy-sync reads
-your events in one calendar and writes a block titled "Busy" at the same time in the others.
-Titles, attendees, locations and descriptions never leave the source calendar.
+your events in one calendar and writes matching blocks into the others.
 
-- Every occurrence of a recurring series is mirrored on its own, so a moved or cancelled single
-  occurrence moves or removes its block.
-- Changes arrive through Microsoft Graph change notifications and Google push notifications. A
-  cron reconcile every 10 minutes catches anything a webhook missed.
-- Blocks carry a marker, so that two-way rules do not mirror blocks back and forth.
-- You run your own copy in your own Cloudflare account. Nobody else holds your tokens.
+- **You choose the detail per direction.** Work events can arrive in your private calendar with
+  title and location, while private events arrive in your work calendar only as "Busy", marked
+  private. The default is "Busy" only.
+- **Recurring events are exact.** Every occurrence of a series is mirrored on its own, so a moved
+  or cancelled single occurrence moves or removes its block.
+- **Every run compares the full window.** freebusy-sync checks what each target calendar should
+  contain and fixes any difference, instead of trusting that it saw every change. Only differences
+  are written; blocks are never rebuilt.
+- **You can see what happened.** The status shows numbers, not just "success", and an audit log
+  records every block it created, moved or deleted, without event content.
+- **You run your own copy** in your own Cloudflare account, on the Free plan. Nobody else holds your
+  tokens. One deployment serves one person or a whole team.
+
+```mermaid
+flowchart LR
+  subgraph Source["Source calendar (e.g. work, Microsoft 365)"]
+    E["Event: Client call 10:00-11:00"]
+  end
+  subgraph Worker["Your Cloudflare Worker"]
+    R["Rule: work -> private<br/>detail: busy, private"]
+    S[("Durable Object per account<br/>encrypted tokens, mapping")]
+  end
+  subgraph Target["Target calendar (e.g. private, Google)"]
+    B["Busy 10:00-11:00 (private)"]
+  end
+  E -- "Graph calendarView" --> R --> B
+  R <--> S
+```
 
 ## Deploy
 
@@ -99,6 +120,12 @@ pnpm dev
 - **Durable Object `AccountSync`, one per connected account:** encrypted tokens, webhook
   subscriptions, and the mapping from source events to the blocks it wrote. A rule runs in the
   instance of its target account and reads busy times from the source account's instance.
+
+## Contributing and security
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) explains the setup, commit format and pull requests.
+- [AGENTS.md](AGENTS.md) holds the project rules for AI coding agents.
+- Report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 

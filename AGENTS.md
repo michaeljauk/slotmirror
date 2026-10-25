@@ -1,0 +1,66 @@
+# AGENTS.md
+
+Guidance for AI coding agents (Codex, Claude Code, Cursor, Copilot and others) working on this
+repository. Humans: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## What this is
+
+freebusy-sync mirrors busy blocks between Microsoft 365 and Google calendars. It runs as one
+Cloudflare Worker on the Workers Free plan and is self-hosted: every deployment holds its own OAuth
+tokens. Privacy is the product: by default only "Busy" crosses from one calendar to another.
+
+## Commands
+
+```sh
+pnpm install
+pnpm dev               # wrangler dev on http://localhost:8787
+pnpm db:migrate:local  # apply D1 migrations to the local database
+pnpm check             # format check, lint, typecheck, tests: run before every commit
+pnpm test              # Vitest inside the Workers runtime
+pnpm cf-typegen        # regenerate worker-configuration.d.ts after changing wrangler.jsonc
+```
+
+Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev.vars`.
+
+## Layout
+
+| Path                            | Content                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `src/index.tsx`                 | Hono app: middleware, pages, webhooks, cron handler                               |
+| `src/routes/`                   | Route groups (OAuth in `auth.tsx`)                                                |
+| `src/account-sync.ts`           | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
+| `src/providers/`                | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
+| `src/access.ts`, `src/users.ts` | Orgs, users, roles, access policy                                                 |
+| `src/i18n/`                     | Message catalogs. `en.ts` defines the shape; every locale must match it           |
+| `src/pages/`                    | Server-rendered Hono JSX pages                                                    |
+| `migrations/`                   | D1 migrations (registry: orgs, users, accounts, calendars, rules, runs)           |
+| `test/`                         | Vitest tests with `@cloudflare/vitest-plugin`                                     |
+| `design/`                       | Logo and design assets                                                            |
+
+## Rules
+
+- **Free plan limits are design constraints.** 10 ms CPU and 50 subrequests per invocation. Split
+  work into small steps (one rule direction per Durable Object alarm). Do not add a dependency or
+  loop that assumes the Paid plan.
+- **Privacy.** Never log or store event titles, descriptions, attendees or locations unless a rule
+  explicitly asks for that detail level. The audit log stores IDs and times, not content. Never
+  log tokens.
+- **Recurring events are read per occurrence** (Graph `calendarView`, Google `singleEvents=true`).
+  Never sync series masters.
+- **Plain `fetch` for Graph and Google.** No `googleapis`, MSAL or Graph SDK: they do not fit
+  workerd or the bundle.
+- **No Node-only APIs.** Use Web Crypto, `fetch`, `TextEncoder`.
+- **Every user-facing string goes through `src/i18n/`.** Add the key to `en.ts` and every other
+  catalog; a test fails if catalogs differ.
+- **Light mode only** in the UI. No `prefers-color-scheme: dark` styles.
+- **Tests first for sync logic.** Every change to the sync engine needs a test, including the
+  recurring-event matrix.
+
+## Commits and pull requests
+
+- Conventional Commits, enforced by commitlint: `type(scope): description`, lowercase description,
+  header and body lines at most 100 characters.
+- Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `perf`.
+- Do not add `Co-Authored-By` trailers.
+- Pull requests are squash-merged; the PR title becomes the commit message and must follow the same
+  format.

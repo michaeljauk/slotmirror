@@ -79,7 +79,7 @@ export function Layout(props: {
       </head>
       <body>
         <header class="topbar">
-          <div class="topbar-inner">
+          <div class={props.wide ? "topbar-inner wide" : "topbar-inner"}>
             <a href="/" class="brand">
               <BrandMark />
               {APP_NAME}

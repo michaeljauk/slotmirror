@@ -1205,7 +1205,8 @@ details.source.dirty {
 
 /* Editor with overview column */
 
-main.wide {
+main.wide,
+.topbar-inner.wide {
   max-width: 1120px;
 }
 

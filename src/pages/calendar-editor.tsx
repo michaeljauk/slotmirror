@@ -286,7 +286,7 @@ export function Overview(props: { state: EditorState }) {
                 return (
                   <td class={`cell level-${choice}`}>
                     <a href={`/rules?open=${from.id}#src-${from.id}`} data-open={from.id}>
-                      {t.editor.choices[choice]}
+                      {t.editor.short[choice]}
                       <small>{label}</small>
                     </a>
                   </td>

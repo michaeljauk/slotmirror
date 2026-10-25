@@ -1,6 +1,8 @@
 import type { Role } from "../access";
+import type { ActivityRow } from "../audit";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
+import { ActivityTable } from "./activity";
 import { Layout } from "./layout";
 
 export interface AdminUserRow {
@@ -11,7 +13,11 @@ export interface AdminUserRow {
 }
 
 /** Users of the admin's org with their number of connected accounts. No calendar data. */
-export function AdminPage(props: { user: CurrentUser; users: AdminUserRow[] }) {
+export function AdminPage(props: {
+  user: CurrentUser;
+  users: AdminUserRow[];
+  activity: ActivityRow[];
+}) {
   const { t, formatTimestamp } = useI18n();
   return (
     <Layout title={t.admin.title} user={props.user} active="admin">
@@ -49,6 +55,18 @@ export function AdminPage(props: { user: CurrentUser; users: AdminUserRow[] }) {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.activity.title}</h2>
+            <p class="lead">{t.activity.orgLead}</p>
+          </div>
+        </div>
+        <div class="card">
+          <ActivityTable rows={props.activity} showUser />
         </div>
       </section>
     </Layout>

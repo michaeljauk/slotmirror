@@ -2,9 +2,17 @@ import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import type { AppEnv } from "./app-env";
-import { purgeAuditEvents, recordAudit } from "./audit";
+import {
+  accountStatuses,
+  latestRuleOutcomes,
+  orgActivity,
+  purgeAuditEvents,
+  recordAudit,
+  userActivity,
+} from "./audit";
 import { setupStatus } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
+import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
 import { HomePage, SignInPage, type AccountRow } from "./pages/home";
 import { MessagePage } from "./pages/message";
@@ -76,7 +84,11 @@ app.get("/", async (c) => {
   )
     .bind(user.id)
     .all<AccountRow>();
-  return render(c, <HomePage user={user} accounts={results} providers={providers} />);
+  const statuses = accountStatuses(await latestRuleOutcomes(c.env.DB, user.id));
+  return render(
+    c,
+    <HomePage user={user} accounts={results} providers={providers} statuses={statuses} />,
+  );
 });
 
 // Remove an account of the signed-in user: its tokens and state first, then the registry row.
@@ -101,6 +113,12 @@ app.post("/accounts/:id/disconnect", async (c) => {
   return c.redirect("/");
 });
 
+app.get("/activity", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  return render(c, <ActivityPage user={user} rows={await userActivity(c.env.DB, user.id)} />);
+});
+
 app.get("/admin", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
@@ -122,7 +140,8 @@ app.get("/admin", async (c) => {
   )
     .bind(user.orgId)
     .all<AdminUserRow>();
-  return render(c, <AdminPage user={user} users={results} />);
+  const activity = await orgActivity(c.env.DB, user.orgId);
+  return render(c, <AdminPage user={user} users={results} activity={activity} />);
 });
 
 async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {

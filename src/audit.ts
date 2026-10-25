@@ -177,3 +177,43 @@ export function parseDetail(json: string): RuleOutcome["detail"] {
     return {};
   }
 }
+
+/** What the accounts page shows for one account. */
+export interface AccountSyncStatus {
+  state: "ok" | "partial" | "error";
+  at: string;
+  /** Error code of a failed run. */
+  code?: string;
+  /** Changes that failed in the last run. */
+  failed?: number;
+}
+
+const STATE_RANK = { ok: 0, partial: 1, error: 2 } as const;
+
+/**
+ * The status of each target account from the latest outcome of each of its rules. The worst
+ * state wins, so one broken rule is not hidden by a healthy one. Ties go to the newer event.
+ */
+export function accountStatuses(outcomes: RuleOutcome[]): Map<string, AccountSyncStatus> {
+  const statuses = new Map<string, AccountSyncStatus>();
+  for (const outcome of outcomes) {
+    if (!outcome.accountId) continue;
+    const status = statusOf(outcome);
+    const current = statuses.get(outcome.accountId);
+    const worse =
+      !current ||
+      STATE_RANK[status.state] > STATE_RANK[current.state] ||
+      (status.state === current.state && status.at > current.at);
+    if (worse) statuses.set(outcome.accountId, status);
+  }
+  return statuses;
+}
+
+function statusOf(outcome: RuleOutcome): AccountSyncStatus {
+  const at = outcome.createdAt;
+  if (outcome.kind === "sync_failed") return { state: "error", at, code: outcome.detail.code };
+  const failed = outcome.detail.failed ?? 0;
+  if (failed > 0) return { state: "error", at, failed };
+  if ((outcome.detail.remaining ?? 0) > 0) return { state: "partial", at };
+  return { state: "ok", at };
+}

@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
-import { recordAudit } from "../audit";
+import { latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { parseRuleOptions, ruleOptionsSchema } from "../config";
 import { i18nFromContext } from "../i18n";
@@ -45,6 +45,7 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
       user={user}
       calendars={calendars}
       rules={await userRules(c.env.DB, user.id)}
+      outcomes={new Map((await latestRuleOutcomes(c.env.DB, user.id)).map((o) => [o.ruleId, o]))}
       notice={notice}
     />
   );

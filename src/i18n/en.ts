@@ -6,6 +6,7 @@ export const en = {
   nav: {
     accounts: "Accounts",
     rules: "Rules",
+    activity: "Activity",
     admin: "Admin",
     accountMenu: "Account menu",
     signOut: "Sign out",
@@ -31,6 +32,10 @@ export const en = {
     kindMicrosoftPersonal: "Microsoft 365 · personal account",
     connectedOn: (date: string) => `connected ${date}`,
     notSynced: "Not synced yet",
+    inSync: (time: string) => `In sync · ${time}`,
+    partlySynced: (time: string) => `Partly synced · ${time}`,
+    syncFailed: (code: string) => `Sync failed: ${code}`,
+    changesFailed: (count: number) => `${count} changes failed`,
     disconnect: "Disconnect",
     connect: (provider: string) => `+ Connect ${provider}`,
   },
@@ -68,6 +73,9 @@ export const en = {
     runResult: (applied: number, failed: number, remaining: number) =>
       `Run finished: ${applied} changes written, ${failed} failed, ${remaining} left for the next run.`,
     invalid: "Choose two different calendars. The target calendar must be writable.",
+    lastRun: (blocks: number, time: string, changes: number) =>
+      `${blocks} blocks · last run ${time} · ${changes} changes`,
+    lastRunFailed: (time: string, code: string) => `last run failed · ${time} · ${code}`,
     privateNote: "Events marked private in the source never carry more than Busy.",
   },
   admin: {
@@ -79,6 +87,33 @@ export const en = {
     lastSignIn: "Last sign-in",
     never: "never",
     onlyAdmins: "Only admins can open this page.",
+  },
+  activity: {
+    title: "Activity",
+    lead: "Your last 100 events: sign-ins, changes and sync runs. Event contents are never logged.",
+    orgLead: "The last 100 events of everyone in this deployment. Metadata only.",
+    time: "Time",
+    event: "Event",
+    details: "Details",
+    empty: "Nothing happened yet.",
+    retention: (days: number) => `Events are deleted after ${days} days.`,
+    kinds: {
+      sign_in: "Signed in",
+      sign_in_refused: "Sign-in refused",
+      sign_out: "Signed out",
+      account_connected: "Account connected",
+      account_disconnected: "Account disconnected",
+      token_refresh_failed: "Token refresh failed",
+      rule_created: "Rule created",
+      rule_deleted: "Rule deleted",
+      sync_run: "Sync run",
+      sync_failed: "Sync failed",
+    },
+    changes: (create: number, update: number, remove: number) =>
+      `+${create} / ~${update} / −${remove}`,
+    preview: (changes: string) => `Preview ${changes}`,
+    failedCount: (count: number) => `${count} failed`,
+    remainingCount: (count: number) => `${count} left`,
   },
   setup: {
     title: "Finish the setup",

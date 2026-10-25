@@ -1,9 +1,9 @@
 import { runDurableObjectAlarm } from "cloudflare:test";
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MARKER_PROPERTY_ID } from "../src/sync/graph-events";
 import fixture from "./fixtures/graph/calendar-view.json";
-import { signIn } from "./helpers";
+import { BASE, signIn } from "./helpers";
 
 const SOURCE_CAL = "remote-source";
 const TARGET_CAL = "remote-target";
@@ -266,5 +266,68 @@ describe("AccountSync audit events", () => {
     ).first<{ detail: string }>();
     expect(JSON.parse(refresh?.detail ?? "{}")).toEqual({ code: "token_invalid_grant" });
     expect(JSON.stringify(events)).not.toContain("secret");
+  });
+});
+
+describe("sync status in the UI", () => {
+  async function accountsPage(): Promise<string> {
+    const { cookie } = await signIn("owner@example.com");
+    return (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
+  }
+
+  it("shows In sync after a successful run, and the run on the rules page", async () => {
+    const { stub, ruleId } = await setupRule("acc-ui-ok");
+    await stub.storeTokens("acc-ui-ok", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    fakeGraph();
+    await stub.runRule(ruleId);
+
+    expect(await accountsPage()).toMatch(/status ok">In sync · [^<]*UTC/);
+
+    const { cookie } = await signIn("owner@example.com");
+    const rules = await (
+      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+    ).text();
+    expect(rules).toMatch(/15 blocks · last run [^<]*UTC · 15 changes/);
+  });
+
+  it("does not count a dry run as a sync", async () => {
+    const { stub, ruleId } = await setupRule("acc-ui-dry");
+    await stub.storeTokens("acc-ui-dry", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    fakeGraph();
+    await stub.runRule(ruleId, { dryRun: true });
+
+    const html = await accountsPage();
+    const row = html.slice(html.indexOf("acc-ui-dry@example.com"));
+    expect(row.slice(0, row.indexOf("</li>"))).toContain("Not synced yet");
+  });
+
+  it("shows the error state after a failed run", async () => {
+    const { stub } = await setupRule("acc-ui-fail");
+    await stub.storeTokens("acc-ui-fail", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ error: "invalid_grant" }, { status: 400 }),
+    );
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    vi.restoreAllMocks();
+
+    const html = await accountsPage();
+    const row = html.slice(html.indexOf("acc-ui-fail@example.com"));
+    expect(row.slice(0, row.indexOf("</li>"))).toMatch(
+      /status error">Sync failed: token_invalid_grant · [^<]*UTC/,
+    );
   });
 });

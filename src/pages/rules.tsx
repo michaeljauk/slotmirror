@@ -1,3 +1,4 @@
+import type { RuleOutcome } from "../audit";
 import type { CalendarRow } from "../calendars";
 import type { RuleOptions } from "../config";
 import { useI18n } from "../i18n";
@@ -24,11 +25,25 @@ export function RulesPage(props: {
   user: CurrentUser;
   calendars: CalendarRow[];
   rules: RuleRow[];
+  /** Latest finished run or failure per rule ID. */
+  outcomes: Map<string, RuleOutcome>;
   notice?: Notice;
 }) {
-  const { t } = useI18n();
+  const { t, formatTimestamp } = useI18n();
   const byId = new Map(props.calendars.map((calendar) => [calendar.id, calendar]));
   const writable = props.calendars.filter((calendar) => calendar.canEdit);
+
+  function lastRun(outcome: RuleOutcome | undefined) {
+    if (!outcome) return null;
+    const time = formatTimestamp(outcome.createdAt);
+    if (outcome.kind === "sync_failed") {
+      return <div class="item-meta">{t.rules.lastRunFailed(time, outcome.detail.code ?? "")}</div>;
+    }
+    const { create = 0, update = 0, unchanged = 0, applied = 0 } = outcome.detail;
+    return (
+      <div class="item-meta">{t.rules.lastRun(create + update + unchanged, time, applied)}</div>
+    );
+  }
 
   return (
     <Layout title={t.rules.title} user={props.user} active="rules">
@@ -60,6 +75,7 @@ export function RulesPage(props: {
                       {`${t.rules.detailLevels[rule.options.detailLevel]} · ${t.rules.days(rule.options.daysAhead)}`}
                       {rule.options.markPrivate ? ` · ${t.rules.markPrivate}` : ""}
                     </div>
+                    {lastRun(props.outcomes.get(rule.id))}
                   </div>
                   <form method="post" action={`/rules/${rule.id}/preview`}>
                     <button type="submit" class="button small">

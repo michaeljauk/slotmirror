@@ -4,6 +4,7 @@ export const de: Messages = {
   nav: {
     accounts: "Konten",
     rules: "Regeln",
+    activity: "Aktivität",
     admin: "Verwaltung",
     accountMenu: "Kontomenü",
     signOut: "Abmelden",
@@ -28,6 +29,10 @@ export const de: Messages = {
     kindMicrosoftWork: "Microsoft 365 · Geschäftskonto",
     kindMicrosoftPersonal: "Microsoft 365 · privates Konto",
     connectedOn: (date) => `verbunden am ${date}`,
+    inSync: (time: string) => `Synchron · ${time}`,
+    partlySynced: (time: string) => `Teilweise synchron · ${time}`,
+    syncFailed: (code: string) => `Synchronisierung fehlgeschlagen: ${code}`,
+    changesFailed: (count: number) => `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
     disconnect: "Trennen",
     connect: (provider) => `+ ${provider} verbinden`,
@@ -67,6 +72,10 @@ export const de: Messages = {
       `Lauf beendet: ${applied} Änderungen geschrieben, ${failed} fehlgeschlagen, ${remaining} für den nächsten Lauf.`,
     invalid:
       "Wähle zwei verschiedene Kalender. In den Zielkalender muss geschrieben werden dürfen.",
+    lastRun: (blocks: number, time: string, changes: number) =>
+      `${blocks} Blöcke · letzter Lauf ${time} · ${changes} Änderungen`,
+    lastRunFailed: (time: string, code: string) =>
+      `letzter Lauf fehlgeschlagen · ${time} · ${code}`,
     privateNote: "Termine, die im Quellkalender privat sind, tragen nie mehr als „Belegt“.",
   },
   admin: {
@@ -78,6 +87,33 @@ export const de: Messages = {
     lastSignIn: "Letzte Anmeldung",
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
+  },
+  activity: {
+    title: "Aktivität",
+    lead: "Deine letzten 100 Ereignisse: Anmeldungen, Änderungen und Synchronisierungen. Inhalte von Terminen werden nie protokolliert.",
+    orgLead: "Die letzten 100 Ereignisse aller Personen dieser Installation. Nur Metadaten.",
+    time: "Zeit",
+    event: "Ereignis",
+    details: "Details",
+    empty: "Noch nichts passiert.",
+    retention: (days: number) => `Ereignisse werden nach ${days} Tagen gelöscht.`,
+    kinds: {
+      sign_in: "Angemeldet",
+      sign_in_refused: "Anmeldung abgelehnt",
+      sign_out: "Abgemeldet",
+      account_connected: "Konto verbunden",
+      account_disconnected: "Konto getrennt",
+      token_refresh_failed: "Token-Erneuerung fehlgeschlagen",
+      rule_created: "Regel erstellt",
+      rule_deleted: "Regel gelöscht",
+      sync_run: "Synchronisierung",
+      sync_failed: "Synchronisierung fehlgeschlagen",
+    },
+    changes: (create: number, update: number, remove: number) =>
+      `+${create} / ~${update} / −${remove}`,
+    preview: (changes: string) => `Vorschau ${changes}`,
+    failedCount: (count: number) => `${count} fehlgeschlagen`,
+    remainingCount: (count: number) => `${count} offen`,
   },
   setup: {
     title: "Einrichtung abschließen",

@@ -1,3 +1,4 @@
+import type { AccountSyncStatus } from "../audit";
 import type { Provider } from "../config";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
@@ -55,8 +56,23 @@ export function HomePage(props: {
   user: CurrentUser;
   accounts: AccountRow[];
   providers: Record<Provider, boolean>;
+  /** Sync status per account ID; accounts without an entry were never synced. */
+  statuses: Map<string, AccountSyncStatus>;
 }) {
-  const { t, formatDate } = useI18n();
+  const { t, formatDate, formatTimestamp } = useI18n();
+
+  function syncStatus(status: AccountSyncStatus | undefined) {
+    if (!status) return <span class="status">{t.accounts.notSynced}</span>;
+    const time = formatTimestamp(status.at);
+    if (status.state === "ok") return <span class="status ok">{t.accounts.inSync(time)}</span>;
+    if (status.state === "partial") {
+      return <span class="status">{t.accounts.partlySynced(time)}</span>;
+    }
+    const reason = status.code
+      ? t.accounts.syncFailed(status.code)
+      : t.accounts.changesFailed(status.failed ?? 0);
+    return <span class="status error">{`${reason} · ${time}`}</span>;
+  }
 
   function accountKind(account: AccountRow): string {
     if (account.provider === "google") return t.accounts.kindGoogle;
@@ -94,7 +110,7 @@ export function HomePage(props: {
                       {`${accountKind(account)} · ${t.accounts.connectedOn(formatDate(account.createdAt))}`}
                     </div>
                   </div>
-                  <span class="status">{t.accounts.notSynced}</span>
+                  {syncStatus(props.statuses.get(account.id))}
                   <form method="post" action={`/accounts/${account.id}/disconnect`}>
                     <button type="submit" class="link-button danger">
                       {t.accounts.disconnect}

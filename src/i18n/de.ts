@@ -36,6 +36,11 @@ export const de: Messages = {
     changesFailed: (count: number) => `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
     disconnect: "Trennen",
+    rename: "Umbenennen",
+    nameLabel: "Name",
+    nameHint:
+      "Erscheint in den Sync-Einstellungen. Leer lassen, um den Namen aus der Adresse zu nutzen.",
+    save: "Speichern",
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
     disconnectText: (email) =>
@@ -195,6 +200,7 @@ export const de: Messages = {
       sign_out: "Abgemeldet",
       account_connected: "Konto verbunden",
       account_disconnected: "Konto getrennt",
+      account_renamed: "Konto umbenannt",
       token_refresh_failed: "Token-Erneuerung fehlgeschlagen",
       rule_created: "Regel erstellt",
       rule_deleted: "Regel gelöscht",

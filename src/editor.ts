@@ -89,6 +89,7 @@ function toChoice(level: DetailLevel): Choice {
 export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
   const { results: accountRows } = await env.DB.prepare(
     `SELECT a.id, a.provider, a.email, a.tenant_id AS tenantId, a.in_block_group AS inGroup,
+            a.display_name AS displayName,
             c.id AS calendarId, c.remote_id AS remoteId, c.can_edit AS canEdit
      FROM accounts a
      LEFT JOIN calendars c ON c.account_id = a.id AND c.is_default = 1
@@ -102,6 +103,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       email: string;
       tenantId: string | null;
       inGroup: number;
+      displayName: string | null;
       calendarId: string | null;
       remoteId: string | null;
       canEdit: number | null;
@@ -113,7 +115,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
     email: row.email,
     tenantId: row.tenantId,
     inGroup: row.inGroup === 1,
-    name: names[index] ?? row.email,
+    name: row.displayName ?? names[index] ?? row.email,
     calendar:
       row.calendarId && row.remoteId
         ? { id: row.calendarId, remoteId: row.remoteId, canEdit: row.canEdit === 1 }
@@ -178,6 +180,32 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       choice: choiceOf(parseRuleOptions(row.options), row.enabled === 1),
     }));
   return { accounts, directions, others };
+}
+
+/** Longest name an account can get. */
+export const MAX_NAME_LENGTH = 40;
+
+/** Give an account a name, or go back to the derived one with an empty name. */
+export async function renameAccount(
+  env: Env,
+  user: CurrentUser,
+  accountId: string,
+  name: string,
+): Promise<void> {
+  const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
+  const updated = await env.DB.prepare(
+    "UPDATE accounts SET display_name = ? WHERE id = ? AND user_id = ?",
+  )
+    .bind(trimmed === "" ? null : trimmed, accountId, user.id)
+    .run();
+  if (updated.meta.changes === 0) return;
+  // The name is the user's own label; the log records that it changed, not the name.
+  await recordAudit(env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    accountId,
+    kind: "account_renamed",
+  });
 }
 
 /** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */

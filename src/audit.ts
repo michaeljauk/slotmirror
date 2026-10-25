@@ -12,6 +12,7 @@ export type AuditKind =
   | "sign_out"
   | "account_connected"
   | "account_disconnected"
+  | "account_renamed"
   | "token_refresh_failed"
   | "rule_created"
   | "rule_deleted"

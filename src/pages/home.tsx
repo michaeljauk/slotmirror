@@ -4,7 +4,7 @@ import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
-import type { EditorState } from "../editor";
+import { MAX_NAME_LENGTH, type EditorState } from "../editor";
 import { SourcePills } from "./calendar-editor";
 
 export interface AccountRow {
@@ -123,7 +123,11 @@ export function HomePage(props: {
                     <ProviderIcon provider={account.provider} size={18} />
                   </span>
                   <div class="item-main">
-                    <div class="item-title">{account.email}</div>
+                    <div class="item-title">
+                      {props.editor.accounts.find((a) => a.id === account.id)?.name ??
+                        account.email}
+                      <span class="muted account-email">{account.email}</span>
+                    </div>
                     <div
                       class="item-meta"
                       title={t.accounts.connectedOn(formatDate(account.createdAt))}
@@ -132,6 +136,24 @@ export function HomePage(props: {
                     </div>
                   </div>
                   {syncStatus(props.statuses.get(account.id))}
+                  <details class="rename">
+                    <summary class="link-button quiet">{t.accounts.rename}</summary>
+                    <form method="post" action={`/accounts/${account.id}/name`} class="rename-form">
+                      <label>
+                        <span>{t.accounts.nameLabel}</span>
+                        <input
+                          type="text"
+                          name="name"
+                          maxlength={MAX_NAME_LENGTH}
+                          value={props.editor.accounts.find((a) => a.id === account.id)?.name ?? ""}
+                        />
+                      </label>
+                      <p class="fineprint">{t.accounts.nameHint}</p>
+                      <button type="submit" class="button small">
+                        {t.accounts.save}
+                      </button>
+                    </form>
+                  </details>
                   <a class="link-button quiet" href={`/accounts/${account.id}/disconnect`}>
                     {t.accounts.disconnect}
                   </a>

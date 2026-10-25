@@ -22,7 +22,7 @@ import { SetupPage } from "./pages/setup";
 import { render } from "./render";
 import { auth } from "./routes/auth";
 import { rules } from "./routes/rules";
-import { loadEditorState } from "./editor";
+import { loadEditorState, renameAccount } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
 import { detailCapsFromEnv } from "./detail-policy";
@@ -114,6 +114,14 @@ app.get("/", async (c) => {
       editor={editor}
     />,
   );
+});
+
+app.post("/accounts/:id/name", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  const name = (await c.req.formData()).get("name");
+  await renameAccount(c.env, user, c.req.param("id"), typeof name === "string" ? name : "");
+  return c.redirect("/");
 });
 
 // Ask before disconnecting: it deletes the rules that use the account and their blocks.

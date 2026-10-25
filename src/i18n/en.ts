@@ -38,6 +38,10 @@ export const en = {
     syncFailed: (code: string) => `Sync failed: ${code}`,
     changesFailed: (count: number) => `${count} changes failed`,
     disconnect: "Disconnect",
+    rename: "Rename",
+    nameLabel: "Name",
+    nameHint: "Shown in the sync settings. Leave empty to use the name from the address.",
+    save: "Save",
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
     disconnectText: (email: string) =>
@@ -194,6 +198,7 @@ export const en = {
       sign_out: "Signed out",
       account_connected: "Account connected",
       account_disconnected: "Account disconnected",
+      account_renamed: "Account renamed",
       token_refresh_failed: "Token refresh failed",
       rule_created: "Rule created",
       rule_deleted: "Rule deleted",

@@ -182,3 +182,23 @@ describe("editor page", () => {
     ]);
   });
 });
+
+describe("account names", () => {
+  it("uses a name the user gave, and the derived one again when it is cleared", async () => {
+    const { cookie, user, w } = await setup("name");
+    const rename = (name: string) =>
+      exports.default.fetch(`${BASE}/accounts/${w}/name`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ name }),
+      });
+    expect((await rename("  NetCero  ")).status).toBe(302);
+    let state = await loadEditorState(env, user.id);
+    expect(state.accounts.find((a) => a.id === w)?.name).toBe("NetCero");
+
+    await rename("");
+    state = await loadEditorState(env, user.id);
+    expect(state.accounts.find((a) => a.id === w)?.name).toBe("work");
+  });
+});

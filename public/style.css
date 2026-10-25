@@ -1051,3 +1051,63 @@ details.more summary {
     grid-column: 1;
   }
 }
+
+/* Account names */
+
+.account-email {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+details.rename {
+  position: relative;
+}
+
+details.rename summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+details.rename summary::-webkit-details-marker {
+  display: none;
+}
+
+.rename-form {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: 28px;
+  display: grid;
+  gap: 6px;
+  width: 280px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(28 28 26 / 10%);
+}
+
+.rename-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rename-form input {
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.rename-form .fineprint {
+  margin: 0;
+  text-align: left;
+}
+
+.rename-form .button {
+  justify-self: start;
+}

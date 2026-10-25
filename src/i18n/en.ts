@@ -10,6 +10,7 @@ export const en = {
     admin: "Admin",
     accountMenu: "Account menu",
     signOut: "Sign out",
+    privacy: "Privacy",
     language: "Language",
   },
   roles: {
@@ -77,6 +78,35 @@ export const en = {
       `${blocks} blocks · last run ${time} · ${changes} changes`,
     lastRunFailed: (time: string, code: string) => `last run failed · ${time} · ${code}`,
     privateNote: "Events marked private in the source never carry more than Busy.",
+  },
+  privacy: {
+    title: "Privacy",
+    operator: (name: string, contact: string) =>
+      `This deployment of freebusy-sync is operated by ${name}. Contact: ${contact}.`,
+    operatorUnknown: "The operator of this deployment has not set a contact address.",
+    intro:
+      "freebusy-sync mirrors busy times between calendars. It is open-source software that each operator runs in their own Cloudflare account.",
+    storedTitle: "What is stored",
+    stored: [
+      "Your email address and, for Microsoft accounts, the tenant ID, to identify you and your connected accounts.",
+      "OAuth tokens for each connected account, encrypted with AES-256-GCM.",
+      "The names of your calendars and the rules you create.",
+      "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
+      "A session cookie and a language cookie in your browser.",
+    ],
+    notStoredTitle: "What is not stored",
+    notStored:
+      "Event titles, descriptions, locations and attendees are read during a sync and not stored. Blocks in a target calendar contain only what the rule's detail level allows; the default is Busy.",
+    whereTitle: "Where data is processed",
+    where:
+      "On Cloudflare Workers, D1 and Durable Objects in the operator's Cloudflare account, and at Microsoft and Google when calendars are read and written.",
+    deleteTitle: "How to delete your data",
+    delete:
+      "Disconnecting an account deletes its tokens and the blocks freebusy-sync wrote for it. To delete your user, contact the operator.",
+    googleTitle: "Google user data",
+    google:
+      "freebusy-sync's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",
+    noTracking: "There is no tracking, no analytics and no advertising.",
   },
   admin: {
     title: "Users",

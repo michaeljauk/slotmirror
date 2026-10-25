@@ -637,3 +637,30 @@ h2 {
     grid-template-columns: 1fr;
   }
 }
+
+/* Footer and long-form text */
+
+.footer {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 20px 40px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.footer a {
+  color: var(--muted);
+}
+
+.prose {
+  max-width: 64ch;
+}
+
+.prose h2 {
+  margin: 28px 0 8px;
+}
+
+.prose li {
+  margin: 4px 0;
+}

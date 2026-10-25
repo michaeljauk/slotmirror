@@ -137,6 +137,11 @@ export function Layout(props: {
           </div>
         </header>
         <main>{props.children}</main>
+        <footer class="footer">
+          <span>{APP_NAME}</span>
+          <span aria-hidden="true">·</span>
+          <a href="/privacy">{t.nav.privacy}</a>
+        </footer>
       </body>
     </html>
   );

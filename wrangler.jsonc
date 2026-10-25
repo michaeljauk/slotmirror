@@ -25,5 +25,6 @@
     "ALLOWED_DOMAINS": "",
     "ALLOWED_TENANT_IDS": "",
     "ADMIN_EMAILS": "",
+    "PRIVACY_CONTACT": "",
   },
 }

@@ -16,6 +16,7 @@ import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
 import { HomePage, SignInPage, type AccountRow } from "./pages/home";
 import { MessagePage } from "./pages/message";
+import { PrivacyPage } from "./pages/privacy";
 import { SetupPage } from "./pages/setup";
 import { render } from "./render";
 import { auth } from "./routes/auth";
@@ -56,6 +57,17 @@ app.use(
     caches: ["cookie"],
     cookieOptions: { path: "/", sameSite: "Lax", secure: true, httpOnly: true, maxAge: 31_536_000 },
   }),
+);
+
+// Public, also before the setup is finished: Google requires a reachable privacy statement.
+app.get("/privacy", (c) =>
+  render(
+    c,
+    <PrivacyPage
+      operator={c.env.ORG_NAME?.trim() || "the operator"}
+      contact={c.env.PRIVACY_CONTACT?.trim() ?? ""}
+    />,
+  ),
 );
 
 // Everything below needs a finished setup. `user` is null for visitors without a valid session.

@@ -8,6 +8,7 @@ export const de: Messages = {
     admin: "Verwaltung",
     accountMenu: "Kontomenü",
     signOut: "Abmelden",
+    privacy: "Datenschutz",
     language: "Sprache",
   },
   roles: {
@@ -77,6 +78,35 @@ export const de: Messages = {
     lastRunFailed: (time: string, code: string) =>
       `letzter Lauf fehlgeschlagen · ${time} · ${code}`,
     privateNote: "Termine, die im Quellkalender privat sind, tragen nie mehr als „Belegt“.",
+  },
+  privacy: {
+    title: "Datenschutz",
+    operator: (name, contact) =>
+      `Diese Installation von freebusy-sync betreibt ${name}. Kontakt: ${contact}.`,
+    operatorUnknown: "Der Betreiber dieser Installation hat keine Kontaktadresse hinterlegt.",
+    intro:
+      "freebusy-sync spiegelt Belegt-Zeiten zwischen Kalendern. Es ist Open-Source-Software, die jeder Betreiber in seinem eigenen Cloudflare-Konto betreibt.",
+    storedTitle: "Was gespeichert wird",
+    stored: [
+      "Deine E-Mail-Adresse und bei Microsoft-Konten die Tenant-ID, um dich und deine verbundenen Konten zu erkennen.",
+      "OAuth-Tokens je verbundenem Konto, verschlüsselt mit AES-256-GCM.",
+      "Die Namen deiner Kalender und die Regeln, die du anlegst.",
+      "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
+      "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
+    ],
+    notStoredTitle: "Was nicht gespeichert wird",
+    notStored:
+      "Titel, Beschreibungen, Orte und Teilnehmer von Terminen werden beim Sync gelesen und nicht gespeichert. Blöcke im Zielkalender enthalten nur, was die Detailstufe der Regel erlaubt; Standard ist „Belegt“.",
+    whereTitle: "Wo Daten verarbeitet werden",
+    where:
+      "In Cloudflare Workers, D1 und Durable Objects im Cloudflare-Konto des Betreibers sowie bei Microsoft und Google, wenn Kalender gelesen und geschrieben werden.",
+    deleteTitle: "Wie du deine Daten löschst",
+    delete:
+      "Trennst du ein Konto, werden seine Tokens und die von freebusy-sync dafür geschriebenen Blöcke gelöscht. Um deinen Nutzer zu löschen, wende dich an den Betreiber.",
+    googleTitle: "Nutzerdaten von Google",
+    google:
+      "Die Nutzung und Weitergabe von Informationen aus Google APIs durch freebusy-sync entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",
+    noTracking: "Es gibt kein Tracking, keine Analyse und keine Werbung.",
   },
   admin: {
     title: "Nutzer",

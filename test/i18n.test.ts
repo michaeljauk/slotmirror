@@ -42,3 +42,17 @@ describe("i18n", () => {
     expect(response.headers.get("set-cookie")).toContain("lang=de");
   });
 });
+
+describe("privacy page", () => {
+  it("is public and names the Google Limited Use requirement", async () => {
+    const response = await exports.default.fetch(`${BASE}/privacy`, {
+      headers: { "accept-language": "en" },
+    });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Limited Use");
+    expect(html).toContain(
+      "Event titles, descriptions, locations and attendees are read during a sync and not stored",
+    );
+  });
+});

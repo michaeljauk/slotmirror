@@ -142,6 +142,10 @@ export const de: Messages = {
     cancel: "Abbrechen",
     saveFailed: "Speichern fehlgeschlagen. Bitte noch einmal.",
     checking: "Wird geprüft …",
+    checkResult: (create: number, update: number, remove: number, unchanged: number) =>
+      create + update + remove === 0
+        ? `Stimmt mit dem Kalender überein · ${unchanged} Blöcke`
+        : `Beim nächsten Sync: ${create} neu, ${update} geändert, ${remove} entfernt`,
     othersTitle: "Weitere Regeln",
     othersLead:
       "Regeln zwischen anderen Kalendern als den Hauptkalendern. Der Editor oben ändert sie nicht.",

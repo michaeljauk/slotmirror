@@ -1197,3 +1197,8 @@ details.source.dirty {
 .preview-result.error {
   color: var(--danger);
 }
+
+.choice.on:hover:not(:disabled) {
+  border-color: var(--text);
+  color: #fff;
+}

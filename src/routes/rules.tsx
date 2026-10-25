@@ -227,7 +227,13 @@ for (const action of ["preview", "run"] as const) {
         action === "preview"
           ? t.rules.previewResult(create, update, remove, unchanged)
           : t.rules.runResult(result.applied, result.failed, result.remaining);
-      return wantsFragment(c) ? c.text(text) : renderPage(c, { kind: "info", text });
+      if (wantsFragment(c)) {
+        // Next to its button the result says what the next sync would do, in plain words.
+        return c.text(
+          action === "preview" ? t.editor.checkResult(create, update, remove, unchanged) : text,
+        );
+      }
+      return renderPage(c, { kind: "info", text });
     } catch (error) {
       console.error(`Rule ${action} failed`, ruleId, error);
       const text = (error as Error).message;

@@ -140,6 +140,10 @@ export const en = {
     cancel: "Cancel",
     saveFailed: "Saving failed. Try again.",
     checking: "Checking…",
+    checkResult: (create: number, update: number, remove: number, unchanged: number) =>
+      create + update + remove === 0
+        ? `Matches the calendar · ${unchanged} blocks`
+        : `Next sync: ${create} new, ${update} changed, ${remove} removed`,
     othersTitle: "Other rules",
     othersLead:
       "Rules between calendars other than the main ones. The editor above does not change them.",

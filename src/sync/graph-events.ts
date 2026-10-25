@@ -35,7 +35,11 @@ export const graphEventSchema = z.object({
 
 export type GraphEvent = z.infer<typeof graphEventSchema>;
 
-/** `$select` for calendarView requests; the sync needs exactly these fields. */
+/**
+ * `$select` for calendarView requests; the sync needs exactly these fields. Do not shorten it
+ * casually: with short field lists (2 to 4 fields, tested 2026-10-25) Graph silently omits the
+ * expanded marker property, and every block would look missing. This list returns it.
+ */
 export const GRAPH_EVENT_SELECT = [
   "id",
   "type",

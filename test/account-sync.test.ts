@@ -1,6 +1,7 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AccountSync } from "../src/account-sync";
 import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
 import { inPrecedenceOrder, ruleTagFor } from "../src/sync/plan";
 import fixture from "./fixtures/graph/calendar-view.json";
@@ -490,6 +491,125 @@ describe("alarm queue", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     expect(await runs()).toBe(2);
     expect(await runDurableObjectAlarm(stub)).toBe(false);
+  });
+
+  it("keeps removals queued while another removal runs", async () => {
+    const { stub } = await setupRule("acc-race-removal");
+    await stub.storeTokens("acc-race-removal", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    // The first Graph read of the removal lets a second removal in before it answers.
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    let raced = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("calendarView") && !raced) {
+        raced = true;
+        void instance.queueRemoval("late-rule", TARGET_CAL);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return Response.json({ value: [] });
+    });
+
+    await stub.queueRemoval("first-rule", TARGET_CAL);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    expect(raced).toBe(true);
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<{ ruleId: string }[]>("removalQueue"),
+    );
+    expect(queue?.map((job) => job.ruleId)).toEqual(["late-rule"]);
+  });
+
+  it("gives up a removal whose deletes keep failing, so that the syncs go on", async () => {
+    const { stub } = await setupRule("acc-removal-403");
+    await stub.storeTokens("acc-removal-403", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [template] = fixture.value;
+    const tag = await ruleTagFor("gone-rule");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("calendarView")) {
+        return Response.json({
+          value: [
+            {
+              ...template,
+              id: "stuck",
+              singleValueExtendedProperties: [
+                {
+                  id: MARKER_PROPERTY_ID,
+                  value: `${tag}.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef`,
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/$batch")) {
+        const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 403 })),
+        });
+      }
+      return Response.json({ value: [] });
+    });
+    const removals = () =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get<unknown[]>("removalQueue"));
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await runDurableObjectAlarm(stub);
+      expect(await removals()).toHaveLength(1);
+    }
+    await runDurableObjectAlarm(stub);
+    expect(await removals()).toBeUndefined();
+  });
+
+  it("keeps rules that a tick queues while a rule runs", async () => {
+    const { stub, ruleId } = await setupRule("acc-race-tick");
+    // A second rule into this account, which the tick queues during the first run.
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-race-tick-rule-2', user_id, target_calendar_id, source_calendar_id FROM rules WHERE id = ?",
+    )
+      .bind(ruleId)
+      .run();
+    await stub.storeTokens("acc-race-tick", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    let raced = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("calendarView") && !raced) {
+        raced = true;
+        void instance.tick();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (url.endsWith("/$batch")) return Response.json({ responses: [] });
+      return Response.json({ value: [] });
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [ruleId]);
+      // A recent full cycle, so that the tick queues only the unwatched rules.
+      await state.storage.put("fullCycleAt", Date.now());
+    });
+    await stub.requestSync();
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    expect(raced).toBe(true);
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+    expect(queue).toContain("acc-race-tick-rule-2");
   });
 
   it("queues the later rules into the same calendar after a rule removed blocks", async () => {

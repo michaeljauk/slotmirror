@@ -190,7 +190,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
 
         <div class="demo" role="region" aria-label="Interactive demo">
           <div class="demo-head">
-            <span>Drag the <b style="color:var(--work)">Client call</b> in Work, or</span>
+            <span>Drag any meeting, or</span>
             <button class="move" id="move" type="button">Move to 14:00</button>
             <span class="status" id="status" aria-live="polite"
               ><span class="dot"></span><span id="status-text">In sync</span></span
@@ -392,8 +392,8 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
     </footer>
 
     <script>
-      // A toy version of the sync. One movable meeting in Work, copies in Client and Private, and
-      // a few fixed events whose copies show that colour means "which calendar it came from".
+      // A toy version of the sync. One meeting per calendar; each can move, and its copies follow
+      // in the other calendars. Colour means "which calendar it came from".
       const START = 8;
       const END = 18;
       const HEIGHT = 420;
@@ -403,6 +403,8 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
       type Level = (typeof LEVELS)[number];
       type Cal = "work" | "client" | "private";
       type Target = "client" | "private";
+      type Slot = { start: number; length: number };
+      const CALS: Cal[] = ["work", "client", "private"];
       const TARGETS: Target[] = ["client", "private"];
       const SHORT: Record<Level, string> = { off: "Not", busy: "Busy", title: "Title", full: "All" };
       const COLOUR: Record<Cal, string> = {
@@ -411,8 +413,12 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         private: "var(--private)",
       };
       const NAME: Record<Cal, string> = { work: "Work", client: "Client", private: "Private" };
-      const meeting = { title: "Client call", where: "Teams", start: 10, length: 1 };
-      const show: Record<Target, Level> = { client: "busy", private: "full" };
+      // What each calendar's meeting shows in the others. The matrix edits the Work row.
+      const show: Record<Cal, Partial<Record<Cal, Level>>> = {
+        work: { client: "busy", private: "full" },
+        client: { work: "busy", private: "off" },
+        private: { work: "busy", client: "busy" },
+      };
       const cals = Object.fromEntries(
         [...document.querySelectorAll<HTMLElement>(".cal")].map((el) => [el.dataset.cal, el]),
       ) as Record<Cal, HTMLElement>;
@@ -424,101 +430,135 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         hours.append(label);
       }
       const time = (h: number) => `${Math.floor(h)}:${h % 1 ? "30" : "00"}`;
-      function place(el: HTMLElement, start: number, length: number) {
-        el.style.top = `${px(start)}px`;
-        el.style.height = `${px(START + length) - 2}px`;
+      const span = (slot: Slot) => `${time(slot.start)}–${time(slot.start + slot.length)}`;
+      const slots = new Map<HTMLElement, Slot>();
+      // Overlapping events sit side by side, like in a calendar app: lane i of n.
+      function lanes(cal: Cal, override?: [HTMLElement, Slot]) {
+        const items = [...cals[cal].querySelectorAll<HTMLElement>(".ev:not(.hidden)")]
+          .map((el) => ({ el, slot: el === override?.[0] ? override[1] : slots.get(el) }))
+          .filter((item): item is { el: HTMLElement; slot: Slot } => item.slot !== undefined)
+          .sort((a, b) => a.slot.start - b.slot.start);
+        const result = new Map<HTMLElement, { i: number; n: number }>();
+        let cluster: HTMLElement[] = [];
+        let ends: number[] = [];
+        let clusterEnd = -Infinity;
+        const close = () => {
+          for (const el of cluster) result.get(el)!.n = ends.length;
+          cluster = [];
+          ends = [];
+        };
+        for (const { el, slot } of items) {
+          if (slot.start >= clusterEnd) close();
+          const free = ends.findIndex((end) => end <= slot.start);
+          const i = free < 0 ? ends.length : free;
+          ends[i] = slot.start + slot.length;
+          result.set(el, { i, n: 0 });
+          cluster.push(el);
+          clusterEnd = Math.max(clusterEnd, slot.start + slot.length);
+        }
+        close();
+        return result;
       }
-      function addEvent(
-        cal: Cal,
-        source: Cal,
-        kind: string,
-        start: number,
-        length: number,
-        html: string,
-      ) {
+      function layout(cal: Cal) {
+        for (const [el, { i, n }] of lanes(cal)) {
+          el.style.left = `calc(4px + (100% - 8px) * ${i / n})`;
+          el.style.right = `calc(4px + (100% - 8px) * ${(n - i - 1) / n})`;
+          el.style.marginLeft = i ? "2px" : "0";
+        }
+      }
+      function place(el: HTMLElement, slot: Slot) {
+        slots.set(el, { ...slot });
+        el.style.top = `${px(slot.start)}px`;
+        el.style.height = `${px(START + slot.length) - 2}px`;
+      }
+      const copyHint = (source: Cal) => `<span class="sr">Copy from ${NAME[source]}: </span>`;
+      type Meeting = Slot & {
+        cal: Cal;
+        title: string;
+        where?: string;
+        el: HTMLElement;
+        copies: Partial<Record<Cal, HTMLElement>>;
+        timer?: ReturnType<typeof setTimeout>;
+        arcs?: SVGGElement;
+      };
+      function addEvent(cal: Cal, source: Cal, kind: string) {
         const el = document.createElement("div");
         el.className = `ev ${kind}`;
         el.style.setProperty("--c", COLOUR[source]);
-        place(el, start, length);
-        el.innerHTML = html;
         cals[cal].append(el);
         return el;
       }
-      const copyHint = (source: Cal) => `<span class="sr">Copy from ${NAME[source]}: </span>`;
-      // Fixed events and their busy copies.
-      addEvent("client", "client", "real", 13, 1, "Workshop<small>13:00–14:00</small>");
-      addEvent(
-        "work",
-        "client",
-        "copy",
-        13,
-        1,
-        `${copyHint("client")}Busy<small>13:00–14:00</small>`,
-      );
-      addEvent("private", "private", "real", 16.5, 1, "Dentist<small>16:30–17:30</small>");
-      addEvent(
-        "work",
-        "private",
-        "copy",
-        16.5,
-        1,
-        `${copyHint("private")}Busy<small>16:30–17:30</small>`,
-      );
-      addEvent(
-        "client",
-        "private",
-        "copy",
-        16.5,
-        1,
-        `${copyHint("private")}Busy<small>16:30–17:30</small>`,
-      );
-      // The movable meeting and its copies.
-      const real = addEvent("work", "work", "real main", meeting.start, meeting.length, "");
-      const copies: Record<Target, HTMLElement> = {
-        client: addEvent("client", "work", "copy", meeting.start, meeting.length, ""),
-        private: addEvent("private", "work", "copy", meeting.start, meeting.length, ""),
-      };
-      function drawReal() {
-        place(real, meeting.start, meeting.length);
-        real.innerHTML = `${meeting.title}<small>${time(meeting.start)}–${time(meeting.start + meeting.length)}</small>`;
+      const seeds: (Slot & Pick<Meeting, "cal" | "title" | "where">)[] = [
+        { cal: "work", title: "Client call", where: "Teams", start: 10, length: 1 },
+        { cal: "client", title: "Workshop", start: 13, length: 1 },
+        { cal: "private", title: "Dentist", start: 16.5, length: 1 },
+      ];
+      const meetings: Meeting[] = seeds.map((seed) => {
+        const el = addEvent(seed.cal, seed.cal, "real movable");
+        el.tabIndex = 0;
+        el.setAttribute("role", "button");
+        const copies: Meeting["copies"] = {};
+        for (const cal of CALS) if (cal !== seed.cal) copies[cal] = addEvent(cal, seed.cal, "copy");
+        return { ...seed, el, copies };
+      });
+      const clientCall = meetings[0]!;
+      function drawReal(m: Meeting) {
+        place(m.el, m);
+        m.el.innerHTML = `${m.title}<small>${span(m)}</small>`;
+        m.el.setAttribute("aria-label", `${m.title}, ${span(m)}. Move it with the arrow keys.`);
+        layout(m.cal);
       }
-      function drawCopy(cal: Target) {
-        const el = copies[cal];
-        const level = show[cal];
+      function drawCopy(m: Meeting, cal: Cal) {
+        const el = m.copies[cal]!;
+        const level = show[m.cal][cal]!;
         el.classList.toggle("hidden", level === "off");
-        place(el, meeting.start, meeting.length);
-        const label = level === "busy" ? "Busy" : meeting.title;
-        const extra = level === "full" ? ` · ${meeting.where}` : "";
-        el.innerHTML = `${copyHint("work")}${label}<small>${time(meeting.start)}–${time(meeting.start + meeting.length)}${extra}</small>`;
+        place(el, m);
+        const label = level === "busy" ? "Busy" : m.title;
+        const extra = level === "full" && m.where ? ` · ${m.where}` : "";
+        el.innerHTML = `${copyHint(m.cal)}${label}<small>${span(m)}${extra}</small>`;
+        layout(cal);
       }
-      // Curved lines with a travelling dot, from the moved original to each copy, while the sync
-      // runs.
+      const copyCals = (m: Meeting) => CALS.filter((cal) => cal !== m.cal);
+      // Arcs with a travelling dot, from the moved original to the slot where each copy will land,
+      // while the sync runs. The copy then slides into place under the dot.
       const arcs = document.getElementById("arcs")!;
       const wrap = document.querySelector(".cals-wrap")!;
       const SVG = "http://www.w3.org/2000/svg";
-      function drawArcs() {
-        arcs.innerHTML = "";
-        if (reduced) return;
-        const box = wrap.getBoundingClientRect();
-        const from = real.getBoundingClientRect();
-        const colour = getComputedStyle(real).backgroundColor;
-        // The original may still be sliding, so start from where it ends up, not where it is now.
-        const column = real.parentElement!.getBoundingClientRect();
-        const x1 = from.right - box.left - 4;
-        const y1 =
-          column.top - box.top + px(meeting.start) + (px(START + meeting.length) - 2) / 2;
-        for (const cal of TARGETS) {
-          const el = copies[cal];
-          if (el.classList.contains("hidden")) continue;
-          const to = el.getBoundingClientRect();
-          const x2 = to.left - box.left + 8;
-          const y2 = to.top + to.height / 2 - box.top;
-          // A sideways S-curve: leaves the original to the right and enters the copy from the left.
-          const pull = Math.max(48, (x2 - x1) * 0.5);
+      // Where an event sits in the wrapper once its column has its final layout.
+      function box(cal: Cal, el: HTMLElement, slot: Slot) {
+        const outer = wrap.getBoundingClientRect();
+        const column = cals[cal].getBoundingClientRect();
+        const width = cals[cal].clientWidth - 8;
+        const { i, n } = lanes(cal, [el, slot]).get(el)!;
+        const left = column.left - outer.left + cals[cal].clientLeft + 4 + (width * i) / n;
+        const top = column.top - outer.top + cals[cal].clientTop + px(slot.start);
+        return { left, right: left + width / n, middle: top + (px(START + slot.length) - 2) / 2 };
+      }
+      function drawArcs(m: Meeting) {
+        m.arcs?.remove();
+        const group = document.createElementNS(SVG, "g");
+        arcs.append(group);
+        m.arcs = group;
+        const colour = getComputedStyle(m.el).backgroundColor;
+        const from = box(m.cal, m.el, m);
+        for (const cal of copyCals(m)) {
+          if (show[m.cal][cal] === "off") continue;
+          const to = box(cal, m.copies[cal]!, m);
+          const right = to.left > from.left;
+          const x1 = right ? from.right - 4 : from.left + 4;
+          const x2 = right ? to.left + 8 : to.right - 8;
+          const { middle: y } = from;
+          // Bow upwards, or downwards near the top of the day, so that the arcs to the near and the
+          // far calendar do not lie on one line.
+          const bow = Math.min(64, Math.abs(x2 - x1) * 0.35) * (y > 70 ? -1 : 1);
+          const third = (x2 - x1) / 3;
           const path = document.createElementNS(SVG, "path");
-          path.setAttribute("d", `M ${x1} ${y1} C ${x1 + pull} ${y1}, ${x2 - pull} ${y2}, ${x2} ${y2}`);
+          path.setAttribute(
+            "d",
+            `M ${x1} ${y} C ${x1 + third} ${y + bow}, ${x2 - third} ${y + bow}, ${x2} ${y}`,
+          );
           path.setAttribute("stroke", colour);
-          arcs.append(path);
+          group.append(path);
           const length = path.getTotalLength();
           path.style.strokeDasharray = `${length}`;
           path.animate([{ strokeDashoffset: length }, { strokeDashoffset: 0 }], {
@@ -529,7 +569,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
           const dot = document.createElementNS(SVG, "circle");
           dot.setAttribute("r", "3.5");
           dot.setAttribute("fill", colour);
-          arcs.append(dot);
+          group.append(dot);
           const steps = 24;
           const frames = Array.from({ length: steps + 1 }, (_, i) => {
             const point = path.getPointAtLength((length * i) / steps);
@@ -540,84 +580,98 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
       }
       const status = document.getElementById("status")!;
       const statusText = document.getElementById("status-text")!;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      function sync() {
-        clearTimeout(timer);
+      // Each meeting syncs on its own, so moving a second one does not cancel the first.
+      function drawStatus() {
+        const busy = meetings.some((m) => m.timer !== undefined);
+        status.classList.toggle("busy", busy);
+        statusText.textContent = busy ? "Syncing…" : "In sync";
+      }
+      function sync(m: Meeting) {
         if (reduced) {
-          for (const cal of TARGETS) drawCopy(cal);
-          statusText.textContent = "In sync";
+          for (const cal of copyCals(m)) drawCopy(m, cal);
           return;
         }
-        status.classList.add("busy");
-        statusText.textContent = "Syncing…";
-        real.classList.add("waiting");
-        drawArcs();
-        timer = setTimeout(() => {
-          for (const cal of TARGETS) {
-            drawCopy(cal);
-            copies[cal].classList.remove("arrived");
-            void copies[cal].offsetWidth;
-            copies[cal].classList.add("arrived");
+        clearTimeout(m.timer);
+        m.el.classList.add("waiting");
+        drawArcs(m);
+        m.timer = setTimeout(() => {
+          m.timer = undefined;
+          for (const cal of copyCals(m)) {
+            drawCopy(m, cal);
+            const el = m.copies[cal]!;
+            el.classList.remove("arrived");
+            void el.offsetWidth;
+            el.classList.add("arrived");
           }
-          real.classList.remove("waiting");
-          status.classList.remove("busy");
-          statusText.textContent = "In sync";
-          setTimeout(() => {
-            arcs.innerHTML = "";
-          }, 500);
+          m.el.classList.remove("waiting");
+          drawStatus();
+          const group = m.arcs;
+          setTimeout(() => group?.remove(), 500);
         }, 800);
+        drawStatus();
+      }
+      function moveTo(m: Meeting, start: number) {
+        const next = Math.min(END - m.length, Math.max(START, start));
+        if (next === m.start) return false;
+        m.start = next;
+        drawReal(m);
+        if (m === clientCall) move.textContent = next === 14 ? "Move to 10:00" : "Move to 14:00";
+        return true;
       }
       const move = document.getElementById("move")!;
       move.addEventListener("click", () => {
-        meeting.start = meeting.start === 14 ? 10 : 14;
-        move.textContent = meeting.start === 14 ? "Move back to 10:00" : "Move to 14:00";
-        drawReal();
-        sync();
+        if (moveTo(clientCall, clientCall.start === 14 ? 10 : 14)) sync(clientCall);
       });
-      // Drag the meeting in half-hour steps.
-      let drag: { y: number; start: number } | null = null;
-      real.addEventListener("pointerdown", (event) => {
-        drag = { y: event.clientY, start: meeting.start };
-        real.classList.add("dragging");
-        real.setPointerCapture(event.pointerId);
-      });
-      real.addEventListener("pointermove", (event) => {
-        if (!drag) return;
-        const delta = ((event.clientY - drag.y) / HEIGHT) * (END - START);
-        const next = Math.min(
-          END - meeting.length,
-          Math.max(START, Math.round((drag.start + delta) * 2) / 2),
-        );
-        if (next !== meeting.start) {
-          meeting.start = next;
-          drawReal();
-        }
-      });
-      real.addEventListener("pointerup", () => {
-        if (!drag) return;
-        const moved = drag.start !== meeting.start;
-        drag = null;
-        real.classList.remove("dragging");
-        if (moved) sync();
-      });
+      // Drag an original in half-hour steps, or move it with the arrow keys.
+      for (const m of meetings) {
+        let drag: { y: number; start: number } | null = null;
+        m.el.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          drag = { y: event.clientY, start: m.start };
+          m.el.classList.add("dragging");
+          m.el.setPointerCapture(event.pointerId);
+        });
+        m.el.addEventListener("pointermove", (event) => {
+          if (!drag) return;
+          const delta = ((event.clientY - drag.y) / HEIGHT) * (END - START);
+          moveTo(m, Math.round((drag.start + delta) * 2) / 2);
+        });
+        const drop = () => {
+          if (!drag) return;
+          const moved = drag.start !== m.start;
+          drag = null;
+          m.el.classList.remove("dragging");
+          if (moved) sync(m);
+        };
+        m.el.addEventListener("pointerup", drop);
+        m.el.addEventListener("pointercancel", drop);
+        m.el.addEventListener("keydown", (event) => {
+          const step = { ArrowUp: -0.5, ArrowDown: 0.5 }[event.key];
+          if (!step) return;
+          event.preventDefault();
+          if (moveTo(m, m.start + step)) sync(m);
+        });
+      }
       // Mini matrix: what the Work meeting shows in each other calendar.
       const matrix = document.getElementById("matrix")!;
       function drawMatrix() {
         matrix.innerHTML = `<tr><th style="--c:var(--work)"><i></i>Work →</th><th style="--c:var(--client)"><i></i>Client</th><th style="--c:var(--private)"><i></i>Private</th></tr>
-          <tr><th></th>${TARGETS.map((cal) => `<td><button type="button" class="lv-${show[cal]}" data-cal="${cal}" aria-label="${NAME[cal]}: ${SHORT[show[cal]]}. Change">${SHORT[show[cal]]}</button></td>`).join("")}</tr>`;
+          <tr><th></th>${TARGETS.map((cal) => `<td><button type="button" class="lv-${show.work[cal]}" data-cal="${cal}" aria-label="${NAME[cal]}: ${SHORT[show.work[cal]!]}. Change">${SHORT[show.work[cal]!]}</button></td>`).join("")}</tr>`;
       }
       matrix.addEventListener("click", (event) => {
         const cell = (event.target as HTMLElement).closest<HTMLElement>("button[data-cal]");
         if (!cell) return;
         const cal = cell.dataset.cal as Target;
-        show[cal] = LEVELS[(LEVELS.indexOf(show[cal]) + 1) % LEVELS.length]!;
+        show.work[cal] = LEVELS[(LEVELS.indexOf(show.work[cal]!) + 1) % LEVELS.length]!;
         drawMatrix();
-        drawCopy(cal);
+        drawCopy(clientCall, cal);
         matrix.querySelector<HTMLElement>(`button[data-cal="${cal}"]`)?.focus();
       });
       drawMatrix();
-      drawReal();
-      for (const cal of TARGETS) drawCopy(cal);
+      for (const m of meetings) {
+        drawReal(m);
+        for (const cal of copyCals(m)) drawCopy(m, cal);
+      }
     </script>
   </body>
 </html>

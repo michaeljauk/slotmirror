@@ -195,6 +195,12 @@ rules.post("/choices", async (c) => {
   const state = await loadEditorState(c.env, user.id);
   const directionOf = (from: string, to: string) =>
     state.directions.find((d) => d.from === from && d.to === to);
+  // The editor sends text only; a file in one of its fields is a bad request, not a skip.
+  for (const [name, value] of form.entries()) {
+    if (typeof value !== "string" && isEditorField(name.split(".")[0])) {
+      return c.text("Bad field", 400);
+    }
+  }
 
   const calendars: { calendarId: string; isSource: boolean }[] = [];
   const changes: { from: string; to: string; choice: Choice }[] = [];
@@ -202,8 +208,6 @@ rules.post("/choices", async (c) => {
   const hours = new Map<string, { from: string; to: string; hours: Required<WorkingHours> }>();
   for (const [name, value] of form.entries()) {
     const [prefix, first, second, ...rest] = name.split(".");
-    // The editor sends text only; a file in one of its fields is a bad request, not a skip.
-    if (typeof value !== "string" && isEditorField(prefix)) return c.text("Bad field", 400);
     if (prefix === "calendar" && first && !second) {
       calendars.push({ calendarId: first, isSource: value === "1" });
       continue;

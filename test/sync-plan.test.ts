@@ -211,6 +211,53 @@ describe("planSync", () => {
     expect(plan.actions).toEqual([{ kind: "delete", targetId: "duplicate", marker: first.marker }]);
   });
 
+  it("leaves out events whose block a rule with precedence already wrote", async () => {
+    const events = sourceEvents();
+    const kept = await desiredBlocks("rule-a", events, options(), { scope: "user" });
+    const [claimed] = kept;
+    if (!claimed) throw new Error("no block");
+    const copies = await desiredBlocks("rule-b", events, options(), {
+      scope: "user",
+      claimed: new Set([claimed.dedupKey]),
+    });
+    expect(copies).toHaveLength(kept.length - 1);
+    expect(copies.some((block) => block.dedupKey === claimed.dedupKey)).toBe(false);
+  });
+
+  it("gives equal blocks equal dedup keys, per user", async () => {
+    const events = sourceEvents(bySubject("FBS single"));
+    const [a] = await desiredBlocks("rule-a", events, options(), { scope: "user" });
+    const [b] = await desiredBlocks("rule-b", events, options(), { scope: "user" });
+    const [other] = await desiredBlocks("rule-a", events, options(), { scope: "other-user" });
+    const [titled] = await desiredBlocks("rule-a", events, options({ detailLevel: "title" }), {
+      scope: "user",
+    });
+    expect(a?.dedupKey).toBe(b?.dedupKey);
+    expect(other?.dedupKey).not.toBe(a?.dedupKey);
+    // "Busy" and the title look different, so both blocks stay.
+    expect(titled?.dedupKey).not.toBe(a?.dedupKey);
+  });
+
+  it("never lets a tentative or an open block stand in for a busy or a private one", async () => {
+    const [event] = sourceEvents(bySubject("FBS single"));
+    if (!event) throw new Error("no event");
+    const key = async (changes: Partial<SourceEvent>, overrides: Partial<RuleOptions> = {}) => {
+      const [block] = await desiredBlocks(RULE, [{ ...event, ...changes }], options(overrides), {
+        scope: "user",
+      });
+      return block?.dedupKey;
+    };
+    const busy = await key({ showAs: "busy" }, { skipTentative: false });
+    expect(await key({ showAs: "tentative" }, { skipTentative: false })).not.toBe(busy);
+    expect(await key({ showAs: "busy" }, { markPrivate: false })).not.toBe(busy);
+  });
+
+  it("updates a block without a dedup key, so that it gets one", async () => {
+    const desired = await desiredBlocks(RULE, sourceEvents(), options());
+    const existing = asExisting(desired).map((block) => ({ ...block, dedupKey: "" }));
+    expect(planSync(desired, existing).stats).toMatchObject({ update: desired.length });
+  });
+
   it("gives each rule its own markers, so two rules into one calendar do not collide", async () => {
     const events = sourceEvents(bySubject("FBS single"));
     const [a] = await desiredBlocks("rule-a", events, options());

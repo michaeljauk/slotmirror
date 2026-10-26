@@ -9,8 +9,14 @@ import {
 } from "./providers/calendar-client";
 import { clientCredentials, oauthClient } from "./providers/oauth-clients";
 import { TokenError, type TokenResponse } from "./providers/oauth-token";
-import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
-import { cleanupWindow, loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
+import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
+import {
+  cleanupWindow,
+  loadRule,
+  rulesTargetingAccount,
+  siblingRuleIds,
+  syncWindow,
+} from "./sync/rules";
 import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
 import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
@@ -168,7 +174,9 @@ export class AccountSync extends DurableObject<Env> {
       .all<{ id: string }>();
     if (results.length === 0) return;
     const queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
-    const merged = [...new Set([...queue, ...results.map((row) => row.id)])];
+    const merged = await inPrecedenceOrder([
+      ...new Set([...queue, ...results.map((row) => row.id)]),
+    ]);
     await this.ctx.storage.put(RULE_QUEUE_KEY, merged);
     this.sourceCache.clear();
     if ((await this.ctx.storage.getAlarm()) === null) {
@@ -327,8 +335,27 @@ export class AccountSync extends DurableObject<Env> {
 
     const target = await this.client();
     const ruleTag = await ruleTagFor(rule.id);
-    const existing = await target.existingBlocks(rule.target.remoteCalendarId, window, ruleTag);
-    const plan = planSync(await desiredBlocks(rule.id, sourceEvents, ruleOptions), existing);
+    // Rules with a smaller tag into the same calendar take precedence: where they already block
+    // an event, this rule writes no second block for it.
+    const siblingTags = await Promise.all(
+      (await siblingRuleIds(this.env.DB, rule.id)).map((id) => ruleTagFor(id)),
+    );
+    const precedingTags = siblingTags.filter((tag) => tag < ruleTag);
+    const blocks = await target.existingBlocks(rule.target.remoteCalendarId, window, [
+      ruleTag,
+      ...precedingTags,
+    ]);
+    const existing = blocks.filter((block) => block.ruleTag === ruleTag);
+    const claimed = new Set(
+      blocks
+        .filter((block) => block.ruleTag !== ruleTag && block.dedupKey !== "")
+        .map((block) => block.dedupKey),
+    );
+    const desired = await desiredBlocks(rule.id, sourceEvents, ruleOptions, {
+      scope: rule.userId,
+      claimed,
+    });
+    const plan = planSync(desired, existing);
 
     let throttled = 0;
     const statuses: Record<string, number> = {};
@@ -412,7 +439,7 @@ export class AccountSync extends DurableObject<Env> {
   ): Promise<{ removed: number; remaining: number }> {
     const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
-    const blocks = await target.existingBlocks(remoteCalendarId, cleanupWindow(), ruleTag);
+    const blocks = await target.existingBlocks(remoteCalendarId, cleanupWindow(), [ruleTag]);
     const actions = blocks.map((block) => ({
       kind: "delete" as const,
       targetId: block.targetId,
@@ -495,7 +522,7 @@ export class AccountSync extends DurableObject<Env> {
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
-      queue = await rulesTargetingAccount(this.env.DB, accountId);
+      queue = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
       await this.ctx.storage.put(FULL_CYCLE_KEY, Date.now());
     }
     const [ruleId, ...rest] = queue;
@@ -505,10 +532,12 @@ export class AccountSync extends DurableObject<Env> {
     }
 
     let unfinished = false;
+    let removedBlocks = false;
     let delayMs = this.delays().nextRun;
     try {
       const result = await this.runRule(ruleId);
       unfinished = result.remaining > 0;
+      removedBlocks = result.stats.delete > 0;
       delayMs = result.retryAfterMs ?? this.delays().nextRun;
     } catch (error) {
       // One broken rule must not stop the others; runRule has recorded the failure.
@@ -521,7 +550,8 @@ export class AccountSync extends DurableObject<Env> {
       }
     }
 
-    const next = unfinished ? [ruleId, ...rest] : rest;
+    let next = unfinished ? [ruleId, ...rest] : rest;
+    if (removedBlocks) next = await this.withFollowers(ruleId, next);
     if (next.length > 0) {
       await this.ctx.storage.put(RULE_QUEUE_KEY, next);
       await this.ctx.storage.setAlarm(Date.now() + delayMs);
@@ -530,6 +560,20 @@ export class AccountSync extends DurableObject<Env> {
       // The cycle is done: check the watches once per cycle, with the rest of the budget.
       await this.ensureWatchesSafely();
     }
+  }
+
+  /**
+   * Add the rules that come after a rule into the same calendar to the queue. They may have left
+   * out events whose blocks the rule just removed, and must now write their own.
+   */
+  private async withFollowers(ruleId: string, queue: string[]): Promise<string[]> {
+    const tag = await ruleTagFor(ruleId);
+    const followers: string[] = [];
+    for (const id of await siblingRuleIds(this.env.DB, ruleId)) {
+      if ((await ruleTagFor(id)) > tag) followers.push(id);
+    }
+    if (followers.length === 0) return queue;
+    return inPrecedenceOrder([...new Set([...queue, ...followers])]);
   }
 
   /**

@@ -96,6 +96,22 @@ export async function rulesTargetingAccount(db: D1Database, accountId: string): 
   return results.map((row) => row.id);
 }
 
+/**
+ * The other enabled rules of the same user that write into the target calendar of a rule. Their
+ * blocks can stand in for the rule's own; see `desiredBlocks`.
+ */
+export async function siblingRuleIds(db: D1Database, ruleId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT o.id FROM rules r
+       JOIN rules o ON o.target_calendar_id = r.target_calendar_id AND o.user_id = r.user_id
+       WHERE r.id = ? AND o.id <> r.id AND o.enabled = 1 ORDER BY o.id`,
+    )
+    .bind(ruleId)
+    .all<{ id: string }>();
+  return results.map((row) => row.id);
+}
+
 /** The sync window of a rule: from the start of the current UTC day to `daysAhead` days later. */
 export function syncWindow(options: RuleOptions, now = new Date()): { start: Date; end: Date } {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));

@@ -104,13 +104,13 @@ export class GoogleCalendar implements CalendarClient {
   async existingBlocks(
     calendarId: string,
     window: TimeWindow,
-    ruleTag: string,
+    ruleTags: readonly string[],
   ): Promise<ExistingBlock[]> {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.listEvents(calendarId, window, false)) {
       const marker = googleMarker(raw);
       const source = fromGoogleEvent(raw);
-      if (!marker || !source || marker.ruleTag !== ruleTag) continue;
+      if (!marker || !source || !ruleTags.includes(marker.ruleTag)) continue;
       blocks.push({
         targetId: googleEventSchema.parse(raw).id,
         ...marker,

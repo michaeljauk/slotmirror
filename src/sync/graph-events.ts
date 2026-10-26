@@ -1,13 +1,19 @@
 import * as z from "zod/mini";
-import type { ShowAs, SourceEvent } from "./types";
+import type { DesiredBlock, ShowAs, SourceEvent } from "./types";
 
 const MARKER_PROPERTY_SET = "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10}";
 
 /**
  * Single-value extended property that marks blocks written by slotmirror.
- * Its value is `<ruleTag>.<marker>.<contentHash>`.
+ * Its value is `<ruleTag>.<marker>.<contentHash>`; see `markerValueFor`.
  */
 export const MARKER_PROPERTY_ID = `${MARKER_PROPERTY_SET} Name slotmirrorMarker`;
+
+/**
+ * Single-value extended property with the dedup key of a block (see `dedupKeyFor`). It is separate
+ * from the marker so that a deployment from before 2026-10-27 still reads the marker.
+ */
+export const DEDUP_PROPERTY_ID = `${MARKER_PROPERTY_SET} Name slotmirrorDedupKey`;
 
 /**
  * The marker of blocks written before the project was renamed from freebusy-sync on 2026-10-26.
@@ -24,6 +30,14 @@ export function graphMarkerValue(
     properties?.find((property) => property.id.toLowerCase() === id.toLowerCase())?.value ??
     undefined;
   return find(MARKER_PROPERTY_ID) ?? find(LEGACY_MARKER_PROPERTY_ID);
+}
+
+/** The dedup key of a block; empty for blocks written before it existed. */
+export function graphDedupKey(
+  properties: { id: string; value?: string | null }[] | undefined,
+): string {
+  const id = DEDUP_PROPERTY_ID.toLowerCase();
+  return properties?.find((property) => property.id.toLowerCase() === id)?.value ?? "";
 }
 
 const dateTimeTimeZone = z.object({ dateTime: z.string(), timeZone: z.string() });
@@ -75,6 +89,11 @@ export const GRAPH_EVENT_SELECT = [
   "location",
   "bodyPreview",
 ].join(",");
+
+/** The marker property value of a block, the same for Graph and Google. */
+export function markerValueFor(ruleTag: string, block: DesiredBlock): string {
+  return `${ruleTag}.${block.marker}.${block.contentHash}`;
+}
 
 /**
  * Split a marker property value. Values from before rule tags existed have two parts; they

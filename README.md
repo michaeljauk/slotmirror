@@ -282,7 +282,8 @@ flowchart LR
   watches and the queue of rules to run. A rule runs in the instance of its target account and
   reads events from the source account's instance. Each block carries a marker with the rule and
   the source occurrence, so the target calendar itself records which blocks exist. No mapping
-  table can drift.
+  table can drift. If several rules would write equal blocks (same times, same title) into one
+  calendar, for example from two calendars that both hold a match, only one block is written.
 
 ## Contributing and security
 

@@ -72,6 +72,7 @@ describe("toGoogleBlock", () => {
     expect(body.extendedProperties.private.slotmirrorMarker).toMatch(
       /^tag123456789\.[0-9a-f]{32}\.[0-9a-f]{32}$/,
     );
+    expect(body.extendedProperties.private.slotmirrorDedupKey).toMatch(/^[0-9a-f]{32}$/);
   });
 });
 

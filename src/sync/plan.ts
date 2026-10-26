@@ -55,6 +55,39 @@ export async function ruleTagFor(ruleId: string): Promise<string> {
   return (await shortHash(`rule\u0000${ruleId}`)).slice(0, 12);
 }
 
+/**
+ * Rule IDs in precedence order: by rule tag. Where several rules write the same event into one
+ * calendar, the rule with the smallest tag keeps it (see `desiredBlocks`). Running the rules in
+ * this order lets the keeping rule write first, so that the others never write a copy.
+ */
+export async function inPrecedenceOrder(ruleIds: string[]): Promise<string[]> {
+  const tagged = await Promise.all(ruleIds.map(async (id) => ({ id, tag: await ruleTagFor(id) })));
+  return tagged.sort((a, b) => (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0)).map(({ id }) => id);
+}
+
+/**
+ * Key of a block as people see it: times, title, status and privacy, hashed with a per-user scope.
+ * Two blocks with the same key block the same way, so one of them is enough. The same match in two
+ * subscribed calendars gets one key; so do two private "Busy" blocks at the same time. A tentative
+ * block never stands in for a busy one, and an open block never for a private one.
+ */
+export async function dedupKeyFor(scope: string, content: BlockContent): Promise<string> {
+  const subject = content.subject.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+  const allDay = content.allDay ? "all-day" : "timed";
+  const privacy = content.isPrivate ? "private" : "open";
+  const parts = [
+    "dedup",
+    scope,
+    allDay,
+    content.start,
+    content.end,
+    subject,
+    content.showAs,
+    privacy,
+  ];
+  return shortHash(parts.join("\u0000"));
+}
+
 async function shortHash(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest).slice(0, 16), (b) =>
@@ -62,27 +95,40 @@ async function shortHash(text: string): Promise<string> {
   ).join("");
 }
 
-/** All blocks the target calendar should contain for one rule. */
+/**
+ * All blocks the target calendar should contain for one rule.
+ *
+ * `dedup.scope` scopes the dedup keys, normally to the user. `dedup.claimed` holds the dedup keys
+ * of blocks that rules with precedence wrote into the same calendar; the rule leaves out events
+ * whose block would look the same, so that an event in several source calendars is blocked once.
+ */
 export async function desiredBlocks(
   ruleId: string,
   events: SourceEvent[],
   options: RuleOptions,
+  dedup: { scope: string; claimed?: ReadonlySet<string> } = { scope: "" },
 ): Promise<DesiredBlock[]> {
   const blocks = new Map<string, DesiredBlock>();
   for (const event of events) {
     if (!isIncluded(event, options)) continue;
-    const marker = await markerFor(ruleId, event.occurrenceKey);
     const content = blockContent(event, options);
+    const dedupKey = await dedupKeyFor(dedup.scope, content);
+    if (dedup.claimed?.has(dedupKey)) continue;
+    const marker = await markerFor(ruleId, event.occurrenceKey);
     const contentHash = await shortHash(JSON.stringify(content));
-    blocks.set(marker, { marker, contentHash, ...content });
+    blocks.set(marker, { marker, contentHash, dedupKey, ...content });
   }
   return [...blocks.values()];
 }
 
-/** Times are compared directly, so that a block moved by hand in the target is moved back. */
+/**
+ * Times are compared directly, so that a block moved by hand in the target is moved back. A
+ * missing dedup key counts as a change, so that blocks from before it existed get one.
+ */
 function sameContent(existing: ExistingBlock, desired: DesiredBlock): boolean {
   return (
     existing.contentHash === desired.contentHash &&
+    existing.dedupKey === desired.dedupKey &&
     existing.allDay === desired.allDay &&
     sameInstant(existing.start, desired.start) &&
     sameInstant(existing.end, desired.end)

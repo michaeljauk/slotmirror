@@ -606,12 +606,7 @@ describe("alarm queue", () => {
       const [job] = (await removalsOf(stub)) ?? [];
       expect(job?.attempts).toBe(attempt);
       waits.push((job?.notBefore ?? 0) - Date.now());
-      // The queueing alarm may carry a requested sync, so the rules follow the first attempt. A
-      // failed attempt in the removal's own alarm starts no sync.
-      if (attempt === 1) {
-        expect(await alarmKind(stub)).toBeUndefined();
-        await runDurableObjectAlarm(stub);
-      }
+      // No rule and no full cycle waits, so the next alarm is the removal's own.
       expect(await alarmKind(stub)).toBe("removal");
       expect(await alarmAt(stub)).toBe(job?.notBefore);
     }
@@ -639,10 +634,6 @@ describe("alarm queue", () => {
     await stub.queueRemoval("gone-rule", TARGET_CAL);
     await runDurableObjectAlarm(stub);
     expect(deletes()).toBe(1);
-
-    await runDurableObjectAlarm(stub);
-    expect(deletes()).toBe(1);
-    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
     const [job] = (await removalsOf(stub)) ?? [];
     expect(job?.attempts).toBe(1);
     expect(await alarmAt(stub)).toBe(job?.notBefore);
@@ -654,14 +645,27 @@ describe("alarm queue", () => {
     expect(await alarmKind(stub)).toBeUndefined();
     await runDurableObjectAlarm(stub);
     expect(deletes()).toBe(2);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
+    let [waiting] = (await removalsOf(stub)) ?? [];
+    expect(await alarmAt(stub)).toBe(waiting?.notBefore);
+
+    // So does a requested full cycle.
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("fullCycleRequested", true),
+    );
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(3);
+    expect(await alarmKind(stub)).toBeUndefined();
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(3);
     expect(await auditOf(ruleId, "sync_run")).toHaveLength(2);
-    const [waiting] = (await removalsOf(stub)) ?? [];
+    [waiting] = (await removalsOf(stub)) ?? [];
     expect(await alarmAt(stub)).toBe(waiting?.notBefore);
 
     // The provider is back: the removal's own alarm removes the block, then a full cycle runs.
     graph.deleteStatus = 204;
     await runDurableObjectAlarm(stub);
-    expect(deletes()).toBe(3);
+    expect(deletes()).toBe(4);
     expect(await removalsOf(stub)).toBeUndefined();
     await runDurableObjectAlarm(stub);
     expect(await auditOf(ruleId, "sync_run")).toHaveLength(3);
@@ -674,8 +678,8 @@ describe("alarm queue", () => {
     await stub.queueRemoval("gone-rule", TARGET_CAL);
     await stub.retire();
     await runDurableObjectAlarm(stub);
-    await runDurableObjectAlarm(stub);
     expect(graph.methods).toEqual(["DELETE"]);
+    expect(await alarmKind(stub)).toBe("removal");
     expect(await stub.hasTokens()).toBe(true);
 
     graph.deleteStatus = 204;
@@ -689,7 +693,6 @@ describe("alarm queue", () => {
     const stub = await bareAccount("acc-removal-echo");
     await stuckBlockGraph(500);
     await stub.queueRemoval("gone-rule", TARGET_CAL);
-    await runDurableObjectAlarm(stub);
     await runDurableObjectAlarm(stub);
     const [job] = (await removalsOf(stub)) ?? [];
     await runInDurableObject(stub, async (_instance, state) => {
@@ -749,14 +752,14 @@ describe("alarm queue", () => {
   it("lets an earlier retry of a sync request take the alarm from a waiting removal", async () => {
     const stub = await bareAccount("acc-removal-retry-first");
     await stuckBlockGraph(500);
-    await stub.queueRemoval("gone-rule", TARGET_CAL);
-    await runDurableObjectAlarm(stub);
     const at = Date.now() + 30_000;
     await runInDurableObject(stub, (_instance, state) =>
       state.storage.put("syncRequestRetry", { attempts: 1, at }),
     );
 
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
     await runDurableObjectAlarm(stub);
+    expect((await removalsOf(stub))?.[0]?.attempts).toBe(1);
     expect(await alarmKind(stub)).toBe("retry");
     expect(await alarmAt(stub)).toBe(at);
   });
@@ -765,7 +768,6 @@ describe("alarm queue", () => {
     const stub = await bareAccount("acc-removal-replaced");
     await stuckBlockGraph(500);
     await stub.queueRemoval("gone-rule", TARGET_CAL);
-    await runDurableObjectAlarm(stub);
     await runDurableObjectAlarm(stub);
     const [job] = (await removalsOf(stub)) ?? [];
     expect(await alarmKind(stub)).toBe("removal");
@@ -830,14 +832,22 @@ describe("alarm queue", () => {
       state.storage.put("notifiedEvents", { other: Date.now() }),
     );
 
+    // The request that retires the account never waits for the provider.
+    const atRetire = calls.length;
     await stub.retire();
-    expect(calls.filter((call) => call.includes("/subscriptions/"))).toHaveLength(2);
+    expect(calls).toHaveLength(atRetire);
+
+    // The next alarm stops the watches, and only that.
+    await runDurableObjectAlarm(stub);
+    expect(calls.slice(atRetire).map((call) => call.replace(/^(\w+) .*\//, "$1 "))).toEqual([
+      "DELETE sub-ok",
+      "DELETE sub-stuck",
+    ]);
     const watches = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.sql
-        .exec<{ remote_id: string }>("SELECT remote_id FROM subscriptions")
-        .toArray(),
+      state.storage.sql.exec("SELECT remote_id FROM subscriptions").toArray(),
     );
-    expect(watches.map((row) => row.remote_id)).toEqual(["sub-stuck"]);
+    // A watch that could not be stopped expires on its own; its notifications are ignored.
+    expect(watches).toEqual([]);
 
     const before = calls.length;
     await stub.graphChanged(["later"]);
@@ -845,8 +855,9 @@ describe("alarm queue", () => {
     const queued = await runInDurableObject(stub, async (_instance, state) => [
       await state.storage.get("notifiedEvents"),
       await state.storage.get("changedCalendars"),
+      await state.storage.get("fullCycleRequested"),
     ]);
-    expect(queued).toEqual([{ other: expect.any(Number) }, undefined]);
+    expect(queued).toEqual([{ other: expect.any(Number) }, undefined, undefined]);
     await runDurableObjectAlarm(stub);
     expect(calls).toHaveLength(before);
     expect(

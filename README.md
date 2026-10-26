@@ -165,8 +165,8 @@ rules, and the blocks those rules wrote from today on. Past blocks stay in the c
 activity entries stay until the retention period ends.
 
 A disconnected account keeps its encrypted tokens until the blocks in its own calendars are
-removed. Its watches stop at once; a watch that cannot be stopped expires within days, and its
-notifications are ignored. The account reads its calendars only to find and delete those blocks.
+removed. Its next alarm stops its watches; a watch that cannot be stopped expires within days,
+and its notifications are ignored. The account reads its calendars only to find and delete those blocks.
 If the provider keeps failing, the removal tries again after 1 minute, 10 minutes, 2 hours and
 12 hours. After the fifth failed attempt, or at once if the provider refuses the tokens, the tokens
 are deleted and the remaining blocks stay.

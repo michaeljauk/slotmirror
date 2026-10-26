@@ -645,8 +645,8 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * Stop the provider's notifications while the tokens still work. Best effort: watches end on
-   * their own within days. A watch that could not be stopped stays stored for the next try.
+   * Stop the provider's notifications while the tokens still work, and forget the watches. Best
+   * effort, tried once: a watch that could not be stopped ends on its own within days.
    */
   private async stopWatches(): Promise<void> {
     const watches = this.storedWatches();
@@ -654,16 +654,14 @@ export class AccountSync extends DurableObject<Env> {
     try {
       const client = await this.client();
       for (const watch of watches) {
-        try {
-          await client.unwatch(watch);
-          this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
-        } catch (error) {
+        await client.unwatch(watch).catch((error: unknown) => {
           console.error("Stopping a watch failed", watch.id, error);
-        }
+        });
       }
     } catch (error) {
       console.error("Stopping watches failed", error);
     }
+    this.ctx.storage.sql.exec(`DELETE FROM subscriptions`);
   }
 
   private async retiring(): Promise<boolean> {
@@ -920,13 +918,12 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * The account is going: remove the queued blocks first, then stop the watches and forget the
-   * tokens. The removals need the tokens, so the account cannot go at once.
+   * The account is going: its alarms stop the watches, remove the queued blocks, and then forget
+   * the tokens. The removals need the tokens, so the account cannot go at once. This call only
+   * writes storage, so that the request never waits for a provider.
    */
   async retire(): Promise<void> {
     await this.ctx.storage.put(RETIRING_KEY, true);
-    // The removals can take hours if the provider fails; no notifications are needed meanwhile.
-    await this.stopWatches();
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
@@ -991,10 +988,12 @@ export class AccountSync extends DurableObject<Env> {
       if (outcome === "failed" && attempts < MAX_REMOVAL_ATTEMPTS) return [...others, next];
       return others;
     });
-    // After a failed attempt in its own alarm, `keepRemovalAlarm()` sets the next alarm, unless
-    // rules wait. Any other alarm may carry a requested sync, so it goes on to the rules.
-    const rulesWait = ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0;
-    if (!waits || !ownAlarm || rulesWait) await this.setSyncAlarm(Date.now() + delayMs);
+    // After a failed attempt, `keepRemovalAlarm()` sets the next alarm, unless rules or a requested
+    // full cycle wait. A removal that ends starts a full cycle, as its blocks may hide others.
+    const syncWaits =
+      ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
+      ((await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) ?? false);
+    if (!waits || syncWaits) await this.setSyncAlarm(Date.now() + delayMs);
     return true;
   }
 
@@ -1023,6 +1022,13 @@ export class AccountSync extends DurableObject<Env> {
         );
         await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
       }
+      return;
+    }
+    // A retiring account stops its watches in an alarm of their own, so that `retire()` never
+    // waits for a provider. Its removals can take hours; no notifications are needed meanwhile.
+    if ((await this.retiring()) && this.storedWatches().length > 0) {
+      await this.stopWatches();
+      await this.setSyncAlarm(Date.now() + this.delays().nextRun);
       return;
     }
     // Change feeds come first, then due removals, one per alarm; the rules follow once none is due.

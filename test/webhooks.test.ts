@@ -44,7 +44,7 @@ afterEach(() => {
 
 /**
  * Make `requestSync` throw in the given accounts, at most `times` times. Returns the accounts in
- * the order of their failed calls.
+ * the order of their failed calls. A test may change `accounts` later.
  */
 function failSyncRequests(accounts: string[], times = Infinity): string[] {
   const original = Object.getOwnPropertyDescriptor(AccountSync.prototype, "requestSync")!.value as (
@@ -64,10 +64,18 @@ function failSyncRequests(accounts: string[], times = Infinity): string[] {
   return failed;
 }
 
-/** Move the clock forward; alarms set from now on count from there. */
+/** Move the clock and stop it there; alarms set from now on count from there. */
 function advanceClock(ms: number): void {
-  const now = Date.now() + ms;
-  vi.spyOn(Date, "now").mockReturnValue(now);
+  setClock(Date.now() + ms);
+}
+
+function setClock(at: number): void {
+  vi.spyOn(Date, "now").mockReturnValue(at);
+}
+
+/** Stop the clock one day ahead, so that no alarm a test sets can fire by itself. */
+function stopClockAhead(): void {
+  advanceClock(24 * 3_600_000);
 }
 
 describe("webhook address", () => {
@@ -659,7 +667,42 @@ describe("echo filter", () => {
     expect(await alarmOf(b)).not.toBeNull();
   });
 
+  /**
+   * A Graph change check in the first account whose sync requests fail in both accounts, `times`
+   * times in all. Afterwards only the retry's alarm is pending.
+   */
+  async function pendingRetry(prefix: string, times: number) {
+    stopClockAhead();
+    const { a, b } = await setup(prefix);
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    const failing = [a, b];
+    const failed = failSyncRequests(failing, times);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("unavailable", { status: 503 }),
+    );
+    await notifyGraph(a, "someone-elses-meeting");
+    await runDurableObjectAlarm(stub);
+    const retryAt = (await alarmOf(a))!;
+    return { a, b, stub, failing, failed, retryAt };
+  }
+
+  const fullCycleAt = (id: string) =>
+    runInDurableObject(env.ACCOUNT_SYNC.getByName(id), (_instance, state) =>
+      state.storage.get<number>("fullCycleAt"),
+    );
+
+  /** The feed by sync token: from token-1 the user's change, from token-2 only our block. */
+  const feedByToken = (urls: URL[]) => async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    urls.push(url);
+    return url.searchParams.get("syncToken") === "token-1"
+      ? feed(["users-meeting", "block-1"], "token-2")()
+      : feed(["block-1"], "token-3")();
+  };
+
   it("retries a failed sync request after a Graph notification in a later alarm", async () => {
+    stopClockAhead();
     const { a, b } = await setup("gr-retry");
     const stub = env.ACCOUNT_SYNC.getByName(a);
     failSyncRequests([b], 1);
@@ -674,24 +717,88 @@ describe("echo filter", () => {
   });
 
   it("retries a failed sync request after a Google notification without reading the feed again", async () => {
-    const { b, stub, urls, notify, storedToken } = await setupGoogle("g-retry", [
-      feed(["users-meeting"], "token-2"),
-    ]);
+    stopClockAhead();
+    const { b, stub, urls, notify, storedToken } = await setupGoogle("g-retry", []);
+    vi.mocked(globalThis.fetch).mockImplementation(feedByToken(urls));
     failSyncRequests([b], 1);
     vi.spyOn(console, "error").mockImplementation(() => {});
     await notify();
     await runDurableObjectAlarm(stub);
     expect(await alarmOf(b)).toBeNull();
-    // The retry holds the change, so the feed moves on.
-    expect(await storedToken()).toBe("token-2");
+    // The token stays, so that the next read returns the change again.
+    expect(await storedToken()).toBe("token-1");
 
     advanceClock(60_000);
     await runDurableObjectAlarm(stub);
     expect(urls).toHaveLength(1);
     expect(await alarmOf(b)).not.toBeNull();
+
+    // The next check reads the change again, syncs, and moves the token on.
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(urls[1]?.searchParams.get("syncToken")).toBe("token-1");
+    expect(await storedToken()).toBe("token-2");
+  });
+
+  it("syncs a change on the next Google notification after the retries gave up", async () => {
+    stopClockAhead();
+    const { a, b, stub, urls, notify, storedToken } = await setupGoogle("g-exhaust", []);
+    vi.mocked(globalThis.fetch).mockImplementation(feedByToken(urls));
+    const failed = failSyncRequests([a, b], 8);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await notify();
+    await runDurableObjectAlarm(stub);
+    for (let i = 0; i < 10 && (await alarmOf(a)) !== null; i++) {
+      setClock((await alarmOf(a))!);
+      await runDurableObjectAlarm(stub);
+    }
+    expect(failed).toHaveLength(8);
+    expect(await alarmOf(b)).toBeNull();
+    expect(await storedToken()).toBe("token-1");
+
+    // A notification about our own block reads the user's change again.
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(urls.at(-1)?.searchParams.get("syncToken")).toBe("token-1");
+    expect(await alarmOf(b)).not.toBeNull();
+    expect(await storedToken()).toBe("token-2");
+  });
+
+  it("finds the failed change again in a Google check while the retry waits", async () => {
+    stopClockAhead();
+    const { b, stub, urls, notify, storedToken } = await setupGoogle("g-during", []);
+    vi.mocked(globalThis.fetch).mockImplementation(feedByToken(urls));
+    failSyncRequests([b], 1);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).toBeNull();
+
+    // A notification about our own block, before the retry is due.
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).not.toBeNull();
+    expect(await storedToken()).toBe("token-2");
+  });
+
+  it("retries a failed sync request after 30, 60 and 120 seconds, then gives up", async () => {
+    const { a, b, stub, failed, retryAt } = await pendingRetry("g-backoff", Infinity);
+    const start = Date.now();
+    expect(retryAt).toBe(start + 30_000);
+    setClock(start + 30_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).toBe(start + 90_000);
+    setClock(start + 90_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).toBe(start + 210_000);
+    setClock(start + 210_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).toBeNull();
+    expect(failed).toEqual([a, b, a, b, a, b, a, b]);
   });
 
   it("gives up on a failing sync request after a few attempts, and runs the rules meanwhile", async () => {
+    stopClockAhead();
     const { a, b } = await setup("g-giveup");
     // A rule into the first account, so that its full cycle has work.
     await env.DB.prepare(
@@ -724,22 +831,96 @@ describe("echo filter", () => {
     expect(await alarmOf(a)).toBeNull();
   });
 
-  it("lets a new notification move the alarm that waits for a retry", async () => {
-    const { a, b } = await setup("g-first");
-    const stub = env.ACCOUNT_SYNC.getByName(a);
-    failSyncRequests([b], 1);
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
-    await notifyGraph(a, "someone-elses-meeting");
-    await runDurableObjectAlarm(stub);
-    // The cycle the change started in the first account; afterwards only the retry waits.
-    await runDurableObjectAlarm(stub);
-    const retryAt = await alarmOf(a);
-    expect(retryAt).not.toBeNull();
+  // The tests' debounce is ten minutes. Going back twenty minutes makes it end before the retry,
+  // as the debounce of five seconds does in production.
 
-    // The check gets its own alarm after the debounce delay. In production that delay is shorter
-    // than the retry's; the tests use a longer one.
+  it("lets a new notification set an alarm before a pending retry", async () => {
+    const { a, b, stub, retryAt } = await pendingRetry("g-first", 2);
+    advanceClock(-20 * 60_000);
     await notifyGraph(a, "another-meeting");
-    expect(await alarmOf(a)).not.toBe(retryAt);
+    expect(await alarmOf(a)).toBeLessThan(retryAt);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("runs a requested full cycle before a pending retry, and the retry afterwards", async () => {
+    const { a, b, stub, retryAt } = await pendingRetry("g-request", 2);
+    advanceClock(-20 * 60_000);
+    await stub.requestSync();
+    expect(await alarmOf(a)).toBeLessThan(retryAt);
+    await runDurableObjectAlarm(stub);
+    expect(await fullCycleAt(a)).toBe(Date.now());
+    expect(await alarmOf(a)).toBe(retryAt);
+
+    setClock(retryAt);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("runs rules a tick queues before a pending retry, and the retry afterwards", async () => {
+    const { a, b, stub, retryAt } = await pendingRetry("g-tick", 2);
+    // A rule into the first account; its calendars have no watch, so the tick polls it.
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'g-tick-back', user_id, ?, ? FROM rules WHERE id = 'g-tick-rule'",
+    )
+      .bind(`${b}-cal`, `${a}-cal`)
+      .run();
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("fullCycleAt", Date.now()),
+    );
+    const urls: string[] = [];
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return Response.json({ value: [] });
+    });
+    advanceClock(-20 * 60_000);
+    await stub.tick();
+    expect(await alarmOf(a)).toBeLessThan(retryAt);
+    await runDurableObjectAlarm(stub);
+    expect(urls.some((url) => url.includes(`/calendars/${b}-remote/calendarView`))).toBe(true);
+    expect(await alarmOf(a)).toBe(retryAt);
+
+    setClock(retryAt);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("keeps a full cycle requested for the moment a retry is due", async () => {
+    const { a, stub, failing, retryAt } = await pendingRetry("g-same", Infinity);
+    // The debounce ends exactly when the retry is due.
+    failing.length = 0;
+    setClock(retryAt - 600_000);
+    await stub.requestSync();
+    // Further requests fail, so that only the requested cycle can start a full cycle.
+    failing.push(a);
+    await notifyGraph(a, "another-meeting");
+    for (let i = 0; i < 12 && (await alarmOf(a)) !== null; i++) {
+      setClock(Math.max(Date.now(), (await alarmOf(a))!));
+      await runDurableObjectAlarm(stub);
+    }
+    expect(await fullCycleAt(a)).toBeDefined();
+  });
+
+  it("merges a calendar queued in the old format with a new notification", async () => {
+    const { a, stub, notify } = await setupGoogle("g-old", []);
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("changedCalendars", [`${a}-remote`]),
+    );
+    await notify();
+    expect(
+      await runInDurableObject(stub, (_instance, state) => state.storage.get("changedCalendars")),
+    ).toEqual([{ calendarId: `${a}-remote`, notifiedAt: expect.any(Number) }]);
+  });
+
+  it("reads the feed of a calendar queued in the old format", async () => {
+    const { a, b, stub, urls } = await setupGoogle("g-oldread", [feed(["block-1"], "token-2")]);
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("changedCalendars", [`${a}-remote`]);
+      await state.storage.put("feedOnlyAlarm", true);
+      await state.storage.setAlarm(Date.now() + 600_000);
+    });
+    await runDurableObjectAlarm(stub);
+    expect(urls[0]?.pathname).toContain(`/calendars/${encodeURIComponent(`${a}-remote`)}/events`);
+    expect(await alarmOf(b)).toBeNull();
   });
 });

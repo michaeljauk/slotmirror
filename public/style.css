@@ -1783,6 +1783,13 @@ details.source > .source-head .provider-icon,
   );
 }
 
+/* A Google event colour fills the example the way Google fills the event. */
+.ev.filled:not(.none) {
+  border-color: var(--fill);
+  background: var(--fill);
+  color: #fff;
+}
+
 /* Picks a single colour: the chosen one shows a tick, not the cross of the skip filter. */
 .color-row.pick .color-choice input:checked + .color-dot::after {
   content: "✓";

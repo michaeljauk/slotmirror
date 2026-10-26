@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadEditorState,
   resetDirection,
+  setBlockColor,
   setDirection,
   setGroupMembership,
   shortNames,
@@ -115,6 +116,7 @@ describe("directions", () => {
     await setGroupMembership(env, user, g, true);
 
     await setDirection(env, user, w, g, "full");
+    await setBlockColor(env, user, w, g, "3");
     let state = await loadEditorState(env, user.id);
     expect(state.directions.find((d) => d.from === w && d.to === g)).toMatchObject({
       choice: "full",
@@ -127,6 +129,8 @@ describe("directions", () => {
       choice: "busy",
       origin: "group",
     });
+    // The group writes blocks without a colour, so the reset clears it.
+    expect(state.directions.find((d) => d.from === w && d.to === g)?.options?.blockColor).toBe("");
   });
 
   it("turns a group direction off with a disabled exception, and deletes it outside the group", async () => {

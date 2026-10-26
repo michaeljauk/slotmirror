@@ -99,7 +99,19 @@
   for (const form of document.querySelectorAll("form.block-color[data-key]")) {
     const key = `blockColor:${form.dataset.key}`;
     savedBlockColors.set(key, blockColorOf(form));
+    // Fill the examples of the direction with the chosen Google colour, or clear the fill.
+    const showFill = () => {
+      const dot = form.querySelector("input[name=blockColor]:checked + .color-dot");
+      const fill = dot?.dataset.fill;
+      for (const example of form.closest(".dest").querySelectorAll("[data-example] .ev")) {
+        if (example.classList.contains("none")) continue;
+        example.classList.toggle("filled", Boolean(fill));
+        if (fill) example.style.setProperty("--fill", fill);
+        else example.style.removeProperty("--fill");
+      }
+    };
     const onChange = () => {
+      showFill();
       const value = blockColorOf(form);
       if (value.trim() === savedBlockColors.get(key).trim()) pending.delete(key);
       else pending.set(key, value);
@@ -135,6 +147,8 @@
         const form = document.querySelector(`form.block-color[data-key="${key.slice(11)}"]`);
         form?.reset();
         form?.classList.remove("pending");
+        // Reset fires no change event; this one restores the example fill.
+        form?.dispatchEvent(new Event("change"));
       } else if (key !== "settings") show(key, original.get(key));
     }
     settings?.reset();

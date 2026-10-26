@@ -592,7 +592,10 @@ export async function setSourceCalendar(
   }
 }
 
-/** Undo an exception: back to the group's busy, or no rule outside the group. */
+/**
+ * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
+ * goes too, because the group writes blocks without a colour.
+ */
 export async function resetDirection(
   env: Env,
   user: CurrentUser,
@@ -604,6 +607,7 @@ export async function resetDirection(
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to) return;
   await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
+  await setBlockColor(env, user, fromId, toId, "");
 }
 
 /**

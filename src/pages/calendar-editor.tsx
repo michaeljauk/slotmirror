@@ -31,8 +31,19 @@ export function colorStyle(account: Pick<EditorAccount, "color">): string {
   return `--c:${ACCOUNT_COLORS[account.color]}`;
 }
 
+/** The fill of a Google event colour, or null if the direction writes no Google colour. */
+function googleFill(target: EditorAccount, direction: EditorDirection): string | null {
+  if (target.provider !== "google") return null;
+  return GOOGLE_COLORS.find((color) => color.id === direction.options?.blockColor)?.hex ?? null;
+}
+
 /** How a sample event of the source looks in the target with a choice. */
-function Example(props: { source: EditorAccount; direction: EditorDirection; choice: Choice }) {
+function Example(props: {
+  source: EditorAccount;
+  target: EditorAccount;
+  direction: EditorDirection;
+  choice: Choice;
+}) {
   const { t } = useI18n();
   const choice = props.choice;
   if (choice === "off") return <span class="ev none">{t.editor.notThere}</span>;
@@ -40,8 +51,13 @@ function Example(props: { source: EditorAccount; direction: EditorDirection; cho
     ? t.editor.samplePrivate
     : t.editor.sampleWork;
   const busyTitle = props.direction.options?.blockTitle ?? "Busy";
+  // Google fills an event with its colour; the example does the same.
+  const fill = googleFill(props.target, props.direction);
   return (
-    <span class="ev" style={colorStyle(props.source)}>
+    <span
+      class={fill ? "ev filled" : "ev"}
+      style={fill ? `${colorStyle(props.source)};--fill:${fill}` : colorStyle(props.source)}
+    >
       <b>{choice === "busy" ? busyTitle : sample.title}</b>
       {choice === "full" ? ` 10:00–11:00 · ${sample.detail}` : " 10:00–11:00"}
     </span>
@@ -261,7 +277,7 @@ function BlockColor(props: {
                   value={color.id}
                   checked={value === color.id}
                 />
-                <span class="color-dot" style={`background:${color.hex}`} />
+                <span class="color-dot" style={`background:${color.hex}`} data-fill={color.hex} />
               </label>
             ))}
           </span>
@@ -323,7 +339,7 @@ function DestinationRow(props: {
         {/* Every choice is rendered, so that the editor script can switch without a request. */}
         {CHOICES.map((choice) => (
           <span data-example={choice} hidden={choice !== direction.effective}>
-            <Example source={source} direction={direction} choice={choice} />
+            <Example source={source} target={target} direction={direction} choice={choice} />
           </span>
         ))}
       </div>

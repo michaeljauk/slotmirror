@@ -178,12 +178,16 @@ export const en = {
     workStart: "From",
     workEnd: "Until",
     workTimeZone: "Time zone",
+    workUntilMidnight: "until midnight",
+    workZoneUnknown: (zone: string) =>
+      `This server does not know the time zone ${zone}. Until you choose another one, the hours are read in UTC.`,
     workHoursHint:
-      "Only events that touch these days and times are copied, with their full times. Times as HH:MM; without times: the whole day. 24:00 is the end of the day.",
+      "Only events that touch these days and times are copied, with their full times. Without times: the whole day.",
     workHoursErrors: {
       days: "Working hours: choose at least one weekday.",
-      time: "Working hours: enter a start and an end as HH:MM, for example 08:00 and 18:00, or leave both empty.",
-      order: "Working hours: the end must be after the start. For the end of the day, enter 24:00.",
+      time: "Working hours: enter a start and an end, for example 08:00 and 18:00, or leave both empty.",
+      order:
+        "Working hours: the end must be after the start. For the end of the day, choose “until midnight”.",
       zone: "Working hours: unknown time zone. Enter a name such as Europe/Vienna.",
     },
     googleColor: (id: string) => `Google colour ${id}`,

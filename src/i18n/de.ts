@@ -180,12 +180,16 @@ export const de: Messages = {
     workStart: "Von",
     workEnd: "Bis",
     workTimeZone: "Zeitzone",
+    workUntilMidnight: "bis Mitternacht",
+    workZoneUnknown: (zone: string) =>
+      `Dieser Server kennt die Zeitzone ${zone} nicht. Bis du eine andere wählst, gelten die Zeiten in UTC.`,
     workHoursHint:
-      "Nur Termine, die diese Tage und Zeiten berühren, werden kopiert, mit ihren vollen Zeiten. Zeiten als HH:MM; ohne Zeiten: der ganze Tag. 24:00 ist das Tagesende.",
+      "Nur Termine, die diese Tage und Zeiten berühren, werden kopiert, mit ihren vollen Zeiten. Ohne Zeiten: der ganze Tag.",
     workHoursErrors: {
       days: "Arbeitszeit: Wähle mindestens einen Wochentag.",
-      time: "Arbeitszeit: Gib Beginn und Ende als HH:MM an, zum Beispiel 08:00 und 18:00, oder lass beide leer.",
-      order: "Arbeitszeit: Das Ende muss nach dem Beginn liegen. Für das Tagesende gib 24:00 ein.",
+      time: "Arbeitszeit: Gib Beginn und Ende an, zum Beispiel 08:00 und 18:00, oder lass beide leer.",
+      order:
+        "Arbeitszeit: Das Ende muss nach dem Beginn liegen. Für das Tagesende wähle „bis Mitternacht“.",
       zone: "Arbeitszeit: Unbekannte Zeitzone. Gib einen Namen wie Europe/Vienna ein.",
     },
     googleColor: (id: string) => `Google-Farbe ${id}`,

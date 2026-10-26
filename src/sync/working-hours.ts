@@ -65,7 +65,10 @@ export function canonicalTimeZone(zone: string): string {
   return formatterFor(zone)?.resolvedOptions().timeZone ?? zone;
 }
 
-/** The field that makes working hours invalid, or null. Same rules as the options schema. */
+/**
+ * The field that makes working hours invalid as input, or null: the rules of the options schema,
+ * and a zone that Intl knows.
+ */
 export type WorkingHoursProblem = "days" | "time" | "order" | "zone";
 
 export function workingHoursProblem(hours: {
@@ -86,6 +89,21 @@ export function workingHoursProblem(hours: {
   if (workStart !== "" && workEnd <= workStart) return "order";
   if (workTimeZone !== "" && !isTimeZone(workTimeZone)) return "zone";
   return null;
+}
+
+/** Zones that Intl refused, so that an unknown stored zone costs one failed lookup per isolate. */
+const unknownZones = new Set<string>();
+
+/**
+ * The zone the filter reads: the stored zone if Intl knows it, otherwise UTC. A stored zone can
+ * become unknown after a runtime update; the rule keeps it, and the editor shows a notice.
+ */
+export function zoneToRead(zone: string): string {
+  if (zone === "" || unknownZones.has(zone)) return "UTC";
+  if (formatterFor(zone)) return zone;
+  if (unknownZones.size >= MAX_FORMATTERS) unknownZones.clear();
+  unknownZones.add(zone);
+  return "UTC";
 }
 
 /** True if the rule filters by weekday or time of day. The defaults filter nothing. */
@@ -109,7 +127,7 @@ export function inWorkingHours(event: SourceEvent, options: WorkingHours): boole
   if (Number.isNaN(start) || Number.isNaN(parsedEnd)) return true;
   // An event without duration counts as one millisecond, so that it is a point in the window.
   const end = parsedEnd > start ? parsedEnd : start + 1;
-  const zone = options.workTimeZone || "UTC";
+  const zone = zoneToRead(options.workTimeZone);
   const window = options.workStart
     ? { start: minutesOf(options.workStart), end: minutesOf(options.workEnd) }
     : null;
@@ -240,7 +258,8 @@ function offsetAt(zone: string, instant: number): number {
 
 /**
  * The instant of a wall-clock time on a date (UTC midnight) in a zone. A time that happens twice
- * when clocks go back is the first one. A time that does not exist when clocks go forward moves
+ * when clocks go back is the first one, for the end of a range as well as for its start; the
+ * README documents that a range can end an hour early on that night. A time that does not exist when clocks go forward moves
  * forward by the change, so 02:30 on the day of a one-hour change is 03:30. Minute 1440 is the
  * start of the next day.
  */

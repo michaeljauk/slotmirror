@@ -99,13 +99,16 @@
     const asText = (value) => (typeof value === "string" ? value.trim() : "");
     const text = (name) => asText(data.get(name));
     const days = data.getAll("workDays").map(asText).join(",");
-    return [days, text("workStart"), text("workEnd"), text("workTimeZone")].join("|");
+    // A time field cannot hold 24:00; "until midnight" stands for it.
+    const end = data.has("workUntilMidnight") ? "24:00" : text("workEnd");
+    return [days, text("workStart"), end, text("workTimeZone")].join("|");
   };
   const savedHours = new Map();
   for (const form of document.querySelectorAll("form.working-hours[data-key]")) {
     const key = `hours:${form.dataset.key}`;
     savedHours.set(key, hoursOf(form));
     const onChange = () => {
+      form.elements.workEnd.disabled = form.elements.workUntilMidnight.checked;
       const value = hoursOf(form);
       if (value === savedHours.get(key)) pending.delete(key);
       else pending.set(key, value);
@@ -167,6 +170,8 @@
         const form = document.querySelector(`form.working-hours[data-key="${key.slice(6)}"]`);
         form?.reset();
         form?.classList.remove("pending");
+        // Reset fires no change event; this one restores the end field's state.
+        form?.dispatchEvent(new Event("change"));
       } else if (key.startsWith("calendar:")) {
         const chip = document.querySelector(`.cal-chip[data-calendar="${key.slice(9)}"]`);
         chip?.classList.toggle("out", !savedSources.get(key.slice(9)));

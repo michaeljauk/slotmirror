@@ -148,7 +148,8 @@ describe("working hours per direction", () => {
   it("stores the deployment's time zone when the zone is left empty, and none when off", async () => {
     const { user, w, g } = await setup("hourszone");
     await setDirection(env, user, g, w, "busy");
-    const vienna = { ...env, TIME_ZONE: "Europe/Vienna" };
+    // The deployment's zone is stored in canonical spelling, like a zone from the page.
+    const vienna = { ...env, TIME_ZONE: "europe/vienna" };
     expect(
       await setWorkingHours(vienna, user, g, w, { workDays: [1, 2, 3], workTimeZone: " " }),
     ).toBe(true);
@@ -212,6 +213,12 @@ describe("working hours per direction", () => {
     expect(await setWorkingHours(env, user, g, w, { workDays: [1] })).toBe(true);
     expect(await optionsOf(user.id, g, w)).toBeNull();
     expect(await setWorkingHours(env, user, g, w, { workDays: [] })).toBe(false);
+    const mars = { workDays: [1], workTimeZone: "Mars/Olympus" };
+    expect(await setWorkingHours(env, user, g, w, mars)).toBe(false);
+    // With rules, an unknown zone as input is refused as well.
+    await setDirection(env, user, g, w, "busy");
+    expect(await setWorkingHours(env, user, g, w, mars)).toBe(false);
+    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
   });
 
   it("saves all or nothing: invalid hours stop the choices sent with them", async () => {
@@ -228,7 +235,8 @@ describe("working hours per direction", () => {
     expect(response.status).toBe(400);
     // The editor script shows this message in its bar.
     expect(await response.json()).toEqual({
-      error: "Working hours: the end must be after the start. For the end of the day, enter 24:00.",
+      error:
+        "Working hours: the end must be after the start. For the end of the day, choose “until midnight”.",
     });
     expect(await rulesOf(user.id, w, g)).toEqual([]);
     expect(await rulesOf(user.id, g, w)).toEqual([]);
@@ -275,7 +283,7 @@ describe("working hours per direction", () => {
     expect(await optionsOf(user.id, g, w)).toMatchObject({ workTimeZone: "America/New_York" });
   });
 
-  it("keeps the page working when a stored zone became unknown", async () => {
+  it("keeps a stored zone that became unknown, says so on the page, and reads UTC", async () => {
     const { user, cookie, w, g } = await setup("hoursstale");
     await setDirection(env, user, g, w, "busy");
     const [rule] = await rulesOf(user.id, g, w);
@@ -289,7 +297,109 @@ describe("working hours per direction", () => {
       .run();
     const page = await exports.default.fetch(`${BASE}/rules?open=${g}`, { headers: { cookie } });
     expect(page.status).toBe(200);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workDays: [1], workTimeZone: "UTC" });
+    const html = await page.text();
+    expect(html).toContain(
+      "This server does not know the time zone Mars/Olympus. Until you choose another one, the hours are read in UTC.",
+    );
+    expect(html).toMatch(/name="workTimeZone"[^>]*value="Mars\/Olympus"/);
+
+    // Saves that do not touch the hours keep the stored zone.
+    const save = (fields: Record<string, string>) =>
+      post("/rules/choices", cookie, new URLSearchParams(fields), { "x-fragment": "1" });
+    expect((await save({ settings: "1", "settings.daysAhead": "30" })).status).toBe(204);
+    expect((await save({ [`blockColor.${g}.${w}`]: "Focus" })).status).toBe(204);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({
+      workDays: [1],
+      workTimeZone: "Mars/Olympus",
+      daysAhead: 30,
+      blockColor: "Focus",
+    });
+    // Sending the unknown zone as input is refused; a known one replaces it.
+    const hours = (zone: string) => ({
+      [`workDays.${g}.${w}`]: "1",
+      [`workStart.${g}.${w}`]: "",
+      [`workEnd.${g}.${w}`]: "",
+      [`workTimeZone.${g}.${w}`]: zone,
+    });
+    expect((await save(hours("Mars/Olympus"))).status).toBe(400);
+    expect((await save(hours("Europe/Vienna"))).status).toBe(204);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ workTimeZone: "Europe/Vienna" });
+  });
+
+  it('shows 24:00 as "until midnight" and saves the checkbox without the script', async () => {
+    const { user, cookie, w, g } = await setup("hoursmidnight");
+    await setDirection(env, user, g, w, "busy");
+    const body = new URLSearchParams({
+      from: g,
+      to: w,
+      workStart: "18:00",
+      workEnd: "",
+      workUntilMidnight: "1",
+      workTimeZone: "Europe/Vienna",
+    });
+    body.append("workDays", "5");
+    expect((await post("/rules/direction/hours", cookie, body)).status).toBe(302);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ workStart: "18:00", workEnd: "24:00" });
+
+    const html = await (
+      await exports.default.fetch(`${BASE}/rules?open=${g}`, { headers: { cookie } })
+    ).text();
+    const forms = html.match(/<form[^>]*working-hours[\s\S]*?<\/form>/g) ?? [];
+    const form = forms.find((f) => f.includes(`name="to" value="${w}"`)) ?? "";
+    expect(form).toMatch(/<input[^>]*type="time"[^>]*name="workStart"[^>]*value="18:00"/);
+    const end = form.match(/<input[^>]*name="workEnd"[^>]*>/)?.[0] ?? "";
+    expect(end).toContain('type="time"');
+    expect(end).toContain("disabled");
+    expect(end).not.toContain("24:00");
+    expect(form).toMatch(/<input[^>]*name="workUntilMidnight"[^>]*checked/);
+    expect(form).not.toContain("inputmode");
+
+    // Without the checkbox the end field counts again.
+    body.delete("workUntilMidnight");
+    body.set("workEnd", "22:00");
+    expect((await post("/rules/direction/hours", cookie, body)).status).toBe(302);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ workEnd: "22:00" });
+  });
+
+  it("refuses a file in any field of the editor, and writes nothing", async () => {
+    const { user, cookie, w, g } = await setup("hoursfile");
+    const fields = [
+      `calendar.${w}-cal`,
+      `choice.${w}.${g}`,
+      `blockColor.${g}.${w}`,
+      `workDays.${g}.${w}`,
+      `workStart.${g}.${w}`,
+      `workEnd.${g}.${w}`,
+      `workTimeZone.${g}.${w}`,
+    ];
+    for (const field of fields) {
+      const body = new FormData();
+      body.append(`choice.${g}.${w}`, "busy");
+      body.append(field, new Blob(["1"]), "part.txt");
+      const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+        method: "POST",
+        headers: { cookie, "x-fragment": "1" },
+        body,
+      });
+      expect(response.status, field).toBe(400);
+    }
+    expect(await rulesOf(user.id, g, w)).toEqual([]);
+  });
+
+  it("reports hours it could not store, instead of answering success", async () => {
+    const { user, cookie, w, g } = await setup("hourslost");
+    await setDirection(env, user, g, w, "busy");
+    // The same save turns off the only source calendar of the direction.
+    const body = new URLSearchParams({
+      [`calendar.${g}-cal`]: "0",
+      [`workDays.${g}.${w}`]: "1",
+      [`workStart.${g}.${w}`]: "",
+      [`workEnd.${g}.${w}`]: "",
+      [`workTimeZone.${g}.${w}`]: "",
+    });
+    const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
+    expect(response.status).toBe(409);
+    expect(await rulesOf(user.id, g, w)).toEqual([]);
   });
 });
 
@@ -316,6 +426,51 @@ describe("working hours in the block group", () => {
     const [rule] = await rulesOf(user.id, g, w);
     expect(rule?.origin).toBe("group");
     expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
+  });
+
+  it("return a direction to the group when the hours are cleared", async () => {
+    const { user, w, g } = await setup("hoursclear");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5] });
+    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
+    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5, 6, 7] });
+    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
+    // A group rule goes with the group.
+    await setGroupMembership(env, user, g, false);
+    expect(await rulesOf(user.id, g, w)).toEqual([]);
+  });
+
+  it("return to the group when busy and cleared hours are saved together", async () => {
+    const { user, cookie, w, g } = await setup("hoursboth");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, g, w, "title");
+    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5] });
+    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
+    const body = new URLSearchParams({
+      [`choice.${g}.${w}`]: "busy",
+      [`workDays.${g}.${w}`]: "1,2,3,4,5,6,7",
+      [`workStart.${g}.${w}`]: "",
+      [`workEnd.${g}.${w}`]: "",
+      [`workTimeZone.${g}.${w}`]: "",
+    });
+    expect((await post("/rules/choices", cookie, body, { "x-fragment": "1" })).status).toBe(204);
+    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFF, detailLevel: "busy" });
+    await setGroupMembership(env, user, g, false);
+    expect(await rulesOf(user.id, g, w)).toEqual([]);
+
+    // A choice other than busy stays an exception when the hours are cleared.
+    const other = await setup("hoursboth2");
+    await setGroupMembership(env, other.user, other.w, true);
+    await setGroupMembership(env, other.user, other.g, true);
+    await setDirection(env, other.user, other.g, other.w, "title");
+    await setWorkingHours(env, other.user, other.g, other.w, { workDays: [1] });
+    await setWorkingHours(env, other.user, other.g, other.w, { workDays: [1, 2, 3, 4, 5, 6, 7] });
+    expect((await rulesOf(other.user.id, other.g, other.w)).map((rule) => rule.origin)).toEqual([
+      "custom",
+    ]);
   });
 
   it("survive leaving the group, like any exception", async () => {

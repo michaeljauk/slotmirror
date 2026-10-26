@@ -33,12 +33,13 @@ tokens stay with you and not with a sync service.
   inside a time range, for example Monday to Friday, 08:00 to 18:00, Europe/Vienna. An event is
   mirrored if it overlaps the range on one chosen day. Its block keeps the event's real times; it
   is never cut to the range. An all-day event counts if one of its dates is a chosen weekday. The
-  end must be after the start; 24:00 is the end of the day, and a range over midnight is not
-  possible. The default is every day, all day; the time zone defaults to the deployment's
+  end must be after the start; "until midnight" ends the range at the end of the day, and a range
+  over midnight is not possible. The default is every day, all day; the time zone defaults to the deployment's
   `TIME_ZONE`. Working hours make a direction in the block group an exception, with a reset.
   On the two days a year when clocks change, a range that spans the change is one hour shorter or
   longer in real time. A start or end in the skipped hour moves forward by an hour; one in the
-  repeated hour means its first occurrence.
+  repeated hour means its first occurrence, for the start and the end alike. A range that ends
+  at 02:30 on the night clocks go back therefore ends an hour before the second 02:30.
 - **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
   colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.

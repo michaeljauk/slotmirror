@@ -1906,7 +1906,7 @@ details.source > .source-head .provider-icon,
   gap: 4px;
 }
 
-.work-time input,
+.work-time input[type="time"],
 .working-hours .work-zone {
   padding: 2px 6px;
   border: 1px solid var(--line-strong);
@@ -1915,9 +1915,17 @@ details.source > .source-head .provider-icon,
   font-size: 13px;
 }
 
-.work-time input {
-  width: 64px;
-  text-align: center;
+.work-midnight {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.work-time input[type="time"]:disabled {
+  color: var(--faint);
+  background: var(--bg);
 }
 
 .working-hours .work-zone {
@@ -1928,7 +1936,7 @@ details.source > .source-head .provider-icon,
   color: var(--accent);
 }
 
-.working-hours.pending .work-time input,
+.working-hours.pending .work-time input[type="time"],
 .working-hours.pending .work-zone {
   border-color: var(--accent);
 }

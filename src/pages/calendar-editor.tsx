@@ -9,7 +9,7 @@ import {
   MAX_CATEGORY_LENGTH,
 } from "../editor";
 import { useI18n } from "../i18n";
-import { ALL_WEEKDAYS } from "../sync/working-hours";
+import { ALL_WEEKDAYS, isTimeZone } from "../sync/working-hours";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { Layout } from "./layout";
@@ -253,6 +253,8 @@ function WorkingHours(props: {
   const { direction, source, target } = props;
   if (!direction.ruleId || direction.effective === "off") return null;
   const days = new Set(direction.options?.workDays ?? ALL_WEEKDAYS);
+  const untilMidnight = direction.options?.workEnd === "24:00";
+  const storedZone = direction.options?.workTimeZone ?? "";
   return (
     <form
       method="post"
@@ -279,39 +281,42 @@ function WorkingHours(props: {
       </span>
       <span class="work-time">
         <input
-          type="text"
+          type="time"
           name="workStart"
           value={direction.options?.workStart ?? ""}
-          placeholder="08:00"
-          pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
-          maxlength={5}
-          inputmode="numeric"
           aria-label={t.editor.workStart}
           title={t.editor.workStart}
         />
         {"–"}
+        {/* A time field cannot hold 24:00; "until midnight" stands for it and disables the field. */}
         <input
-          type="text"
+          type="time"
           name="workEnd"
-          value={direction.options?.workEnd ?? ""}
-          placeholder="18:00"
-          pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
-          maxlength={5}
-          inputmode="numeric"
+          value={untilMidnight ? "" : (direction.options?.workEnd ?? "")}
+          disabled={untilMidnight}
           aria-label={t.editor.workEnd}
           title={t.editor.workEnd}
         />
+        <label class="work-midnight">
+          <input type="checkbox" name="workUntilMidnight" value="1" checked={untilMidnight} />
+          {t.editor.workUntilMidnight}
+        </label>
       </span>
       <input
         type="text"
         name="workTimeZone"
         class="work-zone"
         maxlength={64}
-        value={direction.options?.workTimeZone || timeZone}
+        value={storedZone || timeZone}
         aria-label={t.editor.workTimeZone}
         title={t.editor.workTimeZone}
         autocomplete="off"
       />
+      {storedZone !== "" && !isTimeZone(storedZone) ? (
+        <span class="block-color-hint work-zone-unknown">
+          {t.editor.workZoneUnknown(storedZone)}
+        </span>
+      ) : null}
       <span class="block-color-hint">{t.editor.workHoursHint}</span>
       <button type="submit" class="button small nojs-only">
         {t.editor.save}

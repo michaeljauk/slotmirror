@@ -1,6 +1,6 @@
 import * as z from "zod/mini";
 import { policyAdmitsAnyone, policyFromEnv } from "./access";
-import { ALL_WEEKDAYS, END_OF_DAY, isTimeZone, TIME_OF_DAY } from "./sync/working-hours";
+import { ALL_WEEKDAYS, END_OF_DAY, TIME_OF_DAY } from "./sync/working-hours";
 
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */
 const ruleOptionsFields = z.object({
@@ -48,13 +48,11 @@ const ruleOptionsFields = z.object({
     z.string().check(z.refine((time) => time === "" || END_OF_DAY.test(time))),
     "",
   ),
-  workTimeZone: z._default(
-    z.string().check(
-      z.maxLength(64),
-      z.refine((zone) => zone === "" || isTimeZone(zone)),
-    ),
-    "",
-  ),
+  /**
+   * Any stored text: a zone that a runtime update no longer knows must not break the page or other
+   * saves. The filter then reads UTC. The editor accepts only zones that Intl knows.
+   */
+  workTimeZone: z._default(z.string().check(z.maxLength(64)), ""),
   /** Mark blocks as private so that people with access to the target calendar see no detail. */
   markPrivate: z._default(z.boolean(), true),
   /**
@@ -81,20 +79,7 @@ export const ruleOptionsSchema = ruleOptionsFields.check(
 export type RuleOptions = z.infer<typeof ruleOptionsSchema>;
 
 export function parseRuleOptions(json: string): RuleOptions {
-  const stored: unknown = JSON.parse(json);
-  // A stored zone can become unknown after a runtime update. The rule then reads its hours in
-  // UTC, so that the page and the sync keep working; new input is still checked strictly.
-  if (
-    typeof stored === "object" &&
-    stored !== null &&
-    "workTimeZone" in stored &&
-    typeof stored.workTimeZone === "string" &&
-    stored.workTimeZone !== "" &&
-    !isTimeZone(stored.workTimeZone)
-  ) {
-    return ruleOptionsSchema.parse({ ...stored, workTimeZone: "UTC" });
-  }
-  return ruleOptionsSchema.parse(stored);
+  return ruleOptionsSchema.parse(JSON.parse(json));
 }
 
 export type Provider = "microsoft" | "google";

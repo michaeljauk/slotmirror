@@ -202,6 +202,8 @@ rules.post("/choices", async (c) => {
   const hours = new Map<string, { from: string; to: string; hours: Required<WorkingHours> }>();
   for (const [name, value] of form.entries()) {
     const [prefix, first, second, ...rest] = name.split(".");
+    // The editor sends text only; a file in one of its fields is a bad request, not a skip.
+    if (typeof value !== "string" && isEditorField(prefix)) return c.text("Bad field", 400);
     if (prefix === "calendar" && first && !second) {
       calendars.push({ calendarId: first, isSource: value === "1" });
       continue;
@@ -240,9 +242,14 @@ rules.post("/choices", async (c) => {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
   // Colours and hours after the choices, so that a direction turned on in this save has rules.
+  // The writes are separate D1 statements, not one batch: each helper reads the state its
+  // predecessors wrote and queues a sync. The checks above leave only storage errors, and a
+  // direction whose last source calendar this save turned off; the earlier writes then stay.
   for (const { from, to, value } of colors) await setBlockColor(c.env, user, from, to, value);
   for (const entry of hours.values()) {
-    await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours);
+    if (!(await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours))) {
+      return c.text("Working hours not saved", 409);
+    }
   }
   if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
@@ -257,6 +264,13 @@ function weekdays(values: (string | File)[]): number[] {
 }
 
 const WORKING_HOURS_FIELDS = ["workDays", "workStart", "workEnd", "workTimeZone"] as const;
+
+/** Field prefixes of the editor script whose values must be text. */
+function isEditorField(name: string | undefined): boolean {
+  return (
+    name === "calendar" || name === "choice" || name === "blockColor" || isWorkingHoursField(name)
+  );
+}
 
 function isWorkingHoursField(
   name: string | undefined,
@@ -280,7 +294,8 @@ rules.post("/direction/hours", async (c) => {
   const hours = {
     workDays: weekdays(form.getAll("workDays")),
     workStart: formText(form, "workStart").trim(),
-    workEnd: formText(form, "workEnd").trim(),
+    // A time field cannot hold 24:00; the checkbox "until midnight" stands for it.
+    workEnd: form.has("workUntilMidnight") ? "24:00" : formText(form, "workEnd").trim(),
     workTimeZone: formText(form, "workTimeZone").trim(),
   };
   const problem = workingHoursProblem(hours);

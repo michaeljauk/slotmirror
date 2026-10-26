@@ -4,7 +4,12 @@ import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } 
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
 import { displayTimeZone } from "./i18n";
-import { ALL_WEEKDAYS, canonicalTimeZone, hasWorkingHours } from "./sync/working-hours";
+import {
+  ALL_WEEKDAYS,
+  canonicalTimeZone,
+  hasWorkingHours,
+  workingHoursProblem,
+} from "./sync/working-hours";
 import type { CurrentUser } from "./users";
 
 /**
@@ -395,26 +400,35 @@ export async function setWorkingHours(
   if (input.workDays) input.workDays = [...input.workDays].sort((a, b) => a - b);
   const state = await loadEditorState(env, user.id);
   const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
-  if (!direction) return false;
+  const from = state.accounts.find((account) => account.id === fromId);
+  const to = state.accounts.find((account) => account.id === toId);
+  if (!direction || !from || !to) return false;
+  // The options schema accepts any stored zone, so that a zone a runtime update dropped does not
+  // break the page. A zone given here is new input and must be known.
+  const invalid = (options: object) =>
+    workingHoursProblem({
+      ...NO_WORKING_HOURS,
+      ...options,
+      workTimeZone: input.workTimeZone ?? "",
+    });
   const rules = direction.slots.flatMap(({ rule }) => (rule ? [rule] : []));
   // A direction without rules stores nothing, but invalid hours are still refused.
-  if (rules.length === 0) {
-    return ruleOptionsSchema.safeParse({ ...NO_WORKING_HOURS, ...input }).success;
-  }
+  if (rules.length === 0) return invalid(input) === null;
   const hoursOf = (o: RuleOptions) =>
     JSON.stringify([o.workDays, o.workStart, o.workEnd, o.workTimeZone]);
   const updates: { ruleId: string; options: RuleOptions; origin: "group" | "custom" }[] = [];
   for (const rule of rules) {
-    const parsed = ruleOptionsSchema.safeParse({ ...rule.options, ...input });
-    if (!parsed.success) return false;
+    const merged = { ...rule.options, ...input };
+    const parsed = ruleOptionsSchema.safeParse(merged);
+    if (!parsed.success || invalid(merged) !== null) return false;
     const options = parsed.data;
     if (!hasWorkingHours(options)) options.workTimeZone = "";
     else if (options.workTimeZone === "") options.workTimeZone = displayTimeZone(env.TIME_ZONE);
-    else options.workTimeZone = canonicalTimeZone(options.workTimeZone);
+    if (options.workTimeZone) options.workTimeZone = canonicalTimeZone(options.workTimeZone);
     if (hoursOf(options) === hoursOf(rule.options)) continue;
-    // Hours on a group rule make it an exception, so that the page offers the reset and leaving
-    // the group keeps them. Clearing the hours leaves the origin; the reset returns to the group.
-    const origin = hasWorkingHours(options) ? "custom" : rule.origin;
+    // Hours make a group rule an exception, so that the page offers the reset and leaving the
+    // group keeps them. Without hours a busy rule between group members is a group rule again.
+    const origin = groupOrigin(from.inGroup && to.inGroup, rule.enabled, options);
     updates.push({ ruleId: rule.id, options, origin });
   }
   for (const { ruleId, options, origin } of updates) {
@@ -430,6 +444,19 @@ export async function setWorkingHours(
   }
   if (updates.length > 0) await accountSync(env, toId).requestSync();
   return true;
+}
+
+/**
+ * The origin of a rule: "group" for an enabled busy rule between two group members without
+ * working hours, otherwise "custom". Working hours make an exception, like any choice but busy.
+ */
+function groupOrigin(
+  bothInGroup: boolean,
+  enabled: boolean,
+  options: RuleOptions,
+): "group" | "custom" {
+  const busy = choiceOf(options, enabled) === "busy";
+  return bothInGroup && busy && !hasWorkingHours(options) ? "group" : "custom";
 }
 
 /** Longest Outlook category name for blocks. */
@@ -587,9 +614,7 @@ export async function setDirection(
       ...(rule?.options ?? direction.options ?? newRuleOptions(state.settings, choice)),
       detailLevel: choice,
     };
-    // Working hours make an exception from the group, like any choice but busy.
-    const origin =
-      bothInGroup && choice === "busy" && !hasWorkingHours(options) ? "group" : "custom";
+    const origin = groupOrigin(bothInGroup, true, options);
     if (rule) {
       await env.DB.prepare(
         "UPDATE rules SET options = ?, enabled = 1, origin = ? WHERE id = ? AND user_id = ?",

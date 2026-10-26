@@ -3,13 +3,26 @@ import { parseRuleOptions, ruleOptionsSchema, type RuleOptions } from "../src/co
 import { fromGraphEvent } from "../src/sync/graph-events";
 import { desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
-import { canonicalTimeZone, isTimeZone, workingHoursProblem } from "../src/sync/working-hours";
+import {
+  canonicalTimeZone,
+  hasWorkingHours,
+  isTimeZone,
+  workingHoursProblem,
+  zoneToRead,
+} from "../src/sync/working-hours";
 import fixture from "./fixtures/graph/calendar-view.json";
 import mainBlocks from "./fixtures/plan/main-blocks.json";
 
 const RULE = "rule-1";
 
 /** Monday to Friday, 08:00 to 18:00, Vienna: the common case. */
+const OFFICE_HOURS = {
+  workDays: [1, 2, 3, 4, 5],
+  workStart: "08:00",
+  workEnd: "18:00",
+  workTimeZone: "Europe/Vienna",
+};
+
 const OFFICE: Partial<RuleOptions> = {
   workDays: [1, 2, 3, 4, 5],
   workStart: "08:00",
@@ -285,6 +298,19 @@ describe("working hours: defaults", () => {
     expect(await desiredBlocks(RULE, events, zoneOnly, scope)).toEqual(mainBlocks.withAllDay);
   });
 
+  it("plan main's blocks when active hours admit every event", async () => {
+    // All seven days, 00:00 to 24:00: the filter runs, through every offset and day step.
+    const scope = { scope: "user" };
+    for (const zone of ["Europe/Vienna", "Pacific/Kiritimati", "America/Santiago", "UTC"]) {
+      const always = { workDays: [1, 2, 3, 4, 5, 6, 7], workStart: "00:00", workEnd: "24:00" };
+      const active = options({ ...always, workTimeZone: zone });
+      expect(hasWorkingHours(active)).toBe(true);
+      expect(await desiredBlocks(RULE, events, active, scope)).toEqual(mainBlocks.defaults);
+      const withAllDay = options({ ...always, workTimeZone: zone, skipAllDay: false });
+      expect(await desiredBlocks(RULE, events, withAllDay, scope)).toEqual(mainBlocks.withAllDay);
+    }
+  });
+
   it("mirror events at any time on any day", () => {
     for (const start of ["2026-10-31T03:00:00.000Z", "2026-11-01T22:00:00.000Z"]) {
       expect(mirrored(event(start, start.replace(/T\d\d/, "T23")), {})).toBe(true);
@@ -349,9 +375,9 @@ describe("working hours: validation", () => {
     }
   });
 
-  it("refuses an unknown time zone", () => {
-    expect(parses({ workTimeZone: "Mars/Olympus" })).toBe(false);
-    expect(parses({ workTimeZone: "Europe/Vienna" })).toBe(true);
+  it("refuses an unknown time zone as input", () => {
+    expect(workingHoursProblem({ ...OFFICE_HOURS, workTimeZone: "Mars/Olympus" })).toBe("zone");
+    expect(workingHoursProblem({ ...OFFICE_HOURS, workTimeZone: "Europe/Vienna" })).toBeNull();
     expect(isTimeZone(" Europe/Vienna")).toBe(false);
     expect(isTimeZone(`Europe/${"x".repeat(64)}`)).toBe(false);
   });
@@ -362,12 +388,23 @@ describe("working hours: validation", () => {
     expect(canonicalTimeZone("utc")).toBe("UTC");
   });
 
-  it("reads a stored zone that became unknown as UTC, instead of failing", () => {
+  it("keeps a stored zone that became unknown, and reads the hours in UTC", () => {
     const stored =
-      '{"workDays": [1], "workStart": "08:00", "workEnd": "18:00", "workTimeZone": "Mars/Olympus"}';
-    expect(parseRuleOptions(stored)).toMatchObject({ workDays: [1], workTimeZone: "UTC" });
-    // Input is still checked strictly.
-    expect(ruleOptionsSchema.safeParse(JSON.parse(stored)).success).toBe(false);
+      '{"workDays": [2], "workStart": "08:00", "workEnd": "18:00", "workTimeZone": "Mars/Olympus"}';
+    const parsed = parseRuleOptions(stored);
+    // The stored text stays, so that an unrelated save does not replace it.
+    expect(parsed).toMatchObject({ workDays: [2], workTimeZone: "Mars/Olympus" });
+    expect(zoneToRead("Mars/Olympus")).toBe("UTC");
+    expect(zoneToRead("Europe/Vienna")).toBe("Europe/Vienna");
+    // Tuesday 07:30 UTC is 08:30 in Vienna; 17:30 UTC is 18:30 there. Read in UTC, it is the
+    // other way round.
+    const morning = event("2026-10-27T07:30:00.000Z", "2026-10-27T07:45:00.000Z");
+    const evening = event("2026-10-27T17:30:00.000Z", "2026-10-27T17:45:00.000Z");
+    expect(isIncluded(morning, parsed)).toBe(false);
+    expect(isIncluded(evening, parsed)).toBe(true);
+    const vienna = { ...parsed, workTimeZone: "Europe/Vienna" };
+    expect(isIncluded(morning, vienna)).toBe(true);
+    expect(isIncluded(evening, vienna)).toBe(false);
   });
 
   it("refuses no weekday, unknown weekdays and repeated weekdays", () => {

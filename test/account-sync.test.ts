@@ -1928,6 +1928,80 @@ describe("accounts that need reconnecting", () => {
     expect(calls.other).toBe(0);
   });
 
+  it("asks the accounts that read from it for a sync when the pause ends", async () => {
+    const { stub: reader } = await ruleFromFlaggedSource("reader-a");
+    const source = env.ACCOUNT_SYNC.getByName("reader-a-src");
+    await runInDurableObject(source, (_instance, state) =>
+      state.storage.put("needsReconnect", {
+        code: "invalid_grant",
+        since: 1,
+        flagPending: false,
+        alertPending: false,
+        probeAt: Date.now() + 86_400_000,
+      }),
+    );
+    expect(await pendingAlarm(reader)).toBeNull();
+
+    await source.storeTokens("reader-a-src", {
+      refreshToken: "r2",
+      accessToken: "a2",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    expect(await pendingAlarm(reader)).not.toBeNull();
+    expect(await d1Flag("reader-a-src")).toBe(0);
+  });
+
+  it("ends a pause at the next tick if D1 no longer has the flag", async () => {
+    // A reconnect cleared D1 while a tick stored a pause for the old flag, and the probe then
+    // failed for another reason, such as a 5xx from the token endpoint.
+    const { stub } = await setupRule("acc-stale-pause");
+    await stub.storeTokens("acc-stale-pause", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("needsReconnect", {
+        code: "needs_reconnect",
+        since: 1,
+        flagPending: false,
+        alertPending: false,
+        probeAt: Date.now() + 86_400_000,
+      }),
+    );
+    expect(await d1Flag("acc-stale-pause")).toBe(0);
+    const calls = fakeGraph();
+
+    await stub.tick();
+    expect(await storedPause(stub)).toBeUndefined();
+    expect(await pendingAlarm(stub)).not.toBeNull();
+    expect(calls.filter((call) => call.url.includes("/oauth2/v2.0/token"))).toHaveLength(0);
+  });
+
+  it("keeps a pause whose D1 write is still pending", async () => {
+    const { stub } = await setupRule("acc-pending-flag");
+    await stub.storeTokens("acc-pending-flag", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    refusingTokenEndpoint();
+    // As if the instance was evicted between storing the pause and the D1 write.
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("needsReconnect", {
+        code: "invalid_grant",
+        since: 1,
+        flagPending: true,
+        alertPending: false,
+        probeAt: Date.now() + 86_400_000,
+      }),
+    );
+    await stub.tick();
+    expect(await storedPause(stub)).toBeDefined();
+    expect(await d1Flag("acc-pending-flag")).toBe(1);
+  });
+
   it("neither pauses nor alerts for an account whose row is already gone", async () => {
     const stub = env.ACCOUNT_SYNC.getByName("acc-gone");
     await stub.storeTokens("acc-gone", { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 });

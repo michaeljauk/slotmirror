@@ -296,7 +296,19 @@ export class AccountSync extends DurableObject<Env> {
   async tick(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
-    const pause = (await this.pause()) ?? (await this.pauseForStaleFlag(accountId));
+    // The pages show the D1 flag, so the pause follows it. A flag without a pause pauses and
+    // probes; a pause whose flag is gone, after its own D1 write, is stale and ends.
+    const row = await this.env.DB.prepare(
+      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
+    )
+      .bind(accountId)
+      .first<{ flag: number }>();
+    let pause = await this.pause();
+    if (pause && !pause.flagPending && row?.flag === 0) {
+      await this.unpause();
+      return;
+    }
+    if (!pause && row?.flag === 1) pause = await this.pauseForStaleFlag();
     if (pause) {
       await this.whilePaused(accountId, pause);
       return;
@@ -714,10 +726,14 @@ export class AccountSync extends DurableObject<Env> {
       queue.map(({ notBefore: _wait, ...job }) => job),
     );
     // Other accounts skip rules from this one while the flag is set.
+    const accountId = this.accountId();
     await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
-      .bind(this.accountId())
+      .bind(accountId)
       .run();
     await this.requestSync();
+    // The accounts that read from this one skipped its rules; they sync now too. A failed request
+    // is retried by a later alarm.
+    await this.requestSyncAfterChange(accountId);
   }
 
   /**
@@ -762,13 +778,7 @@ export class AccountSync extends DurableObject<Env> {
    * if the token works, the probe ends the pause and clears the flag. No alert; the flag was set
    * before.
    */
-  private async pauseForStaleFlag(accountId: string): Promise<Pause | null> {
-    const row = await this.env.DB.prepare(
-      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
-    )
-      .bind(accountId)
-      .first<{ flag: number }>();
-    if (row?.flag !== 1) return null;
+  private async pauseForStaleFlag(): Promise<Pause> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const current = await this.pause();
       if (current) return current;

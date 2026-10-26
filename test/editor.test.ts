@@ -354,3 +354,37 @@ describe("reconnect", () => {
     expect(state.accounts.find((a) => a.id === w)?.needsReconnect).toBe(false);
   });
 });
+
+describe("onboarding", () => {
+  it("puts every account into the block group with one click", async () => {
+    const { user, cookie } = await setup("quick");
+    const page = await (
+      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain('action="/rules/group/all"');
+
+    const response = await exports.default.fetch(`${BASE}/rules/group/all`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie },
+    });
+    expect(response.status).toBe(302);
+    const rules = await rulesOf(user.id);
+    expect(rules).toHaveLength(6);
+    expect(rules.every((rule) => rule.origin === "group")).toBe(true);
+
+    const after = await (
+      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+    ).text();
+    expect(after).not.toContain('action="/rules/group/all"');
+  });
+
+  it("shows the first steps with connect buttons before two accounts exist", async () => {
+    const { cookie } = await signIn("fresh@org.example");
+    const page = await (
+      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain("Get started in three steps");
+    expect(page).toContain('href="/auth/microsoft/connect"');
+  });
+});

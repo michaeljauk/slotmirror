@@ -413,7 +413,52 @@ export function Overview(props: { state: EditorState }) {
   );
 }
 
+/** Before two accounts are connected: what to do, with the buttons to do it. */
+function FirstSteps(props: {
+  connected: number;
+  providers: Record<"microsoft" | "google", boolean>;
+}) {
+  const { t } = useI18n();
+  const providers = (["microsoft", "google"] as const).filter((p) => props.providers[p]);
+  return (
+    <div class="card first-steps">
+      <h2>{t.editor.firstStepsTitle}</h2>
+      <ol>
+        <li class={props.connected >= 1 ? "done" : ""}>{t.editor.stepConnectFirst}</li>
+        <li class={props.connected >= 2 ? "done" : ""}>{t.editor.stepConnectSecond}</li>
+        <li>{t.editor.stepChoose}</li>
+      </ol>
+      <div class="actions">
+        {providers.map((provider) => (
+          <a class="button" href={`/auth/${provider}/connect`}>
+            <ProviderIcon provider={provider} />
+            {t.accounts.connect(provider === "microsoft" ? "Microsoft 365" : "Google")}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** With two or more accounts and no rule yet: one click for the common setup. */
+function QuickStart(props: { count: number }) {
+  const { t } = useI18n();
+  return (
+    <form method="post" action="/rules/group/all" class="card quick-start">
+      <div>
+        <strong>{t.editor.quickStartTitle}</strong>
+        <p class="group-text">{t.editor.quickStartText(props.count)}</p>
+      </div>
+      <button type="submit" class="button primary">
+        {t.editor.quickStartButton}
+      </button>
+    </form>
+  );
+}
+
 export function CalendarEditorPage(props: {
+  /** Providers that can be connected, for the first steps. */
+  providers: Record<"microsoft" | "google", boolean>;
   user: CurrentUser;
   state: EditorState;
   /** Source accounts whose cards start open. */
@@ -437,13 +482,15 @@ export function CalendarEditorPage(props: {
         <ReconnectNotice accounts={props.state.accounts} />
 
         {ready.length < 2 ? (
-          <div class="card">
-            <div class="empty">{t.editor.needTwo}</div>
-          </div>
+          <FirstSteps connected={ready.length} providers={props.providers} />
         ) : (
           <>
             <div class="editor-grid">
               <div class="editor-main">
+                {props.state.directions.every((d) => !d.ruleId) &&
+                !props.state.accounts.some((account) => account.inGroup) ? (
+                  <QuickStart count={ready.length} />
+                ) : null}
                 <GroupCard state={props.state} />
                 {ready.map((source) => (
                   <SourceCard

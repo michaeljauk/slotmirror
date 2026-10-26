@@ -1617,3 +1617,46 @@ a.status.error {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+
+/* First steps and quick start */
+
+.first-steps {
+  padding: 18px 20px;
+}
+
+.first-steps h2 {
+  margin: 0 0 8px;
+}
+
+.first-steps ol {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.first-steps li {
+  padding: 3px 0;
+}
+
+.first-steps li.done {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+.quick-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-color: var(--accent);
+}
+
+.quick-start > div {
+  flex: 1 1 320px;
+}
+
+.quick-start .group-text {
+  margin-top: 4px;
+}

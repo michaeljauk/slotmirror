@@ -12,6 +12,7 @@ import { clientCredentials, oauthClient } from "../providers/oauth-clients";
 import type { Identity, TokenResponse } from "../providers/oauth-token";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "../session";
 import { render } from "../render";
+import { refreshUserCalendars } from "../calendars";
 import { signInUser } from "../users";
 import { accountSync } from "../durable";
 
@@ -210,5 +211,14 @@ auth.get("/:provider/callback", async (c) => {
     kind: "account_connected",
     detail: { provider },
   });
-  return c.redirect("/");
+  // Load the new account's calendars now, so that the editor can use them at once.
+  await refreshUserCalendars(c.env, user.id);
+  // With a second account the next step is choosing where events go.
+  const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?")
+    .bind(user.id)
+    .first<{ n: number }>();
+  const rules = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM rules WHERE user_id = ?")
+    .bind(user.id)
+    .first<{ n: number }>();
+  return c.redirect((count?.n ?? 0) >= 2 && (rules?.n ?? 0) === 0 ? "/rules" : "/");
 });

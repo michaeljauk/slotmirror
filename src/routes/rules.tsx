@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
 import { latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
-import { ruleOptionsSchema } from "../config";
+import { ruleOptionsSchema, setupStatus } from "../config";
 import { i18nFromContext, useI18n as i18nForStatus } from "../i18n";
 import {
   CHOICES,
@@ -42,6 +42,7 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
   const page = (
     <CalendarEditorPage
       user={user}
+      providers={setupStatus(c.env).providers}
       state={await loadEditorState(c.env, user.id)}
       open={(c.req.query("open") ?? "").split(",").filter(Boolean)}
       notice={notice}
@@ -148,6 +149,16 @@ function backTo(c: Context<AppEnv>, sourceId: string) {
     `/rules?open=${encodeURIComponent(sourceId)}#src-${encodeURIComponent(sourceId)}`,
   );
 }
+
+// Quick start: every account joins the block group.
+rules.post("/group/all", async (c) => {
+  const user = currentUser(c);
+  const state = await loadEditorState(c.env, user.id);
+  for (const account of state.accounts) {
+    await setGroupMembership(c.env, user, account.id, true);
+  }
+  return c.redirect("/rules");
+});
 
 rules.post("/group/:accountId", async (c) => {
   const form = await c.req.formData();

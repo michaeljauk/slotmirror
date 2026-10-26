@@ -436,11 +436,21 @@ describe("sync status in the UI", () => {
     vi.restoreAllMocks();
 
     const html = await accountsPage();
-    const row = html.slice(html.indexOf("acc-ui-fail@example.com"));
-    expect(row.slice(0, row.indexOf("</li>"))).toContain(
-      'class="status error" href="/auth/microsoft/connect">Connect again<',
+    const list = html.slice(html.indexOf('<ul class="list">'));
+    const row = list.slice(list.indexOf("acc-ui-fail@example.com"));
+    expect(row.slice(0, row.indexOf("</li>"))).toMatch(
+      /class="status error" href="\/auth\/microsoft\/connect" title="[^"]+">Reconnect</,
     );
-    expect(html).toContain('class="reconnect-notice"');
+    // The notice comes first on the page, names the account and its provider, and starts the
+    // connect flow of that provider.
+    const notice = html.slice(html.indexOf('class="reconnect-notice"'));
+    expect(html.indexOf('class="reconnect-notice"')).toBeLessThan(html.indexOf("<h1>"));
+    expect(notice.slice(0, notice.indexOf("</div>"))).toContain(
+      "The Microsoft 365 account acc-ui-fail@example.com is no longer connected.",
+    );
+    expect(notice).toContain(
+      'href="/auth/microsoft/connect" aria-label="Reconnect acc-ui-fail@example.com">Reconnect</a>',
+    );
   });
 
   it("shows the error state after a run that failed for another reason", async () => {
@@ -860,5 +870,205 @@ describe("written IDs", () => {
     await stub.runRule(ruleId);
     expect(await stub.isOwnEcho(["created-0", "created-1"])).toBe(true);
     expect(await stub.isOwnEcho(["created-0", "other"])).toBe(false);
+  });
+});
+
+describe("accounts that need reconnecting", () => {
+  /** Token endpoint that refuses every refresh token, and an alert webhook that accepts. */
+  function refusingTokenEndpoint() {
+    const calls = { token: 0, alerts: [] as string[], other: 0 };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/oauth2/v2.0/token")) {
+        calls.token += 1;
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      if (url === env.ALERT_WEBHOOK_URL) {
+        calls.alerts.push(init?.body as string);
+        return new Response("ok");
+      }
+      calls.other += 1;
+      return new Response("unexpected", { status: 500 });
+    });
+    return calls;
+  }
+
+  async function auditCount(accountId: string, kind: string): Promise<number> {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM audit_events WHERE account_id = ? AND kind = ?",
+    )
+      .bind(accountId, kind)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  async function pendingAlarm(stub: DurableObjectStub<AccountSync>): Promise<number | null> {
+    return runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+  }
+
+  it("asks the token endpoint once, then skips provider work until the account reconnects", async () => {
+    const { stub, ruleId } = await setupRule("acc-revoked");
+    await stub.storeTokens("acc-revoked", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const calls = refusingTokenEndpoint();
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(calls.token).toBe(1);
+    const flag = await env.DB.prepare(
+      "SELECT needs_reconnect AS n FROM accounts WHERE id = 'acc-revoked'",
+    ).first<{ n: number }>();
+    expect(flag?.n).toBe(1);
+    expect(await auditCount("acc-revoked", "token_refresh_failed")).toBe(1);
+    expect(await auditOf(ruleId, "sync_failed")).toHaveLength(1);
+
+    // Further cycles: cron ticks, requested syncs and alarms do nothing.
+    await stub.tick();
+    expect(await pendingAlarm(stub)).toBeNull();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(await pendingAlarm(stub)).toBeNull();
+    // A manual run and a read from another account's rule fail without a token request.
+    await expectRejection(stub.runRule(ruleId));
+    await expectRejection(
+      stub.readSourceEvents(SOURCE_CAL, { start: new Date(), end: new Date() }, false),
+    );
+    expect(calls.token).toBe(1);
+    expect(calls.other).toBe(0);
+    // The audit log keeps the one refusal; a manual run is still recorded.
+    expect(await auditCount("acc-revoked", "token_refresh_failed")).toBe(1);
+    const failed = await auditOf(ruleId, "sync_failed");
+    expect(failed).toHaveLength(2);
+    expect(failed[1]?.detail).toEqual({ code: "token_invalid_grant" });
+  });
+
+  it("syncs again with a full cycle once the account is connected again", async () => {
+    const { stub, ruleId } = await setupRule("acc-back");
+    await stub.storeTokens("acc-back", { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    refusingTokenEndpoint();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    vi.restoreAllMocks();
+
+    // The OAuth callback stores the new tokens.
+    await stub.storeTokens("acc-back", {
+      refreshToken: "r2",
+      accessToken: "a2",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    expect(await pendingAlarm(stub)).not.toBeNull();
+    const calls = fakeGraph();
+    await runDurableObjectAlarm(stub);
+    expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(true);
+    expect((await auditOf(ruleId, "sync_run")).at(-1)?.detail).toMatchObject({ applied: 15 });
+  });
+
+  it("keeps the account connected if the refused token was replaced during the refresh", async () => {
+    const { stub } = await setupRule("acc-race-reconnect");
+    await stub.storeTokens("acc-race-reconnect", {
+      refreshToken: "old",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/oauth2/v2.0/token")) {
+        // The user connects the account again while the old token is refused.
+        await instance.storeTokens("acc-race-reconnect", {
+          refreshToken: "new",
+          accessToken: "a2",
+          accessExpiresAt: Date.now() + 3_600_000,
+        });
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expectRejection(stub.listCalendars());
+    const flag = await env.DB.prepare(
+      "SELECT needs_reconnect AS n FROM accounts WHERE id = 'acc-race-reconnect'",
+    ).first<{ n: number }>();
+    expect(flag?.n).toBe(0);
+    await stub.tick();
+    expect(await pendingAlarm(stub)).not.toBeNull();
+  });
+
+  it("forgets a retiring account at once, since it cannot remove its blocks", async () => {
+    const { stub, ruleId } = await setupRule("acc-revoked-retire");
+    await stub.storeTokens("acc-revoked-retire", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const calls = refusingTokenEndpoint();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(calls.token).toBe(1);
+
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await stub.retire();
+    await runDurableObjectAlarm(stub);
+    expect(await stub.hasTokens()).toBe(false);
+    expect(calls.token).toBe(1);
+    expect(calls.other).toBe(0);
+  });
+
+  it("posts one alert per transition to the alert webhook, without addresses", async () => {
+    const { stub } = await setupRule("acc-alert");
+    await stub.storeTokens("acc-alert", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const calls = refusingTokenEndpoint();
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(calls.alerts).toHaveLength(1);
+    const body = JSON.parse(calls.alerts[0] ?? "{}") as { text?: string };
+    expect(body.text).toContain("Microsoft 365");
+    expect(body.text).toContain(env.PUBLIC_URL);
+    expect(calls.alerts[0]).not.toContain("acc-alert");
+
+    // Connected again, then refused again: a new transition, a new alert.
+    await env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = 'acc-alert'").run();
+    await stub.storeTokens("acc-alert", {
+      refreshToken: "r2",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    await runDurableObjectAlarm(stub);
+    expect(calls.alerts).toHaveLength(2);
+  });
+
+  it("sends no alert if the account was flagged before", async () => {
+    const { stub } = await setupRule("acc-alert-old");
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-alert-old'",
+    ).run();
+    await stub.storeTokens("acc-alert-old", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const calls = refusingTokenEndpoint();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(calls.token).toBe(1);
+    expect(calls.alerts).toHaveLength(0);
   });
 });

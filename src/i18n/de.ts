@@ -181,9 +181,10 @@ export const de: Messages = {
     blockCategoryPlaceholder: "Keine Kategorie",
     blockCategoryHint:
       "Outlook zeigt eine Farbe, wenn es eine Kategorie mit diesem Namen gibt. Lege sie zuerst in Outlook an.",
-    reconnectText: (name: string) =>
-      `${name} ist nicht mehr verbunden. Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.`,
-    reconnect: (name: string) => `${name} neu verbinden`,
+    reconnectTitle: (email: string, provider: string) =>
+      `Das ${provider}-Konto ${email} ist nicht mehr verbunden.`,
+    reconnectText: "Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.",
+    reconnect: (email: string) => `${email} neu verbinden`,
     reconnectShort: "Neu verbinden",
     calendarsFrom: (name: string) => `Kalender aus ${name}:`,
     mainCalendar: "Hauptkalender",
@@ -250,6 +251,12 @@ export const de: Messages = {
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
     deleteUser: "Löschen",
     inactive: "deaktiviert",
+    needsReconnect: (count) =>
+      count === 1 ? "1 muss neu verbunden werden" : `${count} müssen neu verbunden werden`,
+    reconnectSummary: (count) =>
+      count === 1
+        ? "1 Nutzer hat ein Konto, das neu verbunden werden muss. Seine Kalender werden erst wieder synchronisiert, wenn der Nutzer es auf der Seite Konten neu verbindet."
+        : `${count} Nutzer haben Konten, die neu verbunden werden müssen. Ihre Kalender werden erst wieder synchronisiert, wenn die Nutzer sie auf der Seite Konten neu verbinden.`,
     capsTitle: "Datenschutz-Grenzen",
     capsLead:
       "Wie viel von einem Termin höchstens zwischen Firmenkalendern und privaten Kalendern wandert. Das gilt für alle in dieser Installation, auch wenn jemand in seinen Sync-Einstellungen mehr wählt.",
@@ -357,5 +364,9 @@ export const de: Messages = {
     alreadyConnected: "Bereits verbunden",
     alreadyConnectedText: (email) =>
       `${email} ist bereits von einem anderen Nutzer dieser Installation verbunden.`,
+  },
+  alerts: {
+    reconnect: (provider, url) =>
+      `slotmirror: Ein ${provider}-Konto muss neu verbunden werden. Bis sein Nutzer es neu verbindet, werden seine Kalender nicht synchronisiert. Die Verwaltungsseite zeigt die betroffenen Nutzer.${url ? ` ${url}` : ""}`,
   },
 };

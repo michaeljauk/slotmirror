@@ -123,6 +123,30 @@ describe("admin page", () => {
     // Metadata only: connected calendar addresses stay private to their user.
     expect(html).not.toContain("calendar-a@example.com");
   });
+
+  it("shows which users have accounts that need reconnecting, without the addresses", async () => {
+    const member = await signIn("owner@example.com");
+    await addAccount(member.user.id, "acc-admin-ok", "fine@example.com");
+    await addAccount(member.user.id, "acc-admin-broken", "broken@example.com");
+    const admin = await signIn("admin@example.com");
+    const page = async () =>
+      (await exports.default.fetch(`${BASE}/admin`, { headers: { cookie: admin.cookie } })).text();
+
+    expect(await page()).not.toContain("need reconnecting");
+
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-admin-broken'",
+    ).run();
+    const html = await page();
+    expect(html).toContain("1 user has an account that needs reconnecting.");
+    const row = html.slice(html.indexOf("<td>owner@example.com</td>"));
+    expect(row.slice(0, row.indexOf("</tr>"))).toContain(
+      '<span class="badge error">1 needs reconnecting</span>',
+    );
+    const adminRow = html.slice(html.indexOf("<td>admin@example.com</td>"));
+    expect(adminRow.slice(0, adminRow.indexOf("</tr>"))).not.toContain("badge error");
+    expect(html).not.toContain("broken@example.com");
+  });
 });
 
 describe("account actions", () => {

@@ -139,6 +139,39 @@ describe("Microsoft connect", () => {
     );
     expect(stored.account_id).toBe(account?.id);
   });
+
+  it("clears needs_reconnect when the same account connects again", async () => {
+    const { user, cookie: session } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-reconnect", "reconnect@example.com");
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-reconnect'",
+    ).run();
+    const flow = await startFlow("/auth/microsoft/connect", session);
+    mockTokenEndpoint({
+      access_token: "access",
+      refresh_token: "refresh",
+      expires_in: 3600,
+      id_token: fakeIdToken({ tid: "t", oid: "o3", preferred_username: "reconnect@example.com" }),
+    });
+
+    const response = await exports.default.fetch(
+      `${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`,
+      { headers: { cookie: `${flow.cookie}; ${session}` }, redirect: "manual" },
+    );
+    expect(response.status).toBe(302);
+    const { results } = await env.DB.prepare(
+      "SELECT id, needs_reconnect AS flag FROM accounts WHERE email = 'reconnect@example.com'",
+    ).all<{ id: string; flag: number }>();
+    expect(results).toEqual([{ id: "acc-reconnect", flag: 0 }]);
+    expect(await env.ACCOUNT_SYNC.getByName("acc-reconnect").hasTokens()).toBe(true);
+
+    // The dashboard no longer asks to reconnect.
+    vi.restoreAllMocks();
+    const home = await (
+      await exports.default.fetch(`${BASE}/`, { headers: { cookie: session } })
+    ).text();
+    expect(home).not.toContain("reconnect-notice");
+  });
 });
 
 describe("Microsoft connect conflicts", () => {

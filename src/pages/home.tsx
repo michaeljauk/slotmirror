@@ -1,5 +1,5 @@
 import type { AccountSyncStatus } from "../audit";
-import type { Provider } from "../config";
+import { PROVIDER_LABEL, type Provider } from "../config";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
@@ -17,12 +17,6 @@ export interface AccountRow {
   /** 1 if the provider refused the refresh token; the account has to be connected again. */
   needsReconnect: number;
 }
-
-/** Product names stay untranslated. */
-export const PROVIDER_LABEL: Record<Provider, string> = {
-  microsoft: "Microsoft 365",
-  google: "Google",
-};
 
 /** Tenant ID that Entra uses for all personal Microsoft accounts. */
 const PERSONAL_MICROSOFT_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad";
@@ -105,14 +99,14 @@ export function HomePage(props: {
   return (
     <Layout title={t.accounts.title} user={props.user} active="accounts">
       <section class="section">
+        <ReconnectNotice accounts={props.editor.accounts} />
+
         <div class="section-head">
           <div>
             <h1>{t.accounts.title}</h1>
             <p class="lead">{t.accounts.lead}</p>
           </div>
         </div>
-
-        <ReconnectNotice accounts={props.editor.accounts} />
 
         <div class="card">
           {props.accounts.length === 0 ? (
@@ -145,7 +139,11 @@ export function HomePage(props: {
                       </div>
                     </div>
                     {account.needsReconnect ? (
-                      <a class="status error" href={`/auth/${account.provider}/connect`}>
+                      <a
+                        class="status error"
+                        href={`/auth/${account.provider}/connect`}
+                        title={t.editor.reconnectText}
+                      >
                         {t.editor.reconnectShort}
                       </a>
                     ) : (

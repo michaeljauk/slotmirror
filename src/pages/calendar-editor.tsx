@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import { ACCOUNT_COLORS } from "../colors";
+import { PROVIDER_LABEL, type Provider } from "../config";
 import {
   CHOICES,
   type Choice,
@@ -104,14 +105,15 @@ export const GOOGLE_COLORS: readonly { id: string; hex: string }[] = [
 ];
 
 /**
- * A notice for every account whose connection the provider ended, with the way back. Nothing of
- * that account syncs until the user connects it again. Also shown on the accounts page.
+ * A notice for every account whose connection the provider ended, with the way back: the connect
+ * flow of its provider. Nothing of that account syncs until the user connects it again. Shown on
+ * the accounts page and on the rules page.
  */
 export function ReconnectNotice(props: {
   accounts: {
     id: string;
-    provider: "microsoft" | "google";
-    name: string;
+    provider: Provider;
+    email: string;
     needsReconnect: boolean;
   }[];
 }) {
@@ -122,9 +124,18 @@ export function ReconnectNotice(props: {
     <div class="reconnect-notice" role="alert">
       {broken.map((account) => (
         <p>
-          <span>{t.editor.reconnectText(account.name)}</span>
-          <a class="button small primary" href={`/auth/${account.provider}/connect`}>
-            {t.editor.reconnect(account.name)}
+          <span>
+            <strong>
+              {t.editor.reconnectTitle(account.email, PROVIDER_LABEL[account.provider])}
+            </strong>{" "}
+            {t.editor.reconnectText}
+          </span>
+          <a
+            class="button small primary"
+            href={`/auth/${account.provider}/connect`}
+            aria-label={t.editor.reconnect(account.email)}
+          >
+            {t.editor.reconnectShort}
           </a>
         </p>
       ))}

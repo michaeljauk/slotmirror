@@ -143,6 +143,7 @@ describe("cleanup", () => {
     const queue = await runInDurableObject(stub, (_instance, state) =>
       state.storage.get<{ ruleId: string; attempts: number }[]>("removalQueue"),
     );
-    expect(queue).toEqual([expect.objectContaining({ ruleId, attempts: 1 })]);
+    // 503 counts as throttling: the job waits for Retry-After and uses up no attempt.
+    expect(queue).toEqual([expect.objectContaining({ ruleId, attempts: 0 })]);
   });
 });

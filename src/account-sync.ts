@@ -56,6 +56,12 @@ const DEBOUNCE_MS = 5_000;
 /** Durable Object storage key of the rules still to run in the current cycle. */
 const RULE_QUEUE_KEY = "ruleQueue";
 
+/**
+ * Durable Object storage key: a sync was requested while the rule queue was not empty. The rules
+ * that already ran in that cycle missed the change, so a full cycle follows once the queue is done.
+ */
+const CYCLE_AGAIN_KEY = "fullCycleRequested";
+
 /** Durable Object storage key: event IDs this instance wrote recently, with the time. */
 const RECENT_WRITES_KEY = "recentWrites";
 
@@ -193,18 +199,29 @@ export class AccountSync extends DurableObject<Env> {
   private sourceCache = new Map<string, { at: number; events: Promise<SourceEvent[]> }>();
   /** The last queued provider call. See `client()`. */
   private providerQueue: Promise<unknown> = Promise.resolve();
+  /**
+   * Real rule runs in progress, by rule ID. In memory is enough: requests to one instance share it,
+   * and a new instance has no run in progress.
+   */
+  private runningRules = new Map<string, Promise<RunResult>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () => this.migrate());
   }
 
-  /** Ask for a sync soon. Repeated calls before the alarm fires do not move it. */
+  /**
+   * Ask for a sync soon. Repeated calls before the alarm fires do not move it. During a cycle, the
+   * alarm goes on with the queue, and one full cycle follows for all calls together.
+   */
   async requestSync(): Promise<void> {
     // A new cycle starts from the provider's current data.
     this.sourceCache.clear();
     const pending = await this.pendingAlarm();
     await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
+    if (((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0) {
+      await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
+    }
     if (pending === null) {
       await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
     }
@@ -615,6 +632,19 @@ export class AccountSync extends DurableObject<Env> {
    * write nothing.
    */
   async runRule(ruleId: string, options: { dryRun?: boolean } = {}): Promise<RunResult> {
+    if (options.dryRun) return this.runRuleOnce(ruleId, options);
+    // Two runs that overlap would plan the same creates and write every block twice, for example
+    // after a double click on "Run" or a click while the alarm runs the rule. A second run gets the
+    // result of the first instead, so that "Run" reports what was written. A dry run writes
+    // nothing and never joins a real run.
+    const current = this.runningRules.get(ruleId);
+    if (current) return current;
+    const run = this.runRuleOnce(ruleId, options).finally(() => this.runningRules.delete(ruleId));
+    this.runningRules.set(ruleId, run);
+    return run;
+  }
+
+  private async runRuleOnce(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
     try {
       return await this.executeRule(ruleId, options);
     } catch (error) {
@@ -855,6 +885,9 @@ export class AccountSync extends DurableObject<Env> {
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
+      // This cycle covers every request so far. Cleared before the queue is stored: a request
+      // in between finds an empty queue, and this cycle reads the calendars after it.
+      await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
       const all = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
       // Stored before the run, so that the end of the run reads the whole cycle back.
       // A tick may have queued some rules meanwhile; the full cycle still runs all of them.
@@ -898,7 +931,12 @@ export class AccountSync extends DurableObject<Env> {
     if (next.length > 0) {
       await this.setSyncAlarm(Date.now() + delayMs);
     } else {
-      // The cycle is done: check the watches once per cycle, with the rest of the budget.
+      // A sync requested during the cycle starts a full cycle with the next alarm.
+      if (await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) {
+        await this.setSyncAlarm(Date.now() + delayMs);
+      }
+      // The cycle is done: check the watches once per cycle, with the rest of the budget. Also
+      // before a further cycle, so that a steady stream of changes cannot let the watches expire.
       await this.ensureWatchesSafely();
     }
   }

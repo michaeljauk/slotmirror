@@ -363,6 +363,33 @@ describe("echo filter", () => {
     expect(await alarmOf(a)).toBeNull();
   });
 
+  it("runs no further cycle for a notification about its own writes during a cycle", async () => {
+    const { b } = await setup("ecycle");
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("recentWrites", { "block-1": Date.now() });
+      await state.storage.put("ruleQueue", ["ecycle-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ value: [] }));
+    const marked = () =>
+      runInDurableObject(target, (_instance, state) => state.storage.get("fullCycleRequested"));
+
+    await notifyGraph(b, "block-1");
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(await marked()).toBeUndefined();
+    expect(await alarmOf(b)).toBeNull();
+
+    // A notification about another change during a cycle asks for one more.
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("ruleQueue", ["ecycle-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    await notifyGraph(b, "someone-elses-meeting");
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(await marked()).toBe(true);
+  });
+
   /**
    * The first account as a Google account with a watched calendar, a stored sync token and one
    * block written just now. The feed answers each events.list with the next of `pages`.

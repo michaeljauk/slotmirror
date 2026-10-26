@@ -59,7 +59,7 @@ export const en = {
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
     disconnectText: (email: string) =>
-      `slotmirror deletes its tokens for ${email} and stops reading and writing its calendars.`,
+      `slotmirror removes the blocks it wrote into the calendars of ${email}, then deletes its tokens and stops reading and writing these calendars.`,
     disconnectRules: (count: number) =>
       count === 0
         ? "No rule uses this account."
@@ -232,7 +232,7 @@ export const en = {
       "On Cloudflare Workers, D1 and Durable Objects in the operator's Cloudflare account, and at Microsoft and Google when calendars are read and written.",
     deleteTitle: "How to delete your data",
     delete:
-      "Disconnecting an account deletes its tokens and the blocks slotmirror wrote for it. To delete your user and all its data, use “Delete my data” in the account menu.",
+      "Disconnecting an account deletes the blocks slotmirror wrote for it, then its tokens. To delete your user and all its data, use “Delete my data” in the account menu.",
     googleTitle: "Google user data",
     google:
       "slotmirror's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",

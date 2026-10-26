@@ -190,6 +190,10 @@ to 7 days and Google channels until Google ends them; the cron renews both a day
 expire. Every 10 minutes the cron also syncs calendars without an active subscription. Once an
 hour it syncs every rule, so a missed notification costs at most one hour.
 
+A notification about blocks slotmirror just wrote starts no sync. Microsoft names the changed
+events in the notification. Google does not, so slotmirror reads the calendar's change feed, which
+returns only event IDs, and compares them with its own recent writes.
+
 Each notification carries a token that only your deployment can compute, an HMAC of the account
 with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `SESSION_SECRET`, the
 existing subscriptions no longer match until they expire and are created again, which can take up

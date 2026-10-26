@@ -1,6 +1,7 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AccountSync } from "../src/account-sync";
 import { webhookToken, webhookUrl } from "../src/webhooks";
 import { BASE, signIn } from "./helpers";
 
@@ -204,5 +205,285 @@ describe("echo filter", () => {
 
     await notify("someone-elses-meeting");
     expect(await alarmOf(a)).not.toBeNull();
+  });
+
+  /**
+   * The first account as a Google account with a watched calendar, a stored sync token and one
+   * block written just now. The feed answers each events.list with the next of `pages`.
+   */
+  async function setupGoogle(prefix: string, pages: (() => Response)[]) {
+    const { a, b } = await setup(prefix);
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    await stub.storeTokens(
+      a,
+      { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() + 3_600_000 },
+      "google",
+    );
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO subscriptions (remote_id, calendar_id, resource_id, expires_at) VALUES (?, ?, ?, ?)",
+        "channel-1",
+        `${a}-remote`,
+        "resource-1",
+        Date.now() + 86_400_000,
+      );
+      await state.storage.put(`syncToken:${a}-remote`, "token-1");
+      await state.storage.put("recentWrites", { "block-1": Date.now() });
+    });
+    const urls: URL[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(new URL(input instanceof Request ? input.url : String(input)));
+      const page = pages.shift();
+      return page ? page() : new Response("unexpected", { status: 500 });
+    });
+    const notify = async (channel = "channel-1") =>
+      exports.default.fetch(`${BASE}/webhooks/google?account=${a}`, {
+        method: "POST",
+        headers: {
+          "x-goog-resource-state": "exists",
+          "x-goog-channel-id": channel,
+          "x-goog-channel-token": await webhookToken(env, a),
+        },
+      });
+    const storedToken = () =>
+      runInDurableObject(stub, (_instance, state) =>
+        state.storage.get<string>(`syncToken:${a}-remote`),
+      );
+    return { a, b, stub, urls, notify, storedToken };
+  }
+
+  const feed = (ids: string[], nextSyncToken: string) => () =>
+    Response.json({ items: ids.map((id) => ({ id })), nextSyncToken });
+
+  it("skips a Google notification if the feed shows only blocks this deployment just wrote", async () => {
+    const { a, b, stub, urls, notify, storedToken } = await setupGoogle("gecho", [
+      feed(["block-1"], "token-2"),
+    ]);
+    // The webhook only notes the calendar; an alarm reads the feed.
+    expect((await notify()).status).toBe(200);
+    expect(urls).toHaveLength(0);
+    expect(await alarmOf(b)).toBeNull();
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(urls[0]?.searchParams.get("syncToken")).toBe("token-1");
+    expect(urls[0]?.searchParams.get("fields")).toBe("nextPageToken,nextSyncToken,items(id)");
+    expect(await storedToken()).toBe("token-2");
+    // Neither a cycle here nor in the account that reads the calendar.
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("syncs both accounts if the feed shows another change", async () => {
+    const { a, b, stub, notify, storedToken } = await setupGoogle("gother", [
+      feed(["block-1", "users-meeting"], "token-2"),
+    ]);
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(await storedToken()).toBe("token-2");
+    expect(await alarmOf(a)).not.toBeNull();
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("reads the feed once for a burst of notifications", async () => {
+    const { stub, urls, notify } = await setupGoogle("gburst", [feed(["block-1"], "token-2")]);
+    await Promise.all([notify(), notify(), notify()]);
+    expect(
+      await runInDurableObject(stub, (_instance, state) =>
+        state.storage.get<string[]>("changedCalendars"),
+      ),
+    ).toEqual(["gburst-a-remote"]);
+    await runDurableObjectAlarm(stub);
+    expect(urls).toHaveLength(1);
+  });
+
+  it("keeps a sync that was requested after the notification", async () => {
+    const { a, stub, notify } = await setupGoogle("gafter", [feed(["block-1"], "token-2")]);
+    await notify();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).not.toBeNull();
+  });
+
+  it("queues the calendar again if a notification arrives while its feed is read", async () => {
+    const { a, b, stub } = await setupGoogle("gduring", []);
+    await runInDurableObject(stub, async (instance: AccountSync, state) => {
+      await instance.googleChanged("channel-1");
+      vi.mocked(globalThis.fetch).mockImplementation(async () => {
+        // The user changes an event after Google listed the feed.
+        await instance.googleChanged("channel-1");
+        return feed(["block-1"], "token-2")();
+      });
+      await instance.alarm();
+      expect(await state.storage.get("changedCalendars")).toEqual([`${a}-remote`]);
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("keeps a sync that was requested before the notification", async () => {
+    const { a, stub, notify } = await setupGoogle("gpending", [feed(["block-1"], "token-2")]);
+    await stub.requestSync();
+    await notify();
+    await runDurableObjectAlarm(stub);
+    // The echo needs no sync, but the requested cycle still follows in the next alarm.
+    expect(await alarmOf(a)).not.toBeNull();
+  });
+
+  it("syncs and starts a new feed from the start of the day if Google expired the token", async () => {
+    const { b, stub, urls, notify, storedToken } = await setupGoogle("ggone", [
+      () => Response.json({ error: { code: 410 } }, { status: 410 }),
+      feed(["future-event"], "token-new"),
+    ]);
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(urls[1]?.searchParams.has("syncToken")).toBe(false);
+    expect(urls[1]?.searchParams.get("timeMin")).toMatch(/T00:00:00\.000Z$/);
+    expect(await storedToken()).toBe("token-new");
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("waits for Retry-After if the feed read is throttled, then reads again", async () => {
+    const { a, b, stub, urls, notify, storedToken } = await setupGoogle("gthrottle", [
+      () =>
+        Response.json(
+          { error: { code: 403, errors: [{ reason: "rateLimitExceeded" }] } },
+          { status: 403, headers: { "Retry-After": "30" } },
+        ),
+      feed(["block-1"], "token-2"),
+    ]);
+    await notify();
+    const before = Date.now();
+    await runDurableObjectAlarm(stub);
+    expect(await storedToken()).toBe("token-1");
+    expect(await alarmOf(b)).toBeNull();
+    expect(await alarmOf(a)).toBeGreaterThanOrEqual(before + 30_000);
+
+    await runDurableObjectAlarm(stub);
+    expect(urls).toHaveLength(2);
+    expect(await storedToken()).toBe("token-2");
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("syncs if the feed cannot be read, and keeps the token", async () => {
+    const { b, stub, notify, storedToken } = await setupGoogle("gfail", [
+      () => new Response("broken", { status: 500 }),
+    ]);
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(await storedToken()).toBe("token-1");
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("recognises the feed entries of blocks a rule just wrote as echoes", async () => {
+    const { a, b, stub, urls, notify } = await setupGoogle("gwrite", []);
+    // A second calendar of the Google account mirrors into the watched one.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'second-remote', 'Second', 1, 0, 1)",
+      ).bind(`${a}-second`, a),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'gwrite-inner', user_id, ?, ? FROM rules WHERE id = 'gwrite-rule'",
+      ).bind(`${a}-second`, `${a}-cal`),
+    ]);
+    const start = new Date(Date.now() + 86_400_000);
+    const end = new Date(start.getTime() + 3_600_000);
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      urls.push(url);
+      if (url.pathname.startsWith("/batch/")) {
+        return new Response(
+          [
+            "--r",
+            "Content-ID: <response-item0>",
+            "",
+            "HTTP/1.1 200 OK",
+            "Content-Type: application/json",
+            "",
+            '{"id":"written-1"}',
+            "--r--",
+          ].join("\r\n"),
+          { headers: { "content-type": "multipart/mixed; boundary=r" } },
+        );
+      }
+      if (url.searchParams.has("syncToken")) return feed(["written-1"], "token-2")();
+      if (url.pathname.includes("/calendars/second-remote/events")) {
+        return Response.json({
+          items: [
+            {
+              id: "meeting-1",
+              start: { dateTime: start.toISOString() },
+              end: { dateTime: end.toISOString() },
+            },
+          ],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+
+    const result = await stub.runRule("gwrite-inner");
+    expect(result.applied).toBe(1);
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(urls.some((url) => url.searchParams.get("syncToken") === "token-1")).toBe(true);
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("keeps the rest of a throttled rule run that follows a notification", async () => {
+    const { a, stub, notify } = await setupGoogle("gthrottled-run", []);
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'second-remote', 'Second', 1, 0, 1)",
+      ).bind(`${a}-second`, a),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'gthrottled-run-inner', user_id, ?, ? FROM rules WHERE id = 'gthrottled-run-rule'",
+      ).bind(`${a}-second`, `${a}-cal`),
+    ]);
+    const start = new Date(Date.now() + 86_400_000);
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.startsWith("/batch/")) {
+        return new Response(
+          [
+            "--r",
+            "Content-ID: <response-item0>",
+            "",
+            "HTTP/1.1 403 Forbidden",
+            "Content-Type: application/json",
+            "",
+            '{"error":{"code":403,"errors":[{"reason":"rateLimitExceeded"}]}}',
+            "--r--",
+          ].join("\r\n"),
+          { headers: { "content-type": "multipart/mixed; boundary=r" } },
+        );
+      }
+      if (url.searchParams.has("syncToken")) return feed([], "token-2")();
+      if (url.pathname.includes("/calendars/second-remote/events")) {
+        return Response.json({
+          items: [
+            {
+              id: "meeting-1",
+              start: { dateTime: start.toISOString() },
+              end: { dateTime: new Date(start.getTime() + 3_600_000).toISOString() },
+            },
+          ],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+
+    // The notification sets an alarm for the feed only; the run started by hand then needs it too.
+    await notify();
+    const result = await stub.runRule("gthrottled-run-inner");
+    expect(result.remaining).toBe(1);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).not.toBeNull();
+  });
+
+  it("syncs on a notification from an unknown channel without reading the feed", async () => {
+    const { b, urls, notify } = await setupGoogle("gchannel", []);
+    await notify("channel-unknown");
+    expect(urls).toHaveLength(0);
+    expect(await alarmOf(b)).not.toBeNull();
   });
 });

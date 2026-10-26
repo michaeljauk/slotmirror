@@ -1,6 +1,12 @@
 import type { ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
 import type { BatchResult } from "../sync/throttle";
-import type { CalendarClient, CalendarInfo, TimeWindow, Watch } from "./calendar-client";
+import type {
+  CalendarClient,
+  CalendarInfo,
+  ChangeFeed,
+  TimeWindow,
+  Watch,
+} from "./calendar-client";
 
 /**
  * A calendar provider for local load tests, only with DEV_FAKE_CALENDARS=1. Each account's events
@@ -121,6 +127,10 @@ export class FakeCalendar implements CalendarClient {
 
   async unwatch(): Promise<void> {
     await this.call("unwatch");
+  }
+
+  changesSince(): Promise<ChangeFeed | null> {
+    return Promise.resolve(null);
   }
 
   private blocks(calendarId: string, window: TimeWindow): ExistingBlock[] {

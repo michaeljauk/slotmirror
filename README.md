@@ -2,61 +2,82 @@
 
 # slotmirror
 
-Mirror busy blocks between Microsoft 365 and Google calendars. Self-hosted on Cloudflare Workers,
-runs on the Workers Free plan.
+Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
+from one calendar into your others as "Busy" blocks, or with as much detail as you choose. It
+supports Microsoft 365 and Google Calendar and runs in your own Cloudflare account, on the free
+plan.
 
-> **Status: early development.** Sign-in, connecting Microsoft 365 accounts, users and roles
-> work. The sync itself is in progress; do not use this for real calendars yet.
+It is for people with more than one calendar: consultants with client tenants, founders with two
+companies, anyone with a work and a private calendar. You host it yourself, so your calendar
+tokens stay with you and not with a sync service.
+
+> **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
+> so settings and the database can still change between releases.
+
+![The calendar editor: one card per calendar, and an overview of all directions](docs/images/editor.png)
 
 ## What it does
 
-If you work in more than one calendar (two Microsoft 365 tenants, a work and a private Google
-account, or a mix), colleagues only see the calendar they share a tenant with. slotmirror reads
-your events in one calendar and writes matching blocks into the others.
+- **One group for the common case.** Put your calendars in the block group, and each sees the
+  others only as "Busy", marked private.
+- **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
+  with title, or everything. An example event shows the result before you save.
+- **Several calendars per account.** Next to the main calendar you can add others, such as a
+  subscribed team schedule. Targets are always the main calendars.
+- **Changes within seconds.** Microsoft and Google notify your deployment when a calendar
+  changes. A sync every 10 minutes catches anything a notification missed.
+- **Recurring events are exact.** Each occurrence is mirrored on its own, so a moved or
+  cancelled single occurrence moves or removes its block.
+- **Only differences are written.** Every run compares what each target should contain with what
+  it does contain. Blocks are never rebuilt.
+- **Privacy limits for teams.** An admin can cap how much moves between work calendars and
+  private ones, for example at most "busy" from private to work.
+- **EU data location.** Tokens and the sync itself can stay in the EU.
+- **Audit log.** Sign-ins, changes and sync runs with counts and error codes, never event content.
+- **English and German.**
 
-- **You choose the detail per direction.** Work events can arrive in your private calendar with
-  title and location, while private events arrive in your work calendar only as "Busy", marked
-  private. The default is "Busy" only.
-- **Recurring events are exact.** Every occurrence of a series is mirrored on its own, so a moved
-  or cancelled single occurrence moves or removes its block.
-- **Every run compares the full window.** slotmirror checks what each target calendar should
-  contain and fixes any difference, instead of trusting that it saw every change. Only differences
-  are written; blocks are never rebuilt.
-- **You can see what happened.** The status shows numbers, not just "success", and an audit log
-  records every block it created, moved or deleted, without event content.
-- **You run your own copy** in your own Cloudflare account, on the Free plan. Nobody else holds your
-  tokens. One deployment serves one person or a whole team.
+## Quickstart
 
-```mermaid
-flowchart LR
-  subgraph Source["Source calendar (e.g. work, Microsoft 365)"]
-    E["Event: Client call 10:00-11:00"]
-  end
-  subgraph Worker["Your Cloudflare Worker"]
-    R["Rule: work -> private<br/>detail: busy, private"]
-    S[("Durable Object per account<br/>encrypted tokens, mapping")]
-  end
-  subgraph Target["Target calendar (e.g. private, Google)"]
-    B["Busy 10:00-11:00 (private)"]
-  end
-  E -- "Graph calendarView" --> R --> B
-  R <--> S
+### Deploy to Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+
+The button creates the Worker, the D1 database and the Durable Object in your account and asks
+for the secrets. Then:
+
+1. Create an Entra app registration, a Google OAuth client, or both (see below).
+2. Set `ALLOWED_EMAILS` to your address, or `ALLOWED_DOMAINS` for a team, and `ADMIN_EMAILS`.
+3. Set `PUBLIC_URL` to your Worker's address to turn on push notifications.
+4. Open the Worker's address, sign in, connect your calendars, and choose where events go.
+
+Until all required settings are present, every page shows a checklist of what is missing.
+
+### Manual deploy
+
+```sh
+git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
+pnpm install
+pnpm wrangler login
+pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
+# copy the database_id into wrangler.jsonc, set the variables there
+pnpm wrangler secret put SESSION_SECRET       # openssl rand -base64 48
+pnpm wrangler secret put TOKEN_ENCRYPTION_KEY # openssl rand -base64 32
+pnpm wrangler secret put MICROSOFT_CLIENT_ID  # and the other client secrets you use
+pnpm run deploy                               # applies the migrations, then deploys
 ```
 
-## Deploy
+## Screens
 
-<!-- The button URL needs the public repository URL. -->
+| Accounts                                        | Settings for all calendars                 |
+| ----------------------------------------------- | ------------------------------------------ |
+| ![Connected accounts](docs/images/accounts.png) | ![Sync settings](docs/images/settings.png) |
 
-Requirements:
+![A source card with several calendars of one account](docs/images/source-calendars.png)
 
-- A Cloudflare account. The Free plan is enough.
-- For Microsoft 365: an app registration in Microsoft Entra ID (steps below).
-- For Google Calendar: an OAuth client in Google Cloud (steps below).
-
-### Settings
+## Settings
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars
-and sets their own rules. Nobody sees another user's calendars.
+and makes their own choices. Nobody sees another user's calendars.
 
 | Name                              | Kind     | Purpose                                                                                    |
 | --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
@@ -92,18 +113,35 @@ contents, stay in the EU. Create the D1 database in the EU too:
 `wrangler d1 create slotmirror --jurisdiction=eu`. Neither setting can change for existing
 data. Changing `DATA_JURISDICTION` later disconnects every account.
 
-Until all required settings are present, every dashboard page shows a setup checklist. The
-checklist names missing settings and never shows values.
-
 ### Microsoft Entra app registration
 
-_To be written._ It needs a web redirect URI on your Worker domain and the delegated permissions
-`Calendars.ReadWrite`, `User.Read` and `offline_access`.
+1. In the Microsoft Entra admin center, open **App registrations** and choose **New
+   registration**.
+2. Supported account types: **Accounts in any organizational directory and personal Microsoft
+   accounts**. Choose a single tenant only if every calendar is in your tenant.
+3. Redirect URI: platform **Web**, `https://<your-worker>/auth/microsoft/callback`.
+4. Under **API permissions**, add the delegated Microsoft Graph permissions `openid`, `email`,
+   `profile`, `offline_access`, `User.Read` and `Calendars.ReadWrite`. Users can consent to these
+   themselves unless your tenant blocks user consent.
+5. Under **Certificates & secrets**, create a client secret. Note when it expires; the sync stops
+   when it does.
+6. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET`.
 
 ### Google OAuth client
 
-_To be written._ Set the OAuth consent screen to **In production**. In **Testing**, Google
-expires refresh tokens after 7 days.
+1. In the Google Cloud console, create a project and enable the **Google Calendar API**.
+2. In **Google Auth Platform**, fill in **Branding**: app name, your Worker's address as home
+   page, `https://<your-worker>/privacy` as privacy policy, and your Worker's domain as authorized
+   domain.
+3. Under **Data access**, add the scopes `openid`, `email`, `profile`,
+   `https://www.googleapis.com/auth/calendar.events` and
+   `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
+4. Under **Audience**, publish the app to **In production**. In **Testing**, Google expires
+   refresh tokens after 7 days. Until Google verifies the app, users see a warning that the app
+   is not verified; for your own deployment you can continue past it.
+5. Under **Clients**, create a **Web application** client with the redirect URI
+   `https://<your-worker>/auth/google/callback`.
+6. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 
 ## Push notifications
 
@@ -118,7 +156,18 @@ with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `S
 existing subscriptions no longer match until they expire and are created again, which can take up
 to 7 days. The cron keeps syncing every 10 minutes in the meantime.
 
-## Free plan limits
+## Limits
+
+- **Microsoft 365 and Google only.** iCloud and other CalDAV calendars are not supported yet.
+- **Targets are main calendars.** Blocks go into each account's main calendar, not into other
+  calendars of the account.
+- **Past blocks stay.** The sync looks from today forward. When you delete a rule, its blocks
+  from today on are removed; blocks before today stay as history.
+- **Free plan quotas.** See below. A large team needs Workers Paid.
+- **Unverified Google app.** Until you have Google verify your OAuth client, Google shows a
+  warning when someone connects a Google account.
+
+### Free plan limits
 
 The Workers Free plan allows 10 ms CPU time and 50 subrequests per invocation. slotmirror
 splits each sync into one step per rule direction, so that a step stays inside these limits.
@@ -126,7 +175,7 @@ The daily quotas (100,000 Worker requests, 100,000 Durable Object requests) cove
 small team. Each connected account needs a few hundred requests a day, so a large team needs
 Workers Paid ($5/month).
 
-## Provider rate limits
+### Provider rate limits
 
 Microsoft and Google throttle a client that sends too many requests. slotmirror stays inside
 their limits and recovers when it is throttled.
@@ -163,15 +212,31 @@ pnpm dev
 
 ### Architecture
 
+```mermaid
+flowchart LR
+  subgraph Source["Source calendar (e.g. work, Microsoft 365)"]
+    E["Event: Client call 10:00-11:00"]
+  end
+  subgraph Worker["Your Cloudflare Worker"]
+    R["Rule: work -> private<br/>detail: busy, private"]
+    S[("Durable Object per account<br/>encrypted tokens, watches")]
+  end
+  subgraph Target["Target calendar (e.g. private, Google)"]
+    B["Busy 10:00-11:00 (private)"]
+  end
+  E -- "notification, then Graph calendarView" --> R --> B
+  R <--> S
+```
+
 - **Worker (Hono):** dashboard pages rendered with Hono JSX, OAuth callbacks, webhook endpoints,
   cron trigger.
-- **D1:** orgs, users, accounts, calendars, rules and sync runs (`migrations/`). A self-hosted
-  deployment has one org; its access policy follows the variables above.
-- **Durable Object `AccountSync`, one per connected account:** encrypted tokens, webhook
-  subscriptions and the queue of rules to run. A rule runs in the instance of its target account
-  and reads busy times from the source account's instance. Each block carries a marker with the
-  rule and the source occurrence, so the target calendar itself records which blocks exist. No
-  mapping table can drift.
+- **D1:** orgs, users, accounts, calendars, rules and the audit log (`migrations/`). A
+  self-hosted deployment has one org; its access policy follows the variables above.
+- **Durable Object `AccountSync`, one per connected account:** encrypted tokens, the provider
+  watches and the queue of rules to run. A rule runs in the instance of its target account and
+  reads events from the source account's instance. Each block carries a marker with the rule and
+  the source occurrence, so the target calendar itself records which blocks exist. No mapping
+  table can drift.
 
 ## Contributing and security
 

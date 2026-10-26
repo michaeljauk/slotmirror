@@ -1,0 +1,623 @@
+---
+import { Image } from "astro:assets";
+import editor from "../../../docs/images/editor.png";
+import "../styles/home.css";
+
+const repo = "https://github.com/michaeljauk/slotmirror";
+const deploy = `https://deploy.workers.cloudflare.com/?url=${repo}`;
+const title = "slotmirror: calendar sync that keeps up with moved meetings";
+const description =
+  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Moved meetings move their copies within seconds. Runs in your own Cloudflare account, on the free plan.";
+
+// Links inside the site. The base comes from astro.config.mjs, the only place that sets it.
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const page = (path: string) => `${base}/${path}`;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const preview = new URL(page("social-preview.png"), Astro.site);
+const analyticsToken = import.meta.env.PUBLIC_CF_ANALYTICS_TOKEN;
+
+const guides = [
+  {
+    slug: "sync-outlook-and-google-calendar",
+    title: "Sync Outlook and Google Calendar",
+    text: "Busy blocks or titles, in both directions.",
+  },
+  {
+    slug: "show-private-calendar-as-busy-at-work",
+    title: "Show your private calendar as busy at work",
+    text: "Block the time without showing what it is.",
+  },
+  {
+    slug: "sync-multiple-microsoft-365-tenants",
+    title: "Sync calendars across Microsoft 365 tenants",
+    text: "Two companies, or client tenants.",
+  },
+  {
+    slug: "block-team-or-club-calendar",
+    title: "Block time for a team or club schedule",
+    text: "A subscribed calendar becomes busy blocks.",
+  },
+];
+
+// release-please writes CHANGELOG.md at the repository root with the first release.
+const changelogs = import.meta.glob<string>("../../../CHANGELOG.md", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+const changelog = Object.values(changelogs)[0] ?? "";
+const latest = /^##\s+\[?(\d+\.\d+\.\d+)\]?(?:\([^)]*\))?\s*\((\d{4}-\d{2}-\d{2})\)/m.exec(
+  changelog,
+);
+
+const microsoft = `<svg viewBox="0 0 21 21" aria-hidden="true"><rect width="10" height="10" fill="#f25022"/><rect x="11" width="10" height="10" fill="#7fba00"/><rect y="11" width="10" height="10" fill="#00a4ef"/><rect x="11" y="11" width="10" height="10" fill="#ffb900"/></svg>`;
+const google = `<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.3 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.8-6C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.7l7.8-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.3 0-11.7-4.1-13.6-9.8l-7.8 6C6.6 42.6 14.6 48 24 48z"/></svg>`;
+const github = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>`;
+const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 15.9c.16-.55.1-1.06-.17-1.43-.25-.35-.66-.55-1.16-.57l-9.47-.12a.19.19 0 0 1-.15-.08.2.2 0 0 1-.02-.17.26.26 0 0 1 .22-.17l9.56-.12c1.13-.05 2.36-.97 2.79-2.09l.55-1.42a.33.33 0 0 0 .01-.19 6.23 6.23 0 0 0-11.97-.65 2.8 2.8 0 0 0-4.42 2.93A3.98 3.98 0 0 0 0 15.8c0 .2.02.39.04.58a.19.19 0 0 0 .18.16h17.5a.24.24 0 0 0 .22-.17l.13-.47Zm3.03-6.1h-.27a.16.16 0 0 0-.15.12l-.37 1.29c-.16.55-.1 1.06.17 1.43.25.35.66.55 1.16.57l2.02.12a.18.18 0 0 1 .14.08.2.2 0 0 1 .02.17.26.26 0 0 1-.22.17l-2.1.12c-1.14.05-2.37.97-2.8 2.09l-.15.4a.11.11 0 0 0 .1.15h7.22a.19.19 0 0 0 .18-.14 5.17 5.17 0 0 0-4.95-6.57Z"/></svg>`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href={page("favicon.svg")} type="image/svg+xml" />
+    <link rel="sitemap" href={page("sitemap-index.xml")} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="slotmirror" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={preview} />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={preview} />
+    <script is:inline>
+      // Theme: follows the system setting until the visitor picks one with the icon button.
+      // It shares the storage key and the data-theme attribute with Starlight, so the choice
+      // carries over to the docs. Inline in <head>, so that the first paint has the right theme.
+      (() => {
+        const root = document.documentElement;
+        const KEY = "starlight-theme";
+        const system = matchMedia("(prefers-color-scheme: dark)");
+        const icon = (body) =>
+          `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+        const SUN = icon(
+          '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+        );
+        const MOON = icon('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>');
+        let stored = null;
+        try {
+          stored = localStorage.getItem(KEY);
+        } catch {}
+        if (stored !== "dark" && stored !== "light") stored = null;
+        function render() {
+          const dark = root.dataset.theme === "dark";
+          const label = dark ? "Switch to light mode" : "Switch to dark mode";
+          for (const button of document.querySelectorAll("[data-theme-toggle]")) {
+            // In dark mode the button offers the sun (go light), in light mode the moon.
+            button.innerHTML = dark ? SUN : MOON;
+            button.setAttribute("aria-label", label);
+            button.title = label;
+          }
+        }
+        function apply(theme) {
+          root.dataset.theme = theme;
+          render();
+        }
+        root.dataset.theme = stored ?? (system.matches ? "dark" : "light");
+        system.addEventListener("change", (event) => {
+          if (!stored) apply(event.matches ? "dark" : "light");
+        });
+        document.addEventListener("DOMContentLoaded", render);
+        document.addEventListener("click", (event) => {
+          if (!event.target.closest("[data-theme-toggle]")) return;
+          stored = root.dataset.theme === "dark" ? "light" : "dark";
+          try {
+            localStorage.setItem(KEY, stored);
+          } catch {}
+          apply(stored);
+        });
+      })();
+    </script>
+    {
+      analyticsToken ? (
+        <script
+          is:inline
+          defer
+          src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon={JSON.stringify({ token: analyticsToken })}
+        />
+      ) : null
+    }
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href={page("")}>
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <defs>
+              <pattern
+                id="logo-hatch"
+                width="5"
+                height="5"
+                patternUnits="userSpaceOnUse"
+                patternTransform="rotate(45)"><rect width="2.4" height="5" fill="currentColor"
+                ></rect></pattern
+              >
+            </defs>
+            <g fill="none" stroke="currentColor" stroke-width="4">
+              <rect x="5" y="7" width="23" height="50" rx="6"></rect>
+              <rect x="36" y="7" width="23" height="50" rx="6"></rect>
+            </g>
+            <rect x="10.5" y="22" width="12" height="18" rx="3" fill="var(--accent)"></rect>
+            <rect x="41.5" y="22" width="12" height="18" rx="3" fill="url(#logo-hatch)"></rect>
+          </svg>
+          slotmirror
+        </a>
+        <nav class="links" aria-label="Main">
+          <a href={page("docs/introduction/")} class="hide-sm">Docs</a>
+          <a href="#guides" class="hide-sm">Guides</a>
+          <a href={page("changelog/")} class="hide-sm">Changelog</a>
+          <a href={repo}>GitHub</a>
+          <button class="theme" data-theme-toggle type="button" aria-label="Switch theme"></button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap hero">
+        <div>
+          <h1>The calendar sync that keeps up with moved meetings.</h1>
+          <p class="sub">
+            Move a meeting in one calendar, and its busy copies move in all the others within
+            seconds. Microsoft 365 and Google, self-hosted on Cloudflare.
+          </p>
+          <div class="buttons">
+            <a class="button primary" href={deploy}
+              ><Fragment set:html={cloudflare} />Deploy to Cloudflare</a
+            >
+            <a class="button" href={repo}><Fragment set:html={github} />View on GitHub</a>
+          </div>
+          <p class="note">Runs on the Cloudflare Workers free plan · MIT licence</p>
+        </div>
+
+        <div class="demo" role="region" aria-label="Interactive demo">
+          <div class="demo-head">
+            <span>Drag the <b style="color:var(--work)">Client call</b> in Work, or</span>
+            <button class="move" id="move" type="button">Move to 14:00</button>
+            <span class="status" id="status" aria-live="polite"
+              ><span class="dot"></span><span id="status-text">In sync</span></span
+            >
+          </div>
+          <div class="cals-wrap">
+            <div class="cals">
+              <div><div class="cal-name">&nbsp;</div><div class="hours" id="hours"></div></div>
+              <div style="--c:var(--work)">
+                <div class="cal-name"><i></i><Fragment set:html={microsoft} />Work</div>
+                <div class="cal" data-cal="work"></div>
+              </div>
+              <div style="--c:var(--client)">
+                <div class="cal-name"><i></i><Fragment set:html={microsoft} />Client</div>
+                <div class="cal" data-cal="client"></div>
+              </div>
+              <div style="--c:var(--private)">
+                <div class="cal-name"><i></i><Fragment set:html={google} />Private</div>
+                <div class="cal" data-cal="private"></div>
+              </div>
+            </div>
+            <svg class="arcs" id="arcs" aria-hidden="true"></svg>
+          </div>
+          <div class="legend-row" aria-hidden="true">
+            <span><i class="sw solid"></i>Original</span><span
+              ><i class="sw hatch"></i>Copy, in the colour of its source</span
+            >
+          </div>
+          <div class="matrix-mini">
+            <table id="matrix" aria-label="What the Work meeting shows in the other calendars">
+            </table>
+            <span>Click a cell to change what the Work meeting shows there.</span>
+          </div>
+          <p class="demo-caption">A simulation in your browser. No calendar is connected.</p>
+        </div>
+      </div>
+
+      <section>
+        <div class="wrap">
+          <h2>How it works</h2>
+          <p class="lead">
+            slotmirror runs in your own Cloudflare account. There is no slotmirror service between
+            your calendars and your deployment.
+          </p>
+          <div class="steps">
+            <div class="step" style="--c:var(--c-blue)">
+              <b>1</b>
+              <h3>Deploy</h3>
+              <p>
+                Deploy the Worker and its database to your Cloudflare account, with the button or
+                with wrangler.
+              </p>
+            </div>
+            <div class="step" style="--c:var(--c-vermilion)">
+              <b>2</b>
+              <h3>Register the apps</h3>
+              <p>
+                Create a Microsoft Entra app and a Google OAuth client, and store them as secrets.
+                The <a href={page("docs/quickstart/")}>quickstart</a> walks you through it.
+              </p>
+            </div>
+            <div class="step" style="--c:var(--c-green)">
+              <b>3</b>
+              <h3>Connect and choose</h3>
+              <p>
+                Connect your Microsoft and Google accounts. They block each other as busy; add
+                titles or more where you want them.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <h2>One page for every direction</h2>
+          <p class="lead">
+            Each calendar gets a card: where its events go and how much shows there. The overview
+            on the right shows all directions at once.
+          </p>
+          <figure class="shot">
+            <Image
+              src={editor}
+              widths={[640, 960, editor.width]}
+              sizes="(max-width: 1120px) 100vw, 1080px"
+              alt="The sync editor of slotmirror, with one card per calendar and an overview of all directions"
+            />
+            <figcaption>The sync editor, with three demo accounts.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <h2>Features</h2>
+          <p class="lead">What the editor and the sync do today.</p>
+          <div class="features">
+            <div style="--c:var(--c-blue)">
+              <h3><i></i>Block group</h3>
+              <p>Calendars in the group see each other as busy, with exceptions.</p>
+            </div>
+            <div style="--c:var(--c-vermilion)">
+              <h3><i class="hatch"></i>Detail per direction</h3>
+              <p>Not, busy, title, or everything, with a preview of the copy.</p>
+            </div>
+            <div style="--c:var(--c-green)">
+              <h3><i></i>Extra calendars</h3>
+              <p>Subscriptions such as team fixtures can block your time too.</p>
+            </div>
+            <div style="--c:var(--c-purple)">
+              <h3><i></i>Push notifications</h3>
+              <p>Changes arrive within seconds; a scheduled check catches the rest.</p>
+            </div>
+            <div style="--c:var(--c-orange)">
+              <h3><i></i>Organisation limits</h3>
+              <p>Admins cap the detail between work and private calendars.</p>
+            </div>
+            <div style="--c:var(--c-sky)">
+              <h3><i></i>Activity log</h3>
+              <p>Runs and changes with counts and codes, never event content.</p>
+            </div>
+            <div style="--c:var(--c-indigo)">
+              <h3><i></i>EU data location</h3>
+              <p>The database and the sync can stay in Cloudflare's EU jurisdiction.</p>
+            </div>
+            <div style="--c:var(--c-slate)">
+              <h3><i></i>Colours</h3>
+              <p>A colour per account in the app, and a colour for the blocks it writes.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap why">
+          <div>
+            <h2>Why moved meetings get lost</h2>
+            <p class="lead">
+              A recurring meeting moved for one week is an exception to its series. Sync tools that
+              rebuild copies on a schedule can miss it until the next full run.
+            </p>
+          </div>
+          <ul>
+            <li>slotmirror reads each occurrence of a series, so a moved one keeps its identity.</li>
+            <li>It changes only what differs: create, update or delete, never a rebuild.</li>
+            <li>Push notifications start the sync when the meeting moves, not minutes later.</li>
+            <li>
+              Event contents are read during a sync and kept only in memory, never written to the
+              database.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="guides">
+        <div class="wrap">
+          <h2>Guides</h2>
+          <div class="guides">
+            {
+              guides.map((guide) => (
+                <a class="guide" href={page(`guides/${guide.slug}/`)}>
+                  {guide.title}
+                  <span>{guide.text}</span>
+                </a>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section id="changelog">
+        <div class="wrap">
+          <h2>Changelog</h2>
+          <p class="changes">
+            {
+              latest ? (
+                <>
+                  <span class="version">{latest[1]}</span>
+                  <time datetime={latest[2]}>{latest[2]}</time>
+                </>
+              ) : (
+                <span>No release yet.</span>
+              )
+            }
+            <a href={page("changelog/")}>All releases</a>
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>slotmirror · MIT licence</span>
+        <a href={repo}>GitHub</a>
+        <a href={page("docs/introduction/")}>Docs</a>
+        <a href={page("docs/privacy/")}>Privacy</a>
+        <span>This site sets no cookies.</span>
+      </div>
+    </footer>
+
+    <script>
+      // A toy version of the sync. One movable meeting in Work, copies in Client and Private, and
+      // a few fixed events whose copies show that colour means "which calendar it came from".
+      const START = 8;
+      const END = 18;
+      const HEIGHT = 420;
+      const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const px = (hour: number) => ((hour - START) / (END - START)) * HEIGHT;
+      const LEVELS = ["off", "busy", "title", "full"] as const;
+      type Level = (typeof LEVELS)[number];
+      type Cal = "work" | "client" | "private";
+      type Target = "client" | "private";
+      const TARGETS: Target[] = ["client", "private"];
+      const SHORT: Record<Level, string> = { off: "Not", busy: "Busy", title: "Title", full: "All" };
+      const COLOUR: Record<Cal, string> = {
+        work: "var(--work)",
+        client: "var(--client)",
+        private: "var(--private)",
+      };
+      const NAME: Record<Cal, string> = { work: "Work", client: "Client", private: "Private" };
+      const meeting = { title: "Client call", where: "Teams", start: 10, length: 1 };
+      const show: Record<Target, Level> = { client: "busy", private: "full" };
+      const cals = Object.fromEntries(
+        [...document.querySelectorAll<HTMLElement>(".cal")].map((el) => [el.dataset.cal, el]),
+      ) as Record<Cal, HTMLElement>;
+      const hours = document.getElementById("hours")!;
+      for (let h = START; h <= END; h += 2) {
+        const label = document.createElement("span");
+        label.style.top = `${px(h)}px`;
+        label.textContent = `${h}:00`;
+        hours.append(label);
+      }
+      const time = (h: number) => `${Math.floor(h)}:${h % 1 ? "30" : "00"}`;
+      function place(el: HTMLElement, start: number, length: number) {
+        el.style.top = `${px(start)}px`;
+        el.style.height = `${px(START + length) - 2}px`;
+      }
+      function addEvent(
+        cal: Cal,
+        source: Cal,
+        kind: string,
+        start: number,
+        length: number,
+        html: string,
+      ) {
+        const el = document.createElement("div");
+        el.className = `ev ${kind}`;
+        el.style.setProperty("--c", COLOUR[source]);
+        place(el, start, length);
+        el.innerHTML = html;
+        cals[cal].append(el);
+        return el;
+      }
+      const copyHint = (source: Cal) => `<span class="sr">Copy from ${NAME[source]}: </span>`;
+      // Fixed events and their busy copies.
+      addEvent("client", "client", "real", 13, 1, "Workshop<small>13:00–14:00</small>");
+      addEvent(
+        "work",
+        "client",
+        "copy",
+        13,
+        1,
+        `${copyHint("client")}Busy<small>13:00–14:00</small>`,
+      );
+      addEvent("private", "private", "real", 16.5, 1, "Dentist<small>16:30–17:30</small>");
+      addEvent(
+        "work",
+        "private",
+        "copy",
+        16.5,
+        1,
+        `${copyHint("private")}Busy<small>16:30–17:30</small>`,
+      );
+      addEvent(
+        "client",
+        "private",
+        "copy",
+        16.5,
+        1,
+        `${copyHint("private")}Busy<small>16:30–17:30</small>`,
+      );
+      // The movable meeting and its copies.
+      const real = addEvent("work", "work", "real main", meeting.start, meeting.length, "");
+      const copies: Record<Target, HTMLElement> = {
+        client: addEvent("client", "work", "copy", meeting.start, meeting.length, ""),
+        private: addEvent("private", "work", "copy", meeting.start, meeting.length, ""),
+      };
+      function drawReal() {
+        place(real, meeting.start, meeting.length);
+        real.innerHTML = `${meeting.title}<small>${time(meeting.start)}–${time(meeting.start + meeting.length)}</small>`;
+      }
+      function drawCopy(cal: Target) {
+        const el = copies[cal];
+        const level = show[cal];
+        el.classList.toggle("hidden", level === "off");
+        place(el, meeting.start, meeting.length);
+        const label = level === "busy" ? "Busy" : meeting.title;
+        const extra = level === "full" ? ` · ${meeting.where}` : "";
+        el.innerHTML = `${copyHint("work")}${label}<small>${time(meeting.start)}–${time(meeting.start + meeting.length)}${extra}</small>`;
+      }
+      // Curved lines with a travelling dot, from the moved original to each copy, while the sync
+      // runs.
+      const arcs = document.getElementById("arcs")!;
+      const wrap = document.querySelector(".cals-wrap")!;
+      const SVG = "http://www.w3.org/2000/svg";
+      function drawArcs() {
+        arcs.innerHTML = "";
+        if (reduced) return;
+        const box = wrap.getBoundingClientRect();
+        const from = real.getBoundingClientRect();
+        const colour = getComputedStyle(real).backgroundColor;
+        // The original may still be sliding, so start from where it ends up, not where it is now.
+        const column = real.parentElement!.getBoundingClientRect();
+        const x1 = from.right - box.left - 4;
+        const y1 =
+          column.top - box.top + px(meeting.start) + (px(START + meeting.length) - 2) / 2;
+        for (const cal of TARGETS) {
+          const el = copies[cal];
+          if (el.classList.contains("hidden")) continue;
+          const to = el.getBoundingClientRect();
+          const x2 = to.left - box.left + 8;
+          const y2 = to.top + to.height / 2 - box.top;
+          // A sideways S-curve: leaves the original to the right and enters the copy from the left.
+          const pull = Math.max(48, (x2 - x1) * 0.5);
+          const path = document.createElementNS(SVG, "path");
+          path.setAttribute("d", `M ${x1} ${y1} C ${x1 + pull} ${y1}, ${x2 - pull} ${y2}, ${x2} ${y2}`);
+          path.setAttribute("stroke", colour);
+          arcs.append(path);
+          const length = path.getTotalLength();
+          path.style.strokeDasharray = `${length}`;
+          path.animate([{ strokeDashoffset: length }, { strokeDashoffset: 0 }], {
+            duration: 700,
+            easing: "ease-out",
+            fill: "forwards",
+          });
+          const dot = document.createElementNS(SVG, "circle");
+          dot.setAttribute("r", "3.5");
+          dot.setAttribute("fill", colour);
+          arcs.append(dot);
+          const steps = 24;
+          const frames = Array.from({ length: steps + 1 }, (_, i) => {
+            const point = path.getPointAtLength((length * i) / steps);
+            return { transform: `translate(${point.x}px, ${point.y}px)` };
+          });
+          dot.animate(frames, { duration: 700, easing: "ease-out", fill: "forwards" });
+        }
+      }
+      const status = document.getElementById("status")!;
+      const statusText = document.getElementById("status-text")!;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      function sync() {
+        clearTimeout(timer);
+        if (reduced) {
+          for (const cal of TARGETS) drawCopy(cal);
+          statusText.textContent = "In sync";
+          return;
+        }
+        status.classList.add("busy");
+        statusText.textContent = "Syncing…";
+        real.classList.add("waiting");
+        drawArcs();
+        timer = setTimeout(() => {
+          for (const cal of TARGETS) {
+            drawCopy(cal);
+            copies[cal].classList.remove("arrived");
+            void copies[cal].offsetWidth;
+            copies[cal].classList.add("arrived");
+          }
+          real.classList.remove("waiting");
+          status.classList.remove("busy");
+          statusText.textContent = "In sync";
+          setTimeout(() => {
+            arcs.innerHTML = "";
+          }, 500);
+        }, 800);
+      }
+      const move = document.getElementById("move")!;
+      move.addEventListener("click", () => {
+        meeting.start = meeting.start === 14 ? 10 : 14;
+        move.textContent = meeting.start === 14 ? "Move back to 10:00" : "Move to 14:00";
+        drawReal();
+        sync();
+      });
+      // Drag the meeting in half-hour steps.
+      let drag: { y: number; start: number } | null = null;
+      real.addEventListener("pointerdown", (event) => {
+        drag = { y: event.clientY, start: meeting.start };
+        real.classList.add("dragging");
+        real.setPointerCapture(event.pointerId);
+      });
+      real.addEventListener("pointermove", (event) => {
+        if (!drag) return;
+        const delta = ((event.clientY - drag.y) / HEIGHT) * (END - START);
+        const next = Math.min(
+          END - meeting.length,
+          Math.max(START, Math.round((drag.start + delta) * 2) / 2),
+        );
+        if (next !== meeting.start) {
+          meeting.start = next;
+          drawReal();
+        }
+      });
+      real.addEventListener("pointerup", () => {
+        if (!drag) return;
+        const moved = drag.start !== meeting.start;
+        drag = null;
+        real.classList.remove("dragging");
+        if (moved) sync();
+      });
+      // Mini matrix: what the Work meeting shows in each other calendar.
+      const matrix = document.getElementById("matrix")!;
+      function drawMatrix() {
+        matrix.innerHTML = `<tr><th style="--c:var(--work)"><i></i>Work →</th><th style="--c:var(--client)"><i></i>Client</th><th style="--c:var(--private)"><i></i>Private</th></tr>
+          <tr><th></th>${TARGETS.map((cal) => `<td><button type="button" class="lv-${show[cal]}" data-cal="${cal}" aria-label="${NAME[cal]}: ${SHORT[show[cal]]}. Change">${SHORT[show[cal]]}</button></td>`).join("")}</tr>`;
+      }
+      matrix.addEventListener("click", (event) => {
+        const cell = (event.target as HTMLElement).closest<HTMLElement>("button[data-cal]");
+        if (!cell) return;
+        const cal = cell.dataset.cal as Target;
+        show[cal] = LEVELS[(LEVELS.indexOf(show[cal]) + 1) % LEVELS.length]!;
+        drawMatrix();
+        drawCopy(cal);
+        matrix.querySelector<HTMLElement>(`button[data-cal="${cal}"]`)?.focus();
+      });
+      drawMatrix();
+      drawReal();
+      for (const cal of TARGETS) drawCopy(cal);
+    </script>
+  </body>
+</html>

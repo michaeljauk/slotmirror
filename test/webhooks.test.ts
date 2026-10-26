@@ -366,6 +366,34 @@ describe("echo filter", () => {
     expect(await alarmOf(a)).toBeNull();
   });
 
+  it("runs a requested full cycle after a check that finds only its own writes", async () => {
+    const { a, b } = await setup("emarked");
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    // The alarm is only for the check, but a full cycle is requested as well.
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("recentWrites", { "block-1": Date.now() });
+      await state.storage.put("fullCycleRequested", true);
+    });
+    await notifyGraph(b, "block-1");
+    expect(
+      await runInDurableObject(target, (_instance, state) => state.storage.get("feedOnlyAlarm")),
+    ).toBe(true);
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return Response.json({ value: [] });
+    });
+
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+
+    expect(urls.some((url) => url.includes(`/calendars/${a}-remote/calendarView`))).toBe(true);
+    expect(
+      await runInDurableObject(target, (_instance, state) =>
+        state.storage.get("fullCycleRequested"),
+      ),
+    ).toBeUndefined();
+  });
+
   it("runs no further cycle for a notification about its own writes during a cycle", async () => {
     const { b } = await setup("ecycle");
     const target = env.ACCOUNT_SYNC.getByName(b);

@@ -992,6 +992,40 @@ describe("changes during a cycle", () => {
     expect(await alarmIn(stub)).toBeGreaterThan(800_000);
   });
 
+  it("runs a further cycle for a request that arrives while the cycle reads its rules", async () => {
+    const { stub, first, second, runs, runAllAlarms } = await setupCycle("acc-list");
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    const db = (instance as unknown as { env: Env }).env.DB;
+    const prepare = db.prepare.bind(db);
+    let raced = false;
+    vi.spyOn(db, "prepare").mockImplementation((query: string) => {
+      const statement = prepare(query);
+      if (raced || !query.includes("JOIN calendars tc ON tc.id = r.target_calendar_id")) {
+        return statement;
+      }
+      raced = true;
+      // A request, for example after a new rule, arrives while the cycle reads the rule list.
+      return {
+        bind: (...values: unknown[]) => {
+          const bound = statement.bind(...values);
+          return {
+            all: async () => {
+              await instance.requestSync();
+              return bound.all();
+            },
+          };
+        },
+      } as unknown as D1PreparedStatement;
+    });
+
+    await stub.requestSync();
+    await runAllAlarms();
+
+    expect(raced).toBe(true);
+    expect(await runs(first)).toBe(2);
+    expect(await runs(second)).toBe(2);
+  });
+
   it("runs the requested full cycle when a tick queues rules before it starts", async () => {
     const { stub, first, second, events, runs, runAllAlarms } = await setupCycle("acc-tick");
     events["remote-unwatched"] = [];

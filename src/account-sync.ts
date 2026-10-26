@@ -377,10 +377,14 @@ export class AccountSync extends DurableObject<Env> {
     return true;
   }
 
-  /** True if sync work waits: a full cycle, rules, removals, or the account's retirement. */
+  /**
+   * True if sync work waits: a full cycle (the alarm's own, or a requested one), rules, removals,
+   * or the account's retirement.
+   */
   private async hasSyncWork(feedOnly: boolean): Promise<boolean> {
     return (
       !feedOnly ||
+      ((await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) ?? false) ||
       ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
       ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []).length > 0 ||
       ((await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false)
@@ -909,14 +913,15 @@ export class AccountSync extends DurableObject<Env> {
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
+      // This cycle covers every request so far. Cleared before the rule list is read: a request
+      // during the read, for example for a new rule, marks again and gets one more cycle.
+      await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
       const all = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
       // Stored before the run, so that the end of the run reads the whole cycle back.
       // A tick may have queued some rules meanwhile; the full cycle still runs all of them.
-      queue = await this.updateQueue<string>(RULE_QUEUE_KEY, async (current) => {
-        // This cycle reads the calendars after every request so far; a later one marks again.
-        await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
-        return inPrecedenceOrder([...new Set([...current, ...all])]);
-      });
+      queue = await this.updateQueue<string>(RULE_QUEUE_KEY, (current) =>
+        inPrecedenceOrder([...new Set([...current, ...all])]),
+      );
       await this.ctx.storage.put(FULL_CYCLE_KEY, Date.now());
     }
     const [ruleId] = queue;

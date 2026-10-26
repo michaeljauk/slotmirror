@@ -486,11 +486,14 @@ async function bareAccount(accountId: string, accessExpiresAt = Date.now() + 3_6
 async function stuckBlockGraph(deleteStatus: number) {
   const [template] = fixture.value;
   const tag = await ruleTagFor("gone-rule");
-  const graph = { deleteStatus, methods: [] as string[] };
+  const graph = { deleteStatus, methods: [] as string[], downCalendar: "" };
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.includes(`/calendars/${SOURCE_CAL}`)) return Response.json({ value: fixture.value });
+    if (graph.downCalendar && url.includes(`/calendars/${graph.downCalendar}/`)) {
+      return new Response("down", { status: 500 });
+    }
     if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
       return Response.json({
         value: [
@@ -790,6 +793,7 @@ describe("alarm queue", () => {
       const url = input instanceof Request ? input.url : String(input);
       calls.push(`${init?.method ?? "GET"} ${url}`);
       if (url.includes("/subscriptions/sub-ok")) return new Response(null, { status: 204 });
+      if (url.includes("/subscriptions/sub-gone")) return new Response(null, { status: 404 });
       if (url.includes("/subscriptions/")) return new Response("down", { status: 500 });
       if (url.includes("calendarView")) {
         return Response.json({
@@ -816,7 +820,7 @@ describe("alarm queue", () => {
       return Response.json({ value: [] });
     });
     await runInDurableObject(stub, (_instance, state) => {
-      for (const id of ["sub-ok", "sub-stuck"]) {
+      for (const id of ["sub-gone", "sub-ok", "sub-stuck"]) {
         state.storage.sql.exec(
           "INSERT INTO subscriptions (remote_id, calendar_id, resource_id, expires_at) VALUES (?, ?, NULL, ?)",
           id,
@@ -840,14 +844,19 @@ describe("alarm queue", () => {
     // The next alarm stops the watches, and only that.
     await runDurableObjectAlarm(stub);
     expect(calls.slice(atRetire).map((call) => call.replace(/^(\w+) .*\//, "$1 "))).toEqual([
+      "DELETE sub-gone",
       "DELETE sub-ok",
       "DELETE sub-stuck",
     ]);
-    const watches = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.sql.exec("SELECT remote_id FROM subscriptions").toArray(),
-    );
-    // A watch that could not be stopped expires on its own; its notifications are ignored.
-    expect(watches).toEqual([]);
+    const watches = () =>
+      runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql
+          .exec<{ remote_id: string }>("SELECT remote_id FROM subscriptions")
+          .toArray()
+          .map((row) => row.remote_id),
+      );
+    // A watch that could not be stopped stays for `forget()`; its notifications are ignored.
+    expect(await watches()).toEqual(["sub-stuck"]);
 
     const before = calls.length;
     await stub.graphChanged(["later"]);
@@ -865,6 +874,62 @@ describe("alarm queue", () => {
     ).toBeUndefined();
     expect(await alarmKind(stub)).toBe("removal");
     expect(await stub.hasTokens()).toBe(true);
+
+    // The retiring alarm tried once; `forget()` tries again.
+    await stub.forget();
+    expect(calls.slice(before)).toEqual([
+      expect.stringMatching(/^DELETE .*\/subscriptions\/sub-stuck$/),
+    ]);
+  });
+
+  it("owes a full cycle after a finished removal, also when the next removal fails", async () => {
+    const stub = await bareAccount("acc-removal-owed");
+    const graph = await stuckBlockGraph(204);
+    graph.downCalendar = "remote-down";
+    const state = () =>
+      runInDurableObject(stub, async (_instance, storage) => [
+        await storage.storage.get("fullCycleRequested"),
+        await storage.storage.get("fullCycleAt"),
+      ]);
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await stub.queueRemoval("other-rule", "remote-down");
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toEqual([
+      { ruleId: "other-rule", remoteCalendarId: "remote-down", attempts: 0 },
+    ]);
+    expect(await state()).toEqual([true, undefined]);
+
+    await runDurableObjectAlarm(stub);
+    expect((await removalsOf(stub))?.[0]?.attempts).toBe(1);
+    expect(await alarmKind(stub)).toBeUndefined();
+
+    await runDurableObjectAlarm(stub);
+    expect(await state()).toEqual([undefined, expect.any(Number)]);
+    expect(await alarmKind(stub)).toBe("removal");
+  });
+
+  it("owes a full cycle after a manual run with writes left, but not after an alarm run", async () => {
+    const { stub, ruleId } = await setupRule("acc-manual-left");
+    await stub.storeTokens("acc-manual-left", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    throttlingGraph(3, "20");
+    const requested = () =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get("fullCycleRequested"));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [ruleId]);
+      await state.storage.setAlarm(Date.now() + 600_000);
+    });
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
+    expect(await requested()).toBeUndefined();
+
+    expect((await stub.runRule(ruleId)).remaining).toBeGreaterThan(0);
+    expect(await requested()).toBe(true);
   });
 
   it("keeps rules that a tick queues while a rule runs", async () => {

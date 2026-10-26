@@ -164,6 +164,9 @@ const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
 /** Durable Object storage key: forget the tokens once every queued removal ran. */
 const RETIRING_KEY = "retiring";
 
+/** Durable Object storage key: the retiring account tried to stop its watches; `forget()` retries. */
+const WATCHES_TRIED_KEY = "watchesTried";
+
 /** Give up on a removal after this many failed attempts; the blocks then stay. */
 const MAX_REMOVAL_ATTEMPTS = 5;
 
@@ -645,8 +648,9 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * Stop the provider's notifications while the tokens still work, and forget the watches. Best
-   * effort, tried once: a watch that could not be stopped ends on its own within days.
+   * Stop the provider's notifications while the tokens still work. Best effort: a watch that could
+   * not be stopped stays stored for the next try, and ends on its own within days. A watch the
+   * provider no longer knows counts as stopped.
    */
   private async stopWatches(): Promise<void> {
     const watches = this.storedWatches();
@@ -654,14 +658,16 @@ export class AccountSync extends DurableObject<Env> {
     try {
       const client = await this.client();
       for (const watch of watches) {
-        await client.unwatch(watch).catch((error: unknown) => {
+        try {
+          await client.unwatch(watch);
+          this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
+        } catch (error) {
           console.error("Stopping a watch failed", watch.id, error);
-        });
+        }
       }
     } catch (error) {
       console.error("Stopping watches failed", error);
     }
-    this.ctx.storage.sql.exec(`DELETE FROM subscriptions`);
   }
 
   private async retiring(): Promise<boolean> {
@@ -728,18 +734,21 @@ export class AccountSync extends DurableObject<Env> {
     ) {
       await current.catch(() => undefined);
     }
-    return this.startRun(ruleId);
+    return this.startRun(ruleId, { fromAlarm: true });
   }
 
-  private startRun(ruleId: string): Promise<RunResult> {
-    const run: Promise<RunResult> = this.runRuleOnce(ruleId, {}).finally(() => {
+  private startRun(ruleId: string, options: { fromAlarm?: boolean } = {}): Promise<RunResult> {
+    const run: Promise<RunResult> = this.runRuleOnce(ruleId, options).finally(() => {
       if (this.runningRules.get(ruleId) === run) this.runningRules.delete(ruleId);
     });
     this.runningRules.set(ruleId, run);
     return run;
   }
 
-  private async runRuleOnce(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
+  private async runRuleOnce(
+    ruleId: string,
+    options: { dryRun?: boolean; fromAlarm?: boolean },
+  ): Promise<RunResult> {
     try {
       return await this.executeRule(ruleId, options);
     } catch (error) {
@@ -749,7 +758,10 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  private async executeRule(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
+  private async executeRule(
+    ruleId: string,
+    options: { dryRun?: boolean; fromAlarm?: boolean },
+  ): Promise<RunResult> {
     const startedAt = Date.now();
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
@@ -856,7 +868,10 @@ export class AccountSync extends DurableObject<Env> {
     }
     const remaining = plan.actions.length - applied - failed;
     if (remaining > 0) {
-      // Continue soon; the next run plans again from the calendars, so nothing is lost.
+      // Continue soon; the next run plans again from the calendars, so nothing is lost. The alarm
+      // keeps its own rule queued; a run outside it owes a full cycle, which no failing removal
+      // in the next alarm can drop.
+      if (!options.fromAlarm) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
       await this.setSyncAlarm(Date.now() + (retryAfterMs ?? this.delays().nextRun));
     }
     return audit({
@@ -979,6 +994,10 @@ export class AccountSync extends DurableObject<Env> {
       attempts,
       ...(waits ? { notBefore: Date.now() + wait } : {}),
     };
+    const ended = outcome === "done" || (outcome === "failed" && attempts >= MAX_REMOVAL_ATTEMPTS);
+    // The removed blocks may have hidden blocks of other rules. The mark keeps the full cycle owed
+    // even if the next removal fails and only sets its own alarm.
+    if (ended) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
     // Removals queued during the provider calls are in the stored queue, not in `queue`.
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
       const others = current.filter((queued) => !sameRemoval(queued, job));
@@ -989,7 +1008,7 @@ export class AccountSync extends DurableObject<Env> {
       return others;
     });
     // After a failed attempt, `keepRemovalAlarm()` sets the next alarm, unless rules or a requested
-    // full cycle wait. A removal that ends starts a full cycle, as its blocks may hide others.
+    // full cycle wait.
     const syncWaits =
       ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
       ((await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) ?? false);
@@ -1026,7 +1045,13 @@ export class AccountSync extends DurableObject<Env> {
     }
     // A retiring account stops its watches in an alarm of their own, so that `retire()` never
     // waits for a provider. Its removals can take hours; no notifications are needed meanwhile.
-    if ((await this.retiring()) && this.storedWatches().length > 0) {
+    // One try only, so that a watch that cannot be stopped does not cost every alarm a request.
+    if (
+      (await this.retiring()) &&
+      this.storedWatches().length > 0 &&
+      (await this.ctx.storage.get(WATCHES_TRIED_KEY)) === undefined
+    ) {
+      await this.ctx.storage.put(WATCHES_TRIED_KEY, true);
       await this.stopWatches();
       await this.setSyncAlarm(Date.now() + this.delays().nextRun);
       return;

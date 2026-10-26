@@ -178,7 +178,11 @@
       const result = form.querySelector(".preview-result");
       result.classList.remove("error");
       result.textContent = form.dataset.loading;
-      const response = await fetch(form.action, { method: "POST", headers: { "x-fragment": "1" } });
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        headers: { "x-fragment": "1" },
+      });
       result.textContent = await response.text();
       result.classList.toggle("error", !response.ok);
     });

@@ -269,10 +269,12 @@ function DestinationRow(props: {
       {direction.ruleId && direction.effective !== "off" ? (
         <form
           method="post"
-          action={`/rules/${direction.ruleId}/preview`}
+          action="/rules/direction/check"
           class="dest-note faint preview-form"
           data-loading={t.editor.checking}
         >
+          <input type="hidden" name="from" value={source.id} />
+          <input type="hidden" name="to" value={target.id} />
           <button type="submit" class="link-button">
             {t.editor.checkReal}
           </button>

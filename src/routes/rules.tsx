@@ -256,6 +256,38 @@ rules.post("/settings", async (c) => {
   return c.redirect("/rules");
 });
 
+// Check one direction with real events: a dry run of every rule of the direction, one per
+// source calendar of the account, summed.
+rules.post("/direction/check", async (c) => {
+  const user = currentUser(c);
+  const { t } = i18nFromContext(c);
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const to = formText(form, "to");
+  const state = await loadEditorState(c.env, user.id);
+  const direction = state.directions.find((d) => d.from === from && d.to === to);
+  const ruleIds = (direction?.slots ?? []).flatMap((slot) =>
+    slot.rule?.enabled ? [slot.rule.id] : [],
+  );
+  if (ruleIds.length === 0) return c.notFound();
+  const sum = { create: 0, update: 0, delete: 0, unchanged: 0 };
+  try {
+    for (const ruleId of ruleIds) {
+      const result = await accountSync(c.env, to).runRule(ruleId, { dryRun: true });
+      sum.create += result.stats.create;
+      sum.update += result.stats.update;
+      sum.delete += result.stats.delete;
+      sum.unchanged += result.stats.unchanged;
+    }
+  } catch (error) {
+    console.error("Direction check failed", from, to, error);
+    const text = (error as Error).message;
+    return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+  }
+  const text = t.editor.checkResult(sum.create, sum.update, sum.delete, sum.unchanged);
+  return wantsFragment(c) ? c.text(text) : renderPage(c, { kind: "info", text });
+});
+
 for (const action of ["preview", "run"] as const) {
   rules.post(`/:id/${action}`, async (c) => {
     const user = currentUser(c);

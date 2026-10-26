@@ -412,3 +412,41 @@ describe("many accounts", () => {
     expect(page).toContain('class="pills collapsed"');
   });
 });
+
+describe("check with real events", () => {
+  it("dry-runs every source calendar of a direction and sums the result", async () => {
+    const { user, cookie, w, g } = await setup("checkall");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES ('checkall-extra', ?, 'extra', 'Extra', 0, 0, 1)",
+    )
+      .bind(g)
+      .run();
+    await setDirection(env, user, g, w, "busy");
+    expect((await rulesOf(user.id)).filter((rule) => rule.source === g)).toHaveLength(2);
+
+    // Both source calendars hold one event; the target holds nothing yet.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("googleapis.com/calendar") && url.includes("/events"))
+        return Response.json({
+          items: [
+            {
+              id: url.includes("extra") ? "e2" : "e1",
+              start: { dateTime: new Date(Date.now() + 86_400_000).toISOString() },
+              end: { dateTime: new Date(Date.now() + 90_000_000).toISOString() },
+              summary: "x",
+            },
+          ],
+        });
+      if (url.includes("calendarView")) return Response.json({ value: [] });
+      return new Response("unexpected", { status: 500 });
+    });
+    const response = await exports.default.fetch(`${BASE}/rules/direction/check`, {
+      method: "POST",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ from: g, to: w }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("Next sync: 2 new, 0 changed, 0 removed");
+  });
+});

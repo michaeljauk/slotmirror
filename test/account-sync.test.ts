@@ -1836,6 +1836,98 @@ describe("accounts that need reconnecting", () => {
     expect(left).toBeUndefined();
   });
 
+  it("arms no alarm for a requested cycle while paused, and runs the cycle after reconnect", async () => {
+    const { stub, ruleId, calls } = await pauseByRefusal("acc-paused-cycle");
+    // Another account's change asks for a sync; the cron ticks meanwhile.
+    await stub.requestSync();
+    expect(await pendingAlarm(stub)).toBeNull();
+    for (let tick = 0; tick < 3; tick++) await stub.tick();
+    expect(await pendingAlarm(stub)).toBeNull();
+    const mark = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get("fullCycleRequested"),
+    );
+    expect(mark).toBe(true);
+    expect(calls.token).toBe(1);
+
+    vi.restoreAllMocks();
+    const graph = fakeGraph();
+    await stub.storeTokens("acc-paused-cycle", {
+      refreshToken: "r2",
+      accessToken: "a2",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    await runDurableObjectAlarm(stub);
+    expect(graph.some((call) => call.url.endsWith("/$batch"))).toBe(true);
+    expect((await auditOf(ruleId, "sync_run")).length).toBeGreaterThan(0);
+  });
+
+  it("holds a queued removal while paused, and runs it soon after reconnect", async () => {
+    const { stub, calls } = await pauseByRefusal("acc-paused-removal");
+    // Removals that wait in their backoff after failed attempts. The second one is due in a
+    // minute, so that an alarm for it would still be pending when the test looks.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("removalQueue", [
+        {
+          ruleId: "gone-rule",
+          remoteCalendarId: TARGET_CAL,
+          attempts: 2,
+          notBefore: Date.now() + 14 * 3_600_000,
+        },
+        {
+          ruleId: "gone-rule-2",
+          remoteCalendarId: TARGET_CAL,
+          attempts: 1,
+          notBefore: Date.now() + 60_000,
+        },
+      ]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    await runDurableObjectAlarm(stub);
+    // Paused: no removal alarm, no attempt used, no token request.
+    expect(await pendingAlarm(stub)).toBeNull();
+    const held = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<{ ruleId: string; attempts: number }[]>("removalQueue"),
+    );
+    expect(held?.map((job) => [job.ruleId, job.attempts])).toEqual([
+      ["gone-rule", 2],
+      ["gone-rule-2", 1],
+    ]);
+    expect(calls.token).toBe(1);
+
+    vi.restoreAllMocks();
+    fakeGraph();
+    await stub.storeTokens("acc-paused-removal", {
+      refreshToken: "r2",
+      accessToken: "a2",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    const left = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<{ ruleId: string }[]>("removalQueue"),
+    );
+    expect(left ?? []).toEqual([]);
+  });
+
+  it("lets a paused account retire at the first alarm, without a token request", async () => {
+    const { stub, ruleId, calls } = await pauseByRefusal("acc-paused-retire");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO subscriptions (remote_id, calendar_id, resource_id, expires_at) VALUES ('w1', ?, NULL, ?)",
+        TARGET_CAL,
+        Date.now() + 86_400_000,
+      );
+    });
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await stub.retire();
+    await runDurableObjectAlarm(stub);
+    expect(await stub.hasTokens()).toBe(false);
+    expect(await pendingAlarm(stub)).toBeNull();
+    expect(await storedPause(stub)).toBeUndefined();
+    expect(calls.token).toBe(1);
+    expect(calls.other).toBe(0);
+  });
+
   it("neither pauses nor alerts for an account whose row is already gone", async () => {
     const stub = env.ACCOUNT_SYNC.getByName("acc-gone");
     await stub.storeTokens("acc-gone", { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 });

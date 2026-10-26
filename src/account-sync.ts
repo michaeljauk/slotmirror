@@ -282,7 +282,8 @@ export class AccountSync extends DurableObject<Env> {
     const pending = await this.pendingAlarm();
     await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
     await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
-    if (pending === null) {
+    // While paused, the mark waits for the alarm that new tokens start.
+    if (pending === null && !(await this.pause())) {
       await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
     }
   }
@@ -708,6 +709,10 @@ export class AccountSync extends DurableObject<Env> {
   private async unpause(): Promise<void> {
     if (!(await this.pause())) return;
     await this.ctx.storage.delete([PAUSE_KEY, RULE_QUEUE_KEY, FULL_CYCLE_KEY]);
+    // Removals that wait after attempts with the refused token may run now.
+    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) =>
+      queue.map(({ notBefore: _wait, ...job }) => job),
+    );
     // Other accounts skip rules from this one while the flag is set.
     await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
       .bind(this.accountId())

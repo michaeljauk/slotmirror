@@ -5,7 +5,8 @@ import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
 import { MAX_NAME_LENGTH, type EditorState } from "../editor";
-import { ReconnectNotice, SourcePills } from "./calendar-editor";
+import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
+import { colorStyle, ReconnectNotice, SourcePills } from "./calendar-editor";
 
 export interface AccountRow {
   id: string;
@@ -121,54 +122,93 @@ export function HomePage(props: {
             </div>
           ) : (
             <ul class="list">
-              {props.accounts.map((account) => (
-                <li>
-                  <span class="provider-icon">
-                    <ProviderIcon provider={account.provider} size={18} />
-                  </span>
-                  <div class="item-main">
-                    <div class="item-title">
-                      {props.editor.accounts.find((a) => a.id === account.id)?.name ??
-                        account.email}
-                      <span class="muted account-email">{account.email}</span>
-                    </div>
-                    <div
-                      class="item-meta"
-                      title={t.accounts.connectedOn(formatDate(account.createdAt))}
+              {props.accounts.map((account) => {
+                const editor = props.editor.accounts.find((a) => a.id === account.id);
+                return (
+                  <li>
+                    <span
+                      class="provider-icon tinted"
+                      style={editor ? colorStyle(editor) : undefined}
                     >
-                      {accountKind(account)}
+                      <ProviderIcon provider={account.provider} size={18} />
+                    </span>
+                    <div class="item-main">
+                      <div class="item-title">
+                        {editor?.name ?? account.email}
+                        <span class="muted account-email">{account.email}</span>
+                      </div>
+                      <div
+                        class="item-meta"
+                        title={t.accounts.connectedOn(formatDate(account.createdAt))}
+                      >
+                        {accountKind(account)}
+                      </div>
                     </div>
-                  </div>
-                  {account.needsReconnect ? (
-                    <a class="status error" href={`/auth/${account.provider}/connect`}>
-                      {t.editor.reconnectShort}
+                    {account.needsReconnect ? (
+                      <a class="status error" href={`/auth/${account.provider}/connect`}>
+                        {t.editor.reconnectShort}
+                      </a>
+                    ) : (
+                      syncStatus(props.statuses.get(account.id))
+                    )}
+                    <details class="rename">
+                      <summary class="link-button quiet">{t.accounts.rename}</summary>
+                      <form
+                        method="post"
+                        action={`/accounts/${account.id}/name`}
+                        class="rename-form"
+                      >
+                        <label>
+                          <span>{t.accounts.nameLabel}</span>
+                          <input
+                            type="text"
+                            name="name"
+                            maxlength={MAX_NAME_LENGTH}
+                            value={editor?.name ?? ""}
+                          />
+                        </label>
+                        <p class="fineprint">{t.accounts.nameHint}</p>
+                        <fieldset class="account-colors">
+                          <legend>{t.accounts.colorLabel}</legend>
+                          <span class="color-row pick">
+                            <label class="color-choice auto" title={t.accounts.colorAuto}>
+                              <input
+                                type="radio"
+                                name="color"
+                                value="auto"
+                                checked={!editor?.colorChosen}
+                              />
+                              <span class="color-dot">{t.accounts.colorAuto}</span>
+                            </label>
+                            {ACCOUNT_COLOR_KEYS.map((key) => (
+                              <label class="color-choice" title={t.accounts.colorNames[key]}>
+                                <input
+                                  type="radio"
+                                  name="color"
+                                  value={key}
+                                  checked={editor?.colorChosen === true && editor.color === key}
+                                  aria-label={t.accounts.colorNames[key]}
+                                />
+                                <span
+                                  class="color-dot"
+                                  style={`background:${ACCOUNT_COLORS[key]}`}
+                                />
+                              </label>
+                            ))}
+                          </span>
+                          <p class="fineprint">{t.accounts.colorHint}</p>
+                        </fieldset>
+                        <button type="submit" class="button small">
+                          {t.accounts.save}
+                        </button>
+                      </form>
+                    </details>
+                    <a class="link-button quiet" href={`/accounts/${account.id}/disconnect`}>
+                      {t.accounts.disconnect}
                     </a>
-                  ) : (
-                    syncStatus(props.statuses.get(account.id))
-                  )}
-                  <details class="rename">
-                    <summary class="link-button quiet">{t.accounts.rename}</summary>
-                    <form method="post" action={`/accounts/${account.id}/name`} class="rename-form">
-                      <label>
-                        <span>{t.accounts.nameLabel}</span>
-                        <input
-                          type="text"
-                          name="name"
-                          maxlength={MAX_NAME_LENGTH}
-                          value={props.editor.accounts.find((a) => a.id === account.id)?.name ?? ""}
-                        />
-                      </label>
-                      <p class="fineprint">{t.accounts.nameHint}</p>
-                      <button type="submit" class="button small">
-                        {t.accounts.save}
-                      </button>
-                    </form>
-                  </details>
-                  <a class="link-button quiet" href={`/accounts/${account.id}/disconnect`}>
-                    {t.accounts.disconnect}
-                  </a>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

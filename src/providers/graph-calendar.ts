@@ -313,6 +313,8 @@ export function toGraphBlock(block: DesiredBlock, ruleTag: string) {
     responseRequested: false,
     location: { displayName: block.location },
     body: { contentType: "text", content: block.body },
+    // Always set, so that an update also removes a category the rule no longer uses.
+    categories: block.color ? [block.color] : [],
     singleValueExtendedProperties: [
       { id: MARKER_PROPERTY_ID, value: `${ruleTag}.${block.marker}.${block.contentHash}` },
     ],

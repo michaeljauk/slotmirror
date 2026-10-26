@@ -10,6 +10,7 @@ import {
   loadEditorState,
   resetDirection,
   setDirection,
+  setBlockColor,
   setGroupMembership,
   setSettings,
   setSourceCalendar,
@@ -203,9 +204,31 @@ rules.post("/choices", async (c) => {
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
+  // Block colours after the choices, so that a direction turned on in the same save has its rules.
+  for (const [name, value] of form.entries()) {
+    const [prefix, from, to, ...rest] = name.split(".");
+    if (prefix !== "blockColor" || !from || !to || rest.length > 0) continue;
+    if (typeof value !== "string" || !(await setBlockColor(c.env, user, from, to, value))) {
+      return c.text("Bad block colour", 400);
+    }
+  }
   if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
+});
+
+rules.post("/direction/color", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const ok = await setBlockColor(
+    c.env,
+    currentUser(c),
+    from,
+    formText(form, "to"),
+    formText(form, "blockColor"),
+  );
+  if (!ok) return c.text("Bad block colour", 400);
+  return backTo(c, from);
 });
 
 rules.post("/direction/reset", async (c) => {

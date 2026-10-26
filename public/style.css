@@ -1752,3 +1752,154 @@ a.status.error {
 .legend-exception {
   background: #d3def6;
 }
+
+/* Account colours: a mark next to the name, a ring around the logo, a hatched example. Colour
+   marks the account only; levels and states keep their own blue scale and text. */
+
+.account-name .mark {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 3px;
+  background: var(--c, var(--faint));
+}
+
+.member.out .mark {
+  opacity: 0.45;
+}
+
+details.source > .source-head .provider-icon,
+.provider-icon.tinted {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--c, var(--line));
+}
+
+.ev:not(.none) {
+  border: 1px solid color-mix(in srgb, var(--c, var(--accent)) 55%, var(--surface));
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--c, var(--accent)) 22%, var(--surface)) 0 5px,
+    color-mix(in srgb, var(--c, var(--accent)) 8%, var(--surface)) 5px 10px
+  );
+}
+
+/* Picks a single colour: the chosen one shows a tick, not the cross of the skip filter. */
+.color-row.pick .color-choice input:checked + .color-dot::after {
+  content: "✓";
+}
+
+.color-row.pick .color-dot.none {
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(
+    135deg,
+    var(--surface) calc(50% - 1px),
+    var(--faint) calc(50% - 1px) calc(50% + 1px),
+    var(--surface) calc(50% + 1px)
+  );
+}
+
+.color-row.pick .color-choice input:checked + .color-dot.none::after {
+  content: "";
+}
+
+.color-row.pick .color-choice.auto .color-dot {
+  width: auto;
+  padding: 0 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.color-row.pick .color-choice.auto input:checked + .color-dot {
+  border-style: solid;
+  color: var(--text);
+}
+
+.color-row.pick .color-choice.auto input:checked + .color-dot::after {
+  content: none;
+}
+
+.account-colors {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.account-colors legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-colors .color-row {
+  margin-top: 2px;
+}
+
+/* Block colour in the target, per direction. */
+
+.block-color {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.block-color .color-row {
+  gap: 6px;
+  margin-top: 0;
+}
+
+.block-color .color-dot {
+  width: 20px;
+  height: 20px;
+}
+
+.block-category {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.block-category input {
+  width: 160px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.block-color-hint {
+  flex-basis: 100%;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.block-color.pending .block-color-label,
+.block-color.pending .block-category input {
+  color: var(--accent);
+}
+
+.block-color.pending .block-category input {
+  border-color: var(--accent);
+}
+
+/* The overview is narrow: there the colour mark stands for the account, without the logo. */
+.matrix .account-name svg {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  /* The name and colour form opens to the right of its link, inside the screen. */
+  .rename-form {
+    right: auto;
+    left: 0;
+    width: min(280px, calc(100vw - 78px));
+  }
+}

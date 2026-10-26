@@ -1,4 +1,5 @@
 import { recordAudit } from "./audit";
+import { ACCOUNT_COLORS, resolveAccountColors, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
@@ -29,6 +30,10 @@ export interface EditorAccount {
   needsReconnect: boolean;
   /** Short display name, derived from the address. */
   name: string;
+  /** Colour in the pages: the stored one, or the next unused one. */
+  color: AccountColor;
+  /** True if the user chose the colour; false if it is automatic. */
+  colorChosen: boolean;
   /** Main calendar; null until the calendars are loaded or if the account has none it can write. */
   calendar: { id: string; remoteId: string; canEdit: boolean } | null;
   /** Every calendar of the account, for the choice of sources. */
@@ -110,7 +115,7 @@ function toChoice(level: DetailLevel): Choice {
 export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
   const { results: accountRows } = await env.DB.prepare(
     `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
-            display_name AS displayName, needs_reconnect AS needsReconnect
+            display_name AS displayName, needs_reconnect AS needsReconnect, color
      FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
   )
     .bind(userId)
@@ -122,6 +127,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       inGroup: number;
       displayName: string | null;
       needsReconnect: number;
+      color: string | null;
     }>();
   const { results: calendarRows } = await env.DB.prepare(
     `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
@@ -140,6 +146,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       isSource: number;
     }>();
   const names = shortNames(accountRows.map((row) => row.email));
+  const colors = resolveAccountColors(accountRows.map((row) => row.color));
   const accounts: EditorAccount[] = accountRows.map((row, index) => {
     const own = calendarRows.filter((calendar) => calendar.accountId === row.id);
     const main = own.find((calendar) => calendar.isMain === 1);
@@ -151,6 +158,8 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       inGroup: row.inGroup === 1,
       needsReconnect: row.needsReconnect === 1,
       name: row.displayName ?? names[index] ?? row.email,
+      color: colors[index] ?? "slate",
+      colorChosen: row.color !== null && Object.hasOwn(ACCOUNT_COLORS, row.color),
       calendar: main ? { id: main.id, remoteId: main.remoteId, canEdit: main.canEdit === 1 } : null,
       calendars: own.map((calendar) => ({
         id: calendar.id,
@@ -322,6 +331,68 @@ export async function renameAccount(
     accountId,
     kind: "account_renamed",
   });
+}
+
+/**
+ * Give an account a colour, or make it automatic again with null. The colour only marks the
+ * account in the pages, so the audit log does not record it.
+ */
+export async function setAccountColor(
+  env: Env,
+  user: CurrentUser,
+  accountId: string,
+  color: AccountColor | null,
+): Promise<boolean> {
+  const updated = await env.DB.prepare("UPDATE accounts SET color = ? WHERE id = ? AND user_id = ?")
+    .bind(color, accountId, user.id)
+    .run();
+  return updated.meta.changes > 0;
+}
+
+/** Longest Outlook category name for blocks. */
+export const MAX_CATEGORY_LENGTH = 100;
+
+/**
+ * The block colour as stored for a target provider, or null if the value is not valid there:
+ * a Google event colour "1" to "11", or an Outlook category name. Empty means no colour.
+ */
+export function blockColorFor(provider: Provider, value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (provider === "google") return /^(?:[1-9]|1[01])$/.test(trimmed) ? trimmed : null;
+  return trimmed.length <= MAX_CATEGORY_LENGTH && !trimmed.includes(",") ? trimmed : null;
+}
+
+/**
+ * Set the colour of the blocks one direction writes, for every rule of the direction. A
+ * direction without rules ("off") has no blocks, so nothing is stored. Returns false for a value
+ * the target cannot show.
+ */
+export async function setBlockColor(
+  env: Env,
+  user: CurrentUser,
+  fromId: string,
+  toId: string,
+  value: string,
+): Promise<boolean> {
+  const state = await loadEditorState(env, user.id);
+  const to = state.accounts.find((account) => account.id === toId);
+  const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
+  if (!to || !direction) return false;
+  const blockColor = blockColorFor(to.provider, value);
+  if (blockColor === null) return false;
+  let changed = false;
+  for (const { rule } of direction.slots) {
+    if (!rule || rule.options.blockColor === blockColor) continue;
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND user_id = ?")
+      .bind(JSON.stringify({ ...rule.options, blockColor }), rule.id, user.id)
+      .run();
+    // The category name is the user's own word; the log records that the colour changed.
+    await audit(env, user, to.id, rule.id, "rule_updated", { blockColor: "changed" });
+    changed = true;
+  }
+  if (changed) await accountSync(env, to.id).requestSync();
+  return true;
 }
 
 /** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */

@@ -38,6 +38,7 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
     subject: withTitle ? event.subject : options.blockTitle,
     location: level === "title_location" || level === "full" ? event.location : "",
     body: level === "full" ? event.body : "",
+    ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
   };
 }
 

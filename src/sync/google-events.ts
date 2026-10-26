@@ -129,6 +129,8 @@ export function toGoogleBlock(block: DesiredBlock, ruleTag: string) {
     transparency: block.showAs === "free" ? "transparent" : "opaque",
     visibility: block.isPrivate ? "private" : "default",
     reminders: { useDefault: false, overrides: [] },
+    // null on an update removes a colour the rule no longer uses; invalid IDs never reach Google.
+    colorId: block.color && /^(?:[1-9]|1[01])$/.test(block.color) ? block.color : null,
     extendedProperties: {
       private: { [GOOGLE_MARKER_KEY]: `${ruleTag}.${block.marker}.${block.contentHash}` },
     },

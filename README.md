@@ -25,6 +25,11 @@ tokens stay with you and not with a sync service.
   others only as "Busy", marked private.
 - **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
   with title, or everything. An example event shows the result before you save.
+- **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
+  colour, or an Outlook category. Outlook shows the category's colour if the category exists in
+  that mailbox; create it in Outlook first.
+- **A colour per account.** Each account gets its own colour in the pages, automatically or
+  chosen under "Name and colour". It does not change any calendar.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes within seconds.** Microsoft and Google notify your deployment when a calendar

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
+import * as z from "zod/mini";
 import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
@@ -23,7 +24,8 @@ import { render } from "./render";
 import { auth } from "./routes/auth";
 import { dev } from "./routes/dev";
 import { rules } from "./routes/rules";
-import { loadEditorState, renameAccount } from "./editor";
+import { ACCOUNT_COLOR_KEYS } from "./colors";
+import { loadEditorState, renameAccount, setAccountColor } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
 import { loadUser } from "./users";
 import { policyFromEnv } from "./access";
@@ -152,11 +154,30 @@ app.get("/", async (c) => {
   );
 });
 
+/** "auto" or a palette key; the form of the account's name and colour sends it. */
+const accountColorField = z.enum(["auto", ...ACCOUNT_COLOR_KEYS]);
+
 app.post("/accounts/:id/name", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  const name = (await c.req.formData()).get("name");
-  await renameAccount(c.env, user, c.req.param("id"), typeof name === "string" ? name : "");
+  const form = await c.req.formData();
+  const accountId = c.req.param("id");
+  // The colour is optional, so that a form with the name only keeps working.
+  if (form.has("color")) {
+    const color = accountColorField.safeParse(form.get("color"));
+    if (!color.success) return c.text("Bad colour", 400);
+    const owned = await setAccountColor(
+      c.env,
+      user,
+      accountId,
+      color.data === "auto" ? null : color.data,
+    );
+    if (!owned) return c.notFound();
+  }
+  const name = form.get("name");
+  if (form.has("name")) {
+    await renameAccount(c.env, user, accountId, typeof name === "string" ? name : "");
+  }
   return c.redirect("/");
 });
 

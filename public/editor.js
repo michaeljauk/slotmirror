@@ -93,6 +93,24 @@
     });
   }
 
+  // The block colour of a direction counts as one change while it differs from the saved one.
+  const blockColorOf = (form) => new FormData(form).get("blockColor") ?? "";
+  const savedBlockColors = new Map();
+  for (const form of document.querySelectorAll("form.block-color[data-key]")) {
+    const key = `blockColor:${form.dataset.key}`;
+    savedBlockColors.set(key, blockColorOf(form));
+    const onChange = () => {
+      const value = blockColorOf(form);
+      if (value.trim() === savedBlockColors.get(key).trim()) pending.delete(key);
+      else pending.set(key, value);
+      form.classList.toggle("pending", pending.has(key));
+      refreshBar();
+    };
+    form.addEventListener("change", onChange);
+    form.addEventListener("input", onChange);
+    form.addEventListener("submit", (event) => event.preventDefault());
+  }
+
   // The settings form counts as one change while it differs from the saved settings.
   const settings = document.getElementById("settings");
   const readSettings = () => new URLSearchParams(new FormData(settings)).toString();
@@ -113,6 +131,10 @@
         const chip = document.querySelector(`.cal-chip[data-calendar="${key.slice(9)}"]`);
         chip?.classList.toggle("out", !savedSources.get(key.slice(9)));
         chip?.classList.remove("pending");
+      } else if (key.startsWith("blockColor:")) {
+        const form = document.querySelector(`form.block-color[data-key="${key.slice(11)}"]`);
+        form?.reset();
+        form?.classList.remove("pending");
       } else if (key !== "settings") show(key, original.get(key));
     }
     settings?.reset();
@@ -125,6 +147,11 @@
       if (key === "settings") continue;
       if (key.startsWith("calendar:")) {
         body.append(`calendar.${key.slice(9)}`, choice);
+        continue;
+      }
+      if (key.startsWith("blockColor:")) {
+        const [from, to] = key.slice(11).split(">");
+        body.append(`blockColor.${from}.${to}`, choice);
         continue;
       }
       const [from, to] = key.split(">");
@@ -145,7 +172,9 @@
       // Reload once, with the changed cards open, so that every label comes from the server.
       const open = [
         ...new Set(
-          [...pending.keys()].filter((key) => key.includes(">")).map((key) => key.split(">")[0]),
+          [...pending.keys()]
+            .filter((key) => key.includes(">"))
+            .map((key) => key.replace(/^blockColor:/, "").split(">")[0]),
         ),
       ];
       pending.clear();

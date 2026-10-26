@@ -37,6 +37,11 @@ export interface BlockContent {
   subject: string;
   location: string;
   body: string;
+  /**
+   * Google event colour ID or Outlook category of the block. Absent without a colour, so that the
+   * content hash of blocks without a colour stays as before.
+   */
+  color?: string;
 }
 
 /** A block that the target calendar should contain. */

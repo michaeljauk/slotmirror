@@ -13,6 +13,7 @@ describe("parseRuleOptions", () => {
       skipDeclined: true,
       skipCategories: [],
       markPrivate: true,
+      blockColor: "",
     });
   });
 

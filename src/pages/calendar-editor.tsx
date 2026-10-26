@@ -1,10 +1,12 @@
 import type { Child } from "hono/jsx";
+import { ACCOUNT_COLORS } from "../colors";
 import {
   CHOICES,
   type Choice,
   type EditorAccount,
   type EditorDirection,
   type EditorState,
+  MAX_CATEGORY_LENGTH,
 } from "../editor";
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
@@ -24,6 +26,11 @@ function directionOf(state: EditorState, from: string, to: string): EditorDirect
   return state.directions.find((d) => d.from === from && d.to === to);
 }
 
+/** The CSS variable that carries an account's colour into its elements. */
+export function colorStyle(account: Pick<EditorAccount, "color">): string {
+  return `--c:${ACCOUNT_COLORS[account.color]}`;
+}
+
 /** How a sample event of the source looks in the target with a choice. */
 function Example(props: { source: EditorAccount; direction: EditorDirection; choice: Choice }) {
   const { t } = useI18n();
@@ -34,16 +41,18 @@ function Example(props: { source: EditorAccount; direction: EditorDirection; cho
     : t.editor.sampleWork;
   const busyTitle = props.direction.options?.blockTitle ?? "Busy";
   return (
-    <span class="ev">
+    <span class="ev" style={colorStyle(props.source)}>
       <b>{choice === "busy" ? busyTitle : sample.title}</b>
       {choice === "full" ? ` 10:00–11:00 · ${sample.detail}` : " 10:00–11:00"}
     </span>
   );
 }
 
+/** Name of an account with its colour mark and provider logo. */
 function AccountName(props: { account: EditorAccount }) {
   return (
-    <span class="account-name">
+    <span class="account-name" style={colorStyle(props.account)}>
+      <i class="mark" aria-hidden="true" />
       <ProviderIcon provider={props.account.provider} size={13} />
       {props.account.name}
     </span>
@@ -64,7 +73,7 @@ function Switch(props: { name: string; checked: boolean; title: string; hint: st
 }
 
 /** Google's event colours by ID, as Google Calendar shows them. */
-const GOOGLE_COLORS: readonly { id: string; hex: string }[] = [
+export const GOOGLE_COLORS: readonly { id: string; hex: string }[] = [
   { id: "1", hex: "#7986cb" },
   { id: "2", hex: "#33b679" },
   { id: "3", hex: "#8e24aa" },
@@ -214,6 +223,69 @@ function GroupCard(props: { state: EditorState }) {
   );
 }
 
+/**
+ * The colour of the blocks in the target: a Google event colour, or an Outlook category. With the
+ * editor script a change joins the page's unsaved changes.
+ */
+function BlockColor(props: {
+  source: EditorAccount;
+  target: EditorAccount;
+  direction: EditorDirection;
+}) {
+  const { t } = useI18n();
+  const { direction, source, target } = props;
+  if (!direction.ruleId || direction.effective === "off") return null;
+  const value = direction.options?.blockColor ?? "";
+  return (
+    <form
+      method="post"
+      action="/rules/direction/color"
+      class="dest-note block-color"
+      data-key={`${source.id}>${target.id}`}
+    >
+      <input type="hidden" name="from" value={source.id} />
+      <input type="hidden" name="to" value={target.id} />
+      {target.provider === "google" ? (
+        <>
+          <span class="block-color-label">{t.editor.blockColorLabel}</span>
+          <span class="color-row pick" role="radiogroup" aria-label={t.editor.blockColorLabel}>
+            <label class="color-choice" title={t.editor.blockColorNone}>
+              <input type="radio" name="blockColor" value="" checked={value === ""} />
+              <span class="color-dot none" />
+            </label>
+            {GOOGLE_COLORS.map((color) => (
+              <label class="color-choice" title={t.editor.googleColor(color.id)}>
+                <input
+                  type="radio"
+                  name="blockColor"
+                  value={color.id}
+                  checked={value === color.id}
+                />
+                <span class="color-dot" style={`background:${color.hex}`} />
+              </label>
+            ))}
+          </span>
+        </>
+      ) : (
+        <label class="block-category">
+          <span class="block-color-label">{t.editor.blockCategoryLabel}</span>
+          <input
+            type="text"
+            name="blockColor"
+            maxlength={MAX_CATEGORY_LENGTH}
+            value={value}
+            placeholder={t.editor.blockCategoryPlaceholder}
+          />
+          <span class="block-color-hint">{t.editor.blockCategoryHint}</span>
+        </label>
+      )}
+      <button type="submit" class="button small nojs-only">
+        {t.editor.save}
+      </button>
+    </form>
+  );
+}
+
 function DestinationRow(props: {
   state: EditorState;
   source: EditorAccount;
@@ -255,6 +327,7 @@ function DestinationRow(props: {
           </span>
         ))}
       </div>
+      <BlockColor source={source} target={target} direction={direction} />
       {fromGroup ? <div class="dest-note faint">{t.editor.fromGroup}</div> : null}
       {isException ? (
         <form method="post" action="/rules/direction/reset" class="dest-note faint card-form">
@@ -293,7 +366,13 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
   const { state, source } = props;
   const targets = state.accounts.filter((account) => account.id !== source.id && account.calendar);
   return (
-    <details class="card source" id={`src-${source.id}`} open={props.open} data-source={source.id}>
+    <details
+      class="card source"
+      id={`src-${source.id}`}
+      open={props.open}
+      data-source={source.id}
+      style={colorStyle(source)}
+    >
       <summary class="source-head">
         <span class="provider-icon">
           <ProviderIcon provider={source.provider} size={16} />

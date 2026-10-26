@@ -28,6 +28,11 @@ export const ruleOptionsSchema = z.object({
   ),
   /** Mark blocks as private so that people with access to the target calendar see no detail. */
   markPrivate: z._default(z.boolean(), true),
+  /**
+   * Colour of the blocks in the target calendar: a Google event colour ID ("1" to "11"), or an
+   * Outlook category name. Empty: no colour, the calendar's default.
+   */
+  blockColor: z._default(z.string().check(z.maxLength(100)), ""),
 });
 
 export type RuleOptions = z.infer<typeof ruleOptionsSchema>;

@@ -7,7 +7,7 @@ import {
   LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
 } from "../src/sync/graph-events";
-import { desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
+import { claimsFrom, desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
 import fixture from "./fixtures/graph/calendar-view.json";
 
@@ -218,7 +218,7 @@ describe("planSync", () => {
     if (!claimed) throw new Error("no block");
     const copies = await desiredBlocks("rule-b", events, options(), {
       scope: "user",
-      claimed: new Set([claimed.dedupKey]),
+      claimed: claimsFrom([claimed]),
     });
     expect(copies).toHaveLength(kept.length - 1);
     expect(copies.some((block) => block.dedupKey === claimed.dedupKey)).toBe(false);
@@ -421,20 +421,91 @@ describe("buffer", () => {
     expect(planSync(again, asExisting(blocks)).actions).toEqual([]);
   });
 
-  it("dedups rules with the same buffer, but not rules with different buffers", async () => {
-    const a = await blockOf(timed, { bufferBefore: 15 }, "rule-a");
-    const same = await blockOf(timed, { bufferBefore: 15 }, "rule-b");
-    const other = await blockOf(timed, { bufferBefore: 30 }, "rule-b");
-    const none = await blockOf(timed, {}, "rule-b");
-    expect(same.dedupKey).toBe(a.dedupKey);
-    expect(other.dedupKey).not.toBe(a.dedupKey);
-    expect(none.dedupKey).not.toBe(a.dedupKey);
+  it("builds the dedup key from the event's times, so a buffer does not change it", async () => {
+    const none = await blockOf(timed, {}, "rule-a");
+    const before = await blockOf(timed, { bufferBefore: 15 }, "rule-b");
+    const both = await blockOf(timed, { bufferBefore: 30, bufferAfter: 30 }, "rule-b");
+    expect(before.dedupKey).toBe(none.dedupKey);
+    expect(both.dedupKey).toBe(none.dedupKey);
+    // A different event at the times of the buffered block is still a different block.
+    const wide = { ...timed, start: before.start };
+    expect((await blockOf(wide, {}, "rule-b")).dedupKey).not.toBe(none.dedupKey);
+  });
 
-    const claimed = new Set([a.dedupKey]);
-    const write = (overrides: Partial<RuleOptions>) =>
-      desiredBlocks("rule-b", [timed], options(overrides), { scope: "user", claimed });
-    expect(await write({ bufferBefore: 15 })).toEqual([]);
-    const [own] = await write({ bufferBefore: 30 });
-    expect(own).toMatchObject({ start: "2026-10-27T09:30:00.000Z", dedupKey: other.dedupKey });
+  it("leaves out an event that a block with precedence covers, buffers included", async () => {
+    const write = async (claimer: Partial<RuleOptions>, own: Partial<RuleOptions>) => {
+      const claimed = claimsFrom([await blockOf(timed, claimer, "rule-a")]);
+      return desiredBlocks("rule-b", [timed], options(own), { scope: "user", claimed });
+    };
+    // The block with precedence is as wide or wider: one block, the meeting is not doubled.
+    expect(await write({ bufferBefore: 30 }, { bufferBefore: 15 })).toEqual([]);
+    expect(await write({ bufferBefore: 15 }, { bufferBefore: 15 })).toEqual([]);
+    expect(await write({ bufferAfter: 10 }, {})).toEqual([]);
+    // It is narrower: the rule writes its own block, so its buffer is not lost.
+    const [own] = await write({ bufferBefore: 15 }, { bufferBefore: 30 });
+    expect(own).toMatchObject({ start: "2026-10-27T09:30:00.000Z" });
+    expect(await write({}, { bufferAfter: 5 })).toHaveLength(1);
+  });
+});
+
+describe("planSync in a sync window", () => {
+  const window = {
+    start: new Date("2026-10-27T00:00:00.000Z"),
+    end: new Date("2026-11-26T00:00:00.000Z"),
+  };
+  const event = (key: string, start: string, end: string, allDay = false): SourceEvent => ({
+    occurrenceKey: key,
+    start,
+    end,
+    allDay,
+    showAs: "busy",
+    isPrivate: false,
+    declined: false,
+    categories: [],
+    subject: "x",
+    location: "",
+    body: "",
+    isMirror: false,
+  });
+
+  it("plans no block that lies outside the window, such as yesterday's all-day event", async () => {
+    const events = [
+      event("event:yesterday", "2026-10-26", "2026-10-27", true),
+      event("event:today", "2026-10-27", "2026-10-28", true),
+    ];
+    const desired = await desiredBlocks(RULE, events, options({ skipAllDay: false }));
+    const plan = planSync(desired, [], window);
+    expect(plan.actions.map((a) => a.kind === "create" && a.block.start)).toEqual(["2026-10-27"]);
+  });
+
+  it("plans the block of an event before the window that its buffer moves into it", async () => {
+    const events = [event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-26T23:50:00.000Z")];
+    const desired = await desiredBlocks(RULE, events, options({ bufferAfter: 30 }));
+    expect(planSync(desired, [], window).stats.create).toBe(1);
+  });
+
+  it("keeps a block that starts before the window when its event is no longer read", async () => {
+    const night = event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-26T23:50:00.000Z");
+    const later = event("event:later", "2026-10-27T09:00:00.000Z", "2026-10-27T10:00:00.000Z");
+    const written = await desiredBlocks(RULE, [night, later], options({ bufferAfter: 30 }));
+    // The buffer went down to 0: the night event is outside the read, its block is history.
+    const desired = await desiredBlocks(RULE, [], options());
+    const plan = planSync(desired, asExisting(written), window);
+    expect(plan.actions).toEqual([
+      { kind: "delete", targetId: "target-1", marker: written[1]?.marker },
+    ]);
+    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 1 });
+  });
+
+  it("still moves a block that starts before the window when its event moved", async () => {
+    const night = event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-27T01:00:00.000Z");
+    const written = await desiredBlocks(RULE, [night], options());
+    const moved = { ...night, start: "2026-10-27T15:00:00.000Z", end: "2026-10-27T16:00:00.000Z" };
+    const plan = planSync(
+      await desiredBlocks(RULE, [moved], options()),
+      asExisting(written),
+      window,
+    );
+    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
   });
 });

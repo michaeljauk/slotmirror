@@ -10,7 +10,7 @@ import {
 } from "./providers/calendar-client";
 import { clientCredentials, oauthClient } from "./providers/oauth-clients";
 import { TokenError, type TokenResponse } from "./providers/oauth-token";
-import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
+import { claimsFrom, desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
 import {
   cleanupWindow,
   loadRule,
@@ -545,16 +545,12 @@ export class AccountSync extends DurableObject<Env> {
       ...precedingTags,
     ]);
     const existing = blocks.filter((block) => block.ruleTag === ruleTag);
-    const claimed = new Set(
-      blocks
-        .filter((block) => block.ruleTag !== ruleTag && block.dedupKey !== "")
-        .map((block) => block.dedupKey),
-    );
+    const claimed = claimsFrom(blocks.filter((block) => block.ruleTag !== ruleTag));
     const desired = await desiredBlocks(rule.id, sourceEvents, ruleOptions, {
       scope: rule.userId,
       claimed,
     });
-    const plan = planSync(desired, existing);
+    const plan = planSync(desired, existing, window);
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

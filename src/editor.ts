@@ -636,7 +636,8 @@ export async function setSourceCalendar(
 
 /**
  * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
- * and the buffers go too, because the group writes blocks without them.
+ * and the buffers go back to none too, so that the direction is the plain default again. A group
+ * direction can still get a colour or a buffer later; that does not make it an exception.
  */
 export async function resetDirection(
   env: Env,

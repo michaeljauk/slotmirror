@@ -182,6 +182,16 @@
   });
 
   bar.querySelector(".edit-save").addEventListener("click", async () => {
+    // A buffer outside its limits, or text in a number field, stops the save with the browser's
+    // own message; the server would refuse the whole save.
+    const invalid = [...document.querySelectorAll("form.block-buffer input")].find(
+      (input) => !input.checkValidity(),
+    );
+    if (invalid) {
+      invalid.closest("details")?.setAttribute("open", "");
+      invalid.reportValidity();
+      return;
+    }
     const body = new URLSearchParams();
     for (const [key, choice] of pending) {
       if (key === "settings") continue;

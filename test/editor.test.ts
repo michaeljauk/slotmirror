@@ -496,6 +496,55 @@ describe("block buffer per direction", () => {
     expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, bufferAfter: 30 });
   });
 
+  it("saves nothing from a page save with one invalid value", async () => {
+    const { user, cookie, w, o, g } = await setup("bufall");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES ('bufall-team', ?, 'team', 'Team', 0, 0, 0)",
+    )
+      .bind(w)
+      .run();
+    await setDirection(env, user, w, g, "busy");
+    const save = (fields: Record<string, string>) =>
+      exports.default.fetch(`${BASE}/rules/choices`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(fields),
+      });
+    const valid = {
+      "calendar.bufall-team": "1",
+      [`choice.${w}.${o}`]: "title",
+      [`blockColor.${w}.${g}`]: "5",
+      [`bufferBefore.${w}.${g}`]: "15",
+      settings: "1",
+      "settings.daysAhead": "30",
+    };
+    for (const invalid of [
+      { [`bufferAfter.${w}.${g}`]: "300" },
+      { [`choice.${w}.${o}`]: "everything" },
+      { [`blockColor.${w}.${g}`]: "Focus" },
+      { [`bufferAfter.unknown.${g}`]: "5" },
+    ]) {
+      expect((await save({ ...valid, ...invalid })).status).toBe(400);
+    }
+    expect(await rulesOf(user.id)).toEqual([
+      expect.objectContaining({ source: w, target: g, level: "busy" }),
+    ]);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({
+      blockColor: "",
+      bufferBefore: 0,
+      bufferAfter: 0,
+      daysAhead: 90,
+    });
+    const calendar = await env.DB.prepare("SELECT is_source FROM calendars WHERE id = ?")
+      .bind("bufall-team")
+      .first<{ is_source: number }>();
+    expect(calendar?.is_source).toBe(0);
+
+    expect((await save(valid)).status).toBe(204);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ blockColor: "5", bufferBefore: 15 });
+  });
+
   it("saves from the form without the editor script, and the reset clears the buffers", async () => {
     const { user, cookie, w, g } = await setup("bufform");
     await setGroupMembership(env, user, w, true);

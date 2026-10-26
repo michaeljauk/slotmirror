@@ -81,7 +81,8 @@ export async function inPrecedenceOrder(ruleIds: string[]): Promise<string[]> {
  * Two blocks with the same key block the same way, so one of them is enough. The same match in two
  * subscribed calendars gets one key; so do two private "Busy" blocks at the same time. A tentative
  * block never stands in for a busy one, and an open block never for a private one. The times are
- * those of the block, buffers included, so rules with different buffers each write their block.
+ * those of the event, without buffers, so that rules with different buffers find the same meeting;
+ * see `desiredBlocks` for which block stays.
  */
 export async function dedupKeyFor(scope: string, content: BlockContent): Promise<string> {
   const subject = content.subject.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
@@ -107,25 +108,52 @@ async function shortHash(text: string): Promise<string> {
   ).join("");
 }
 
+/** Times of the blocks that rules with precedence wrote, by dedup key. */
+export type Claims = ReadonlyMap<string, readonly { start: string; end: string }[]>;
+
+/** The claims of blocks that rules with precedence wrote. Blocks without a dedup key claim nothing. */
+export function claimsFrom(blocks: { dedupKey: string; start: string; end: string }[]): Claims {
+  const claims = new Map<string, { start: string; end: string }[]>();
+  for (const { dedupKey, start, end } of blocks) {
+    if (dedupKey === "") continue;
+    claims.set(dedupKey, [...(claims.get(dedupKey) ?? []), { start, end }]);
+  }
+  return claims;
+}
+
+/** True if a claimed block covers the times of a block, so that the block adds nothing. */
+function isCovered(content: BlockContent, claims: Claims | undefined, dedupKey: string): boolean {
+  return (claims?.get(dedupKey) ?? []).some(
+    (claim) =>
+      Date.parse(claim.start) <= Date.parse(content.start) &&
+      Date.parse(claim.end) >= Date.parse(content.end),
+  );
+}
+
 /**
  * All blocks the target calendar should contain for one rule.
  *
- * `dedup.scope` scopes the dedup keys, normally to the user. `dedup.claimed` holds the dedup keys
- * of blocks that rules with precedence wrote into the same calendar; the rule leaves out events
- * whose block would look the same, so that an event in several source calendars is blocked once.
+ * `dedup.scope` scopes the dedup keys, normally to the user. `dedup.claimed` holds the blocks
+ * that rules with precedence wrote into the same calendar. The rule leaves out an event whose
+ * block would look the same and that such a block covers, buffers included, so that an event in
+ * several source calendars is blocked once. A rule with a wider buffer still writes its own block.
  */
 export async function desiredBlocks(
   ruleId: string,
   events: SourceEvent[],
   options: RuleOptions,
-  dedup: { scope: string; claimed?: ReadonlySet<string> } = { scope: "" },
+  dedup: { scope: string; claimed?: Claims } = { scope: "" },
 ): Promise<DesiredBlock[]> {
   const blocks = new Map<string, DesiredBlock>();
   for (const event of events) {
     if (!isIncluded(event, options)) continue;
     const content = blockContent(event, options);
-    const dedupKey = await dedupKeyFor(dedup.scope, content);
-    if (dedup.claimed?.has(dedupKey)) continue;
+    const dedupKey = await dedupKeyFor(dedup.scope, {
+      ...content,
+      start: event.start,
+      end: event.end,
+    });
+    if (isCovered(content, dedup.claimed, dedupKey)) continue;
     const marker = await markerFor(ruleId, event.occurrenceKey);
     const contentHash = await shortHash(JSON.stringify(content));
     blocks.set(marker, { marker, contentHash, dedupKey, ...content });
@@ -155,14 +183,42 @@ function sameInstant(a: string, b: string): boolean {
   return !Number.isNaN(ta) && ta === tb;
 }
 
+/** True if a block overlaps a window. All-day dates count from midnight UTC. */
+function overlaps(block: { start: string; end: string }, window: SyncWindow): boolean {
+  return (
+    Date.parse(block.start) < window.end.getTime() && Date.parse(block.end) > window.start.getTime()
+  );
+}
+
+/** True if a block reaches into a window from before its start. */
+function startsBefore(block: { start: string; end: string }, window: SyncWindow): boolean {
+  return Date.parse(block.start) < window.start.getTime() && overlaps(block, window);
+}
+
+export interface SyncWindow {
+  start: Date;
+  end: Date;
+}
+
 /**
  * Compare what the target should contain with what it contains, inside one sync window.
  *
  * The plan creates missing blocks, updates changed ones and deletes blocks whose source occurrence
  * is gone. Duplicates of a marker (for example after a crash between write and bookkeeping) are
  * deleted except one. It never rebuilds blocks that already match.
+ *
+ * With the `window` of the run, the plan writes no all-day block outside it. The source is read
+ * wider than the window for the buffers, so the read can hold an all-day event of yesterday, which
+ * gets no buffer; the target read would never find its block again. A timed event in the read
+ * always has its buffered block in the window. A block that starts before the window and has no
+ * source event any more stays as a record: its event can lie outside the source read, for example
+ * after the buffer went down.
  */
-export function planSync(desired: DesiredBlock[], existing: ExistingBlock[]): SyncPlan {
+export function planSync(
+  desired: DesiredBlock[],
+  existing: ExistingBlock[],
+  window?: SyncWindow,
+): SyncPlan {
   const actions: SyncAction[] = [];
   let unchanged = 0;
 
@@ -174,6 +230,7 @@ export function planSync(desired: DesiredBlock[], existing: ExistingBlock[]): Sy
   }
 
   for (const block of desired) {
+    if (window && block.allDay && !overlaps(block, window)) continue;
     const [current, ...duplicates] = existingByMarker.get(block.marker) ?? [];
     existingByMarker.delete(block.marker);
     for (const duplicate of duplicates) {
@@ -189,7 +246,11 @@ export function planSync(desired: DesiredBlock[], existing: ExistingBlock[]): Sy
   }
 
   for (const orphans of existingByMarker.values()) {
-    for (const orphan of orphans) {
+    for (const [index, orphan] of orphans.entries()) {
+      if (index === 0 && window && startsBefore(orphan, window)) {
+        unchanged++;
+        continue;
+      }
       actions.push({ kind: "delete", targetId: orphan.targetId, marker: orphan.marker });
     }
   }

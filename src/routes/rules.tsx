@@ -5,6 +5,7 @@ import { refreshUserCalendars, userCalendars } from "../calendars";
 import { ruleOptionsSchema, setupStatus } from "../config";
 import { i18nFromContext, useI18n as i18nForStatus } from "../i18n";
 import {
+  blockColorFor,
   CHOICES,
   deleteRuleWithBlocks,
   loadEditorState,
@@ -191,50 +192,58 @@ rules.post("/direction", async (c) => {
   return backTo(c, from);
 });
 
-// All unsaved choices of the page, sent by the editor script: fields "choice.<from>.<to>".
+// All unsaved changes of the page, sent by the editor script: fields "choice.<from>.<to>" and
+// others. Every field is checked before the first write, so that a save is all or nothing.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const form = await c.req.formData();
-  // Source calendars first, so that the choices below also reach newly chosen calendars.
-  for (const [name, value] of form.entries()) {
-    const [prefix, calendarId, ...rest] = name.split(".");
-    if (prefix !== "calendar" || !calendarId || rest.length > 0) continue;
-    await setSourceCalendar(c.env, user, calendarId, value === "1");
-  }
+  const state = await loadEditorState(c.env, user.id);
+  const directionOf = (from: string, to: string) =>
+    state.directions.find((d) => d.from === from && d.to === to);
+
+  const calendars: { calendarId: string; isSource: boolean }[] = [];
   const changes: { from: string; to: string; choice: Choice }[] = [];
+  const colors: { from: string; to: string; value: string }[] = [];
+  const buffers = new Map<string, { from: string; to: string; buffer: BlockBuffer }>();
   for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "choice" || !from || !to || rest.length > 0) continue;
-    if (typeof value !== "string" || !(CHOICES as readonly string[]).includes(value)) {
-      return c.text("Bad choice", 400);
+    const [prefix, first, second, ...rest] = name.split(".");
+    if (prefix === "calendar" && first && !second) {
+      calendars.push({ calendarId: first, isSource: value === "1" });
+      continue;
     }
-    changes.push({ from, to, choice: value as Choice });
+    // Fields "<prefix>.<from>.<to>"; other names are not the editor's and stay ignored.
+    if (!first || !second || rest.length > 0 || typeof value !== "string") continue;
+    const [from, to] = [first, second];
+    if (prefix === "choice") {
+      if (!(CHOICES as readonly string[]).includes(value)) return c.text("Bad choice", 400);
+      changes.push({ from, to, choice: value as Choice });
+    } else if (prefix === "blockColor") {
+      const target = state.accounts.find((account) => account.id === to);
+      if (!target || !directionOf(from, to) || blockColorFor(target.provider, value) === null) {
+        return c.text("Bad block colour", 400);
+      }
+      colors.push({ from, to, value });
+    } else if (prefix === "bufferBefore" || prefix === "bufferAfter") {
+      const entry = buffers.get(`${from}>${to}`) ?? { from, to, buffer: {} };
+      entry.buffer[prefix] = minutes(value);
+      if (!directionOf(from, to) || !ruleOptionsSchema.safeParse(entry.buffer).success) {
+        return c.text("Bad buffer", 400);
+      }
+      buffers.set(`${from}>${to}`, entry);
+    }
+  }
+
+  // Source calendars first, so that the choices below also reach newly chosen calendars.
+  for (const { calendarId, isSource } of calendars) {
+    await setSourceCalendar(c.env, user, calendarId, isSource);
   }
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
-  // Block colours after the choices, so that a direction turned on in the same save has its rules.
-  for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "blockColor" || !from || !to || rest.length > 0) continue;
-    if (typeof value !== "string" || !(await setBlockColor(c.env, user, from, to, value))) {
-      return c.text("Bad block colour", 400);
-    }
-  }
-  // Buffers per direction: fields "bufferBefore.<from>.<to>" and "bufferAfter.<from>.<to>".
-  const buffers = new Map<string, { from: string; to: string; buffer: BlockBuffer }>();
-  for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "bufferBefore" && prefix !== "bufferAfter") continue;
-    if (!from || !to || rest.length > 0 || typeof value !== "string") {
-      return c.text("Bad buffer", 400);
-    }
-    const entry = buffers.get(`${from}>${to}`) ?? { from, to, buffer: {} };
-    entry.buffer[prefix] = minutes(value);
-    buffers.set(`${from}>${to}`, entry);
-  }
+  // Colours and buffers after the choices, so that a direction turned on in this save has rules.
+  for (const { from, to, value } of colors) await setBlockColor(c.env, user, from, to, value);
   for (const { from, to, buffer } of buffers.values()) {
-    if (!(await setBlockBuffer(c.env, user, from, to, buffer))) return c.text("Bad buffer", 400);
+    await setBlockBuffer(c.env, user, from, to, buffer);
   }
   if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);

@@ -56,8 +56,49 @@ function writtenBlocks(calls: { url: string; init?: RequestInit }[], prefix: str
     });
 }
 
-/** Fake Graph and token endpoint. Records every request. */
-function fakeGraph(target: unknown[] = []) {
+/** Start or end of a Graph event as a UTC instant. */
+function graphInstant(time: { dateTime: string }): number {
+  return Date.parse(`${time.dateTime.replace(/\.\d+$/, "")}Z`);
+}
+
+/** The events that overlap the window a calendarView request asks for, as Graph answers. */
+function inRequestedWindow(url: string, events: unknown[]): unknown[] {
+  const params = new URL(url).searchParams;
+  const start = Date.parse(params.get("startDateTime") ?? "");
+  const end = Date.parse(params.get("endDateTime") ?? "");
+  return events.filter((raw) => {
+    const event = raw as { start: { dateTime: string }; end: { dateTime: string } };
+    return graphInstant(event.end) > start && graphInstant(event.start) < end;
+  });
+}
+
+/** A single Graph event in UTC, built from the fixture's single event. */
+function graphEvent(id: string, start: Date, end: Date, isAllDay = false) {
+  const template = fixture.value.find((event) => event.subject === "FBS single");
+  const time = (date: Date) => ({ dateTime: date.toISOString().slice(0, 19), timeZone: "UTC" });
+  return {
+    ...template,
+    id,
+    type: "singleInstance",
+    seriesMasterId: null,
+    originalStart: null,
+    isAllDay,
+    start: time(start),
+    end: time(end),
+  };
+}
+
+/**
+ * Fake Graph and token endpoint. Records every request. With `windowed`, calendarView answers
+ * only the events in the requested window, so that tests can cover the edges of the window.
+ */
+function fakeGraph(
+  target: unknown[] = [],
+  options: { source?: unknown[]; windowed?: boolean } = {},
+) {
+  const source = options.source ?? fixture.value;
+  const answer = (url: string, events: unknown[]) =>
+    Response.json({ value: options.windowed ? inRequestedWindow(url, events) : events });
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -70,9 +111,8 @@ function fakeGraph(target: unknown[] = []) {
       });
     }
     // Also matches further source calendars such as `remote-source-2`.
-    if (url.includes(`/calendars/${SOURCE_CAL}`)) return Response.json({ value: fixture.value });
-    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
-      return Response.json({ value: target });
+    if (url.includes(`/calendars/${SOURCE_CAL}`)) return answer(url, source);
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) return answer(url, target);
     if (url.endsWith("/$batch")) {
       const body = JSON.parse(init?.body as string) as {
         requests: { id: string; method: string }[];
@@ -258,6 +298,51 @@ describe("AccountSync.runRule", () => {
       delete: 0,
       unchanged: 15,
     });
+  });
+
+  it("writes one block where two rules with different buffers would write one event", async () => {
+    const { stub, ruleId } = await setupRule("acc-dedupe-buffer");
+    await stub.storeTokens("acc-dedupe-buffer", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const owner = await env.DB.prepare("SELECT user_id FROM rules WHERE id = ?")
+      .bind(ruleId)
+      .first<{ user_id: string }>();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Copy')",
+      ).bind("acc-dedupe-buffer-src2", "acc-dedupe-buffer", `${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, ?, ?)",
+      ).bind(
+        "acc-dedupe-buffer-rule-2",
+        owner?.user_id,
+        "acc-dedupe-buffer-src2",
+        "acc-dedupe-buffer-dst",
+      ),
+    ]);
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-dedupe-buffer-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+    const setOptions = (id: string, options: object) =>
+      env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+        .bind(JSON.stringify(options), id)
+        .run();
+    await setOptions(first, { bufferBefore: 30 });
+    await setOptions(second, { bufferBefore: 15 });
+
+    const calls = fakeGraph();
+    expect(await stub.runRule(first)).toMatchObject({ applied: 15 });
+    const kept = writtenBlocks(calls, "kept");
+    vi.restoreAllMocks();
+
+    // The blocks with precedence cover the narrower ones: the meeting is not written twice.
+    fakeGraph(kept);
+    expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({ create: 0 });
+    // A wider buffer is not covered; that rule writes its own blocks, so its buffer stays.
+    await setOptions(second, { bufferBefore: 45 });
+    expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({ create: 15 });
   });
 
   it("refreshes an expired token once and stores the rotated refresh token", async () => {
@@ -903,5 +988,67 @@ describe("written IDs", () => {
     await stub.runRule(ruleId);
     expect(await stub.isOwnEcho(["created-0", "created-1"])).toBe(true);
     expect(await stub.isOwnEcho(["created-0", "other"])).toBe(false);
+  });
+});
+
+describe("buffers at the edges of the sync window", () => {
+  const now = new Date();
+  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  /** Minutes from the start of the current UTC day, where the sync window starts. */
+  const at = (minutes: number) => new Date(midnight + minutes * 60_000);
+
+  async function bufferRule(accountId: string, options: object) {
+    const { stub, ruleId } = await setupRule(accountId, options);
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    return { stub, ruleId };
+  }
+
+  const nothingToDo = (unchanged: number) => ({ create: 0, update: 0, delete: 0, unchanged });
+
+  it("keeps the block of an event that ended before the window, buffered into it", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge", { bufferAfter: 30 });
+    const source = [graphEvent("night", at(-60), at(-10))];
+    const calls = fakeGraph([], { source, windowed: true });
+    expect((await stub.runRule(ruleId)).stats).toMatchObject({ create: 1 });
+    const written = writtenBlocks(calls, "edge");
+    vi.restoreAllMocks();
+
+    fakeGraph(written, { source, windowed: true });
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual(nothingToDo(1));
+  });
+
+  it("writes no block for yesterday's all-day event, run after run", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-allday", {
+      skipAllDay: false,
+      bufferAfter: 30,
+    });
+    const source = [
+      graphEvent("yesterday", at(-1440), at(0), true),
+      graphEvent("today", at(0), at(1440), true),
+    ];
+    const calls = fakeGraph([], { source, windowed: true });
+    expect((await stub.runRule(ruleId)).stats).toMatchObject({ create: 1 });
+    const written = writtenBlocks(calls, "allday");
+    vi.restoreAllMocks();
+
+    fakeGraph(written, { source, windowed: true });
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual(nothingToDo(1));
+  });
+
+  it("keeps a block from before the window when the buffer goes down", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-lower", { bufferAfter: 30 });
+    const source = [graphEvent("night", at(-60), at(-10))];
+    const calls = fakeGraph([], { source, windowed: true });
+    expect((await stub.runRule(ruleId)).stats).toMatchObject({ create: 1 });
+    const written = writtenBlocks(calls, "lower");
+    vi.restoreAllMocks();
+
+    await env.DB.prepare("UPDATE rules SET options = '{}' WHERE id = ?").bind(ruleId).run();
+    fakeGraph(written, { source, windowed: true });
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual(nothingToDo(1));
   });
 });

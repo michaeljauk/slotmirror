@@ -186,7 +186,7 @@ export class GraphCalendar implements CalendarClient {
     if (!response.ok) throw await graphError(response, "$batch");
     const body = batchResponseSchema.parse(await response.json());
     const byId = new Map(body.responses.map((item) => [item.id, item]));
-    return summarizeBatch(actions, (index) => {
+    const result = summarizeBatch(actions, (index) => {
       const item = byId.get(String(index));
       return {
         status: item?.status,
@@ -194,6 +194,14 @@ export class GraphCalendar implements CalendarClient {
         retryAfterMs: parseRetryAfter(retryAfterHeader(item?.headers)),
       };
     });
+    const writtenIds = actions.flatMap((action, index) => {
+      const item = byId.get(String(index));
+      if (!item || item.status >= 300) return [];
+      if (action.kind !== "create") return [action.targetId];
+      const id = (item.body as { id?: unknown } | undefined)?.id;
+      return typeof id === "string" ? [id] : [];
+    });
+    return { ...result, writtenIds };
   }
 
   async watch(calendarId: string, url: string, token: string, expiresAt: number): Promise<Watch> {

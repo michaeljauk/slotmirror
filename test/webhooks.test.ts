@@ -139,3 +139,70 @@ describe("watches", () => {
     expect(calls.map((call) => call.method)).toEqual(["DELETE"]);
   });
 });
+
+describe("cron ticks", () => {
+  const queueOf = (id: string) =>
+    runInDurableObject(env.ACCOUNT_SYNC.getByName(id), (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+  const setFullCycle = (id: string, at: number) =>
+    runInDurableObject(env.ACCOUNT_SYNC.getByName(id), (_instance, state) =>
+      state.storage.put("fullCycleAt", at),
+    );
+
+  it("polls only rules whose calendars have no active watch, and runs a full cycle hourly", async () => {
+    const { a, b } = await setup("tick");
+    const stub = env.ACCOUNT_SYNC.getByName(b);
+
+    // No full cycle yet: the tick starts one.
+    await stub.tick();
+    expect(await alarmOf(b)).not.toBeNull();
+    expect(await queueOf(b)).toBeUndefined();
+
+    // After a recent full cycle, an unwatched source is polled.
+    await runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm());
+    await setFullCycle(b, Date.now());
+    await stub.tick();
+    expect(await queueOf(b)).toEqual(["tick-rule"]);
+
+    // With both calendars watched, nothing is queued.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.delete("ruleQueue");
+      await state.storage.deleteAlarm();
+    });
+    await env.DB.prepare("UPDATE calendars SET watched_until = ? WHERE account_id IN (?, ?)")
+      .bind(Date.now() + 86_400_000, a, b)
+      .run();
+    await stub.tick();
+    expect(await queueOf(b)).toBeUndefined();
+    expect(await alarmOf(b)).toBeNull();
+
+    // An hour later the check runs anyway.
+    await setFullCycle(b, Date.now() - 61 * 60_000);
+    await stub.tick();
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+});
+
+describe("echo filter", () => {
+  it("skips a Graph notification about blocks this deployment just wrote", async () => {
+    const { a, b } = await setup("echo");
+    await runInDurableObject(env.ACCOUNT_SYNC.getByName(a), (_instance, state) =>
+      state.storage.put("recentWrites", { "block-1": Date.now() }),
+    );
+    const notify = async (id: string) =>
+      exports.default.fetch(`${BASE}/webhooks/microsoft?account=${a}`, {
+        method: "POST",
+        body: JSON.stringify({
+          value: [{ clientState: await webhookToken(env, a), resourceData: { id } }],
+        }),
+      });
+
+    await notify("block-1");
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+
+    await notify("someone-elses-meeting");
+    expect(await alarmOf(a)).not.toBeNull();
+  });
+});

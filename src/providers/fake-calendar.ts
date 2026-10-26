@@ -82,12 +82,15 @@ export class FakeCalendar implements CalendarClient {
     actions: SyncAction[],
   ): Promise<BatchResult> {
     await this.call("applyBatch");
+    const writtenIds: string[] = [];
     for (const action of actions) {
       if (action.kind === "delete") {
         this.sql.exec(`DELETE FROM fake_blocks WHERE id = ?`, action.targetId);
+        writtenIds.push(action.targetId);
         continue;
       }
       const id = action.kind === "update" ? action.targetId : crypto.randomUUID();
+      writtenIds.push(id);
       const { block } = action;
       this.sql.exec(
         `INSERT OR REPLACE INTO fake_blocks
@@ -101,7 +104,7 @@ export class FakeCalendar implements CalendarClient {
         block.end,
       );
     }
-    return { failed: 0, throttled: 0, statuses: {} };
+    return { failed: 0, throttled: 0, statuses: {}, writtenIds };
   }
 
   async watch(): Promise<Watch> {

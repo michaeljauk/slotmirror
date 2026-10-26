@@ -50,12 +50,19 @@ app.post("/webhooks/microsoft", async (c) => {
   // so that a forged request learns nothing.
   const accountId = c.req.query("account") ?? "";
   const body = (await c.req.json().catch(() => null)) as {
-    value?: { clientState?: string }[];
+    value?: { clientState?: string; resourceData?: { id?: string } }[];
   } | null;
-  const states = (body?.value ?? []).map((item) => item.clientState);
-  let valid = false;
-  for (const state of states) valid ||= await isValidToken(c.env, accountId, state);
-  if (valid) await notifyChange(c.env, accountId);
+  const valid: { resourceData?: { id?: string } }[] = [];
+  for (const item of body?.value ?? []) {
+    if (await isValidToken(c.env, accountId, item.clientState)) valid.push(item);
+  }
+  // Notifications about blocks this deployment just wrote change nothing; skip their sync.
+  const ids = valid.map((item) => item.resourceData?.id);
+  const echo =
+    valid.length > 0 &&
+    ids.every((id): id is string => typeof id === "string") &&
+    (await accountSync(c.env, accountId).isOwnEcho(ids));
+  if (valid.length > 0 && !echo) await notifyChange(c.env, accountId);
   return c.body(null, 202);
 });
 
@@ -310,7 +317,7 @@ app.get("/admin", async (c) => {
 async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
   const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();
   for (const { id } of results) {
-    await accountSync(env, id).requestSync();
+    await accountSync(env, id).tick();
   }
   await purgeAuditEvents(env.DB);
 }

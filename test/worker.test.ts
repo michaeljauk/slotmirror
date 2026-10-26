@@ -34,15 +34,25 @@ describe("worker", () => {
     expect(html).toContain("Sign in with Google");
   });
 
-  it("schedules one debounced sync per account on cron", async () => {
+  it("starts a sync for each connected account on cron, and skips accounts without tokens", async () => {
     const { user } = await signIn("owner@example.com");
     await addAccount(user.id, "acc-2", "other@example.com");
+    await addAccount(user.id, "acc-no-tokens", "none@example.com");
+    const stub = env.ACCOUNT_SYNC.getByName("acc-2");
+    await stub.storeTokens("acc-2", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
     await worker.scheduled(createScheduledController(), env);
 
-    const stub = env.ACCOUNT_SYNC.getByName("acc-2");
     const alarm = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
     expect(alarm).not.toBeNull();
     expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const idle = env.ACCOUNT_SYNC.getByName("acc-no-tokens");
+    expect(
+      await runInDurableObject(idle, (_instance, state) => state.storage.getAlarm()),
+    ).toBeNull();
   });
 
   it("creates the account tables in the Durable Object", async () => {

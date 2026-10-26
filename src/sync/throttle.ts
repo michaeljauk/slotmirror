@@ -73,6 +73,11 @@ export interface BatchResult {
   statuses: Record<string, number>;
   /** The longest `Retry-After` of the throttled actions, if the provider sent one. */
   retryAfterMs?: number;
+  /**
+   * IDs of the events this batch created, updated or deleted, where the provider reports them.
+   * They let the Worker recognise change notifications about its own writes.
+   */
+  writtenIds?: string[];
 }
 
 export const EMPTY_BATCH_RESULT: BatchResult = { failed: 0, throttled: 0, statuses: {} };

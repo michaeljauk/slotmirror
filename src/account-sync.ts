@@ -49,6 +49,21 @@ const DEBOUNCE_MS = 5_000;
 /** Durable Object storage key of the rules still to run in the current cycle. */
 const RULE_QUEUE_KEY = "ruleQueue";
 
+/** Durable Object storage key: event IDs this instance wrote recently, with the time. */
+const RECENT_WRITES_KEY = "recentWrites";
+
+/** A change notification this soon after our own write is recognised as its echo. */
+const RECENT_WRITE_MS = 2 * 60_000;
+
+/** Durable Object storage key: when the last full cycle over all rules started. */
+const FULL_CYCLE_KEY = "fullCycleAt";
+
+/**
+ * With change notifications, a full cycle over all rules runs once an hour as a check; the cron in
+ * between polls only rules whose calendars have no active watch.
+ */
+const FULL_CYCLE_EVERY_MS = 60 * 60_000;
+
 /** Durable Object storage key of block removals for deleted or switched-off rules. */
 const REMOVAL_QUEUE_KEY = "removalQueue";
 
@@ -123,6 +138,69 @@ export class AccountSync extends DurableObject<Env> {
     if (pending === null) {
       await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
     }
+  }
+
+  /**
+   * The cron's call, every 10 minutes. Once an hour this is a full cycle. In between it queues only
+   * rules whose source or target calendar has no active watch; changes to watched calendars
+   * arrive as notifications. Without PUBLIC_URL no calendar is watched, so every tick polls all.
+   */
+  async tick(): Promise<void> {
+    const accountId = this.accountIdOrNull();
+    if (!accountId) return;
+    const lastFull = (await this.ctx.storage.get<number>(FULL_CYCLE_KEY)) ?? 0;
+    if (Date.now() - lastFull >= FULL_CYCLE_EVERY_MS) {
+      await this.requestSync();
+      return;
+    }
+    const now = Date.now();
+    const { results } = await this.env.DB.prepare(
+      `SELECT r.id FROM rules r
+       JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN users u ON u.id = r.user_id
+       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1
+         AND (sc.watched_until IS NULL OR sc.watched_until < ?
+              OR tc.watched_until IS NULL OR tc.watched_until < ?)
+       ORDER BY r.id`,
+    )
+      .bind(accountId, now, now)
+      .all<{ id: string }>();
+    if (results.length === 0) return;
+    const queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
+    const merged = [...new Set([...queue, ...results.map((row) => row.id)])];
+    await this.ctx.storage.put(RULE_QUEUE_KEY, merged);
+    this.sourceCache.clear();
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(now + this.delays().debounce);
+    }
+  }
+
+  /**
+   * True if every event ID belongs to a block this instance wrote in the last two minutes: the
+   * notification reports our own write, and a sync would find nothing to do.
+   */
+  async isOwnEcho(eventIds: string[]): Promise<boolean> {
+    if (eventIds.length === 0) return false;
+    const recent = await this.recentWrites();
+    return eventIds.every((id) => recent[id] !== undefined);
+  }
+
+  private async recentWrites(): Promise<Record<string, number>> {
+    const stored = (await this.ctx.storage.get<Record<string, number>>(RECENT_WRITES_KEY)) ?? {};
+    const cutoff = Date.now() - RECENT_WRITE_MS;
+    return Object.fromEntries(Object.entries(stored).filter(([, at]) => at >= cutoff));
+  }
+
+  private async rememberWrites(ids: string[]): Promise<void> {
+    const recent = await this.recentWrites();
+    const now = Date.now();
+    for (const id of ids) recent[id] = now;
+    // A cap keeps storage small after a large first sync; the oldest entries go first.
+    const entries = Object.entries(recent)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5000);
+    await this.ctx.storage.put(RECENT_WRITES_KEY, Object.fromEntries(entries));
   }
 
   /** Replace the stored tokens. Called after an OAuth connect and after every refresh. */
@@ -295,6 +373,7 @@ export class AccountSync extends DurableObject<Env> {
     let retryAfterMs: number | undefined;
     for (const batch of batches.slice(0, MAX_BATCHES_PER_RUN)) {
       const result = await target.applyBatch(rule.target.remoteCalendarId, ruleTag, batch);
+      if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
       applied += batch.length - result.failed - result.throttled;
       failed += result.failed;
       throttled += result.throttled;
@@ -415,7 +494,10 @@ export class AccountSync extends DurableObject<Env> {
       return;
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
-    if (queue.length === 0) queue = await rulesTargetingAccount(this.env.DB, accountId);
+    if (queue.length === 0) {
+      queue = await rulesTargetingAccount(this.env.DB, accountId);
+      await this.ctx.storage.put(FULL_CYCLE_KEY, Date.now());
+    }
     const [ruleId, ...rest] = queue;
     if (!ruleId) {
       await this.ensureWatchesSafely();
@@ -473,30 +555,44 @@ export class AccountSync extends DurableObject<Env> {
 
     const client = await this.client();
     const now = Date.now();
+    const markWatched = (calendarId: string, until: number | null) =>
+      this.env.DB.prepare(
+        "UPDATE calendars SET watched_until = ? WHERE account_id = ? AND remote_id = ?",
+      )
+        .bind(until, accountId, calendarId)
+        .run();
     for (const watch of stored) {
       if (needed.has(watch.calendarId)) continue;
       await client.unwatch(watch).catch((error: unknown) => {
         console.error("Stopping a watch failed", watch.id, error);
       });
       this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
+      await markWatched(watch.calendarId, null);
     }
     if (!url) return;
     const token = await webhookToken(this.env, accountId);
     for (const calendarId of needed) {
       const current = stored.find((watch) => watch.calendarId === calendarId);
-      if (current && current.expiresAt - now > RENEW_BEFORE_MS) continue;
+      if (current && current.expiresAt - now > RENEW_BEFORE_MS) {
+        await markWatched(calendarId, current.expiresAt);
+        continue;
+      }
       try {
         const renewed = current ? await client.renew(current, now + WATCH_LIFETIME_MS) : null;
         if (renewed) {
           this.storeWatch(calendarId, renewed, current?.id);
+          await markWatched(calendarId, renewed.expiresAt);
           continue;
         }
         const fresh = await client.watch(calendarId, url, token, now + WATCH_LIFETIME_MS);
         this.storeWatch(calendarId, fresh, current?.id);
+        await markWatched(calendarId, fresh.expiresAt);
         // Google channels cannot be extended: the old one overlaps briefly, then stops.
         if (current) await client.unwatch(current).catch(() => undefined);
       } catch (error) {
         console.error("Watching a calendar failed", calendarId, error);
+        // Without a watch, the cron polls this calendar every 10 minutes.
+        await markWatched(calendarId, null);
       }
     }
   }

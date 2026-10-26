@@ -600,3 +600,32 @@ describe("detail caps", () => {
     for (const block of sentBlocks(calls)) expect(block.subject).toBe("Busy");
   });
 });
+
+describe("written IDs", () => {
+  it("remembers the IDs of blocks it created, for the echo filter", async () => {
+    const { stub, ruleId } = await setupRule("acc-written");
+    await stub.storeTokens("acc-written", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
+        return Response.json({ value: fixture.value });
+      if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
+        return Response.json({ value: [] });
+      const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+      return Response.json({
+        responses: body.requests.map((request) => ({
+          id: request.id,
+          status: 201,
+          body: { id: `created-${request.id}` },
+        })),
+      });
+    });
+    await stub.runRule(ruleId);
+    expect(await stub.isOwnEcho(["created-0", "created-1"])).toBe(true);
+    expect(await stub.isOwnEcho(["created-0", "other"])).toBe(false);
+  });
+});

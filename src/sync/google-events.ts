@@ -1,9 +1,12 @@
 import * as z from "zod/mini";
-import { parseMarkerValue } from "./graph-events";
+import { markerValueFor, parseMarkerValue } from "./graph-events";
 import type { DesiredBlock, SourceEvent } from "./types";
 
 /** Key in `extendedProperties.private` that marks blocks written by slotmirror. */
 export const GOOGLE_MARKER_KEY = "slotmirrorMarker";
+
+/** Key in `extendedProperties.private` with the dedup key of a block; see `dedupKeyFor`. */
+export const GOOGLE_DEDUP_KEY = "slotmirrorDedupKey";
 
 /**
  * The key of blocks written before the project was renamed from freebusy-sync on 2026-10-26.
@@ -102,10 +105,12 @@ export function fromGoogleEvent(raw: unknown): SourceEvent | null {
   };
 }
 
-/** Marker value of a block, if the event is one of ours. */
+/** Marker value and dedup key of a block, if the event is one of ours. */
 export function googleMarker(raw: unknown) {
-  const value = markerValue(googleEventSchema.parse(raw).extendedProperties?.private);
-  return value === undefined ? null : parseMarkerValue(value);
+  const properties = googleEventSchema.parse(raw).extendedProperties?.private;
+  const value = markerValue(properties);
+  if (value === undefined) return null;
+  return { ...parseMarkerValue(value), dedupKey: properties?.[GOOGLE_DEDUP_KEY] ?? "" };
 }
 
 /** All-day events keep their date; timed events become UTC instants. */
@@ -132,7 +137,10 @@ export function toGoogleBlock(block: DesiredBlock, ruleTag: string) {
     // null on an update removes a colour the rule no longer uses; invalid IDs never reach Google.
     colorId: block.color && /^(?:[1-9]|1[01])$/.test(block.color) ? block.color : null,
     extendedProperties: {
-      private: { [GOOGLE_MARKER_KEY]: `${ruleTag}.${block.marker}.${block.contentHash}` },
+      private: {
+        [GOOGLE_MARKER_KEY]: markerValueFor(ruleTag, block),
+        [GOOGLE_DEDUP_KEY]: block.dedupKey,
+      },
     },
   };
 }

@@ -53,6 +53,12 @@ export interface DesiredBlock extends BlockContent {
    * stores it (line breaks, previews), so content is compared by hash, not field by field.
    */
   contentHash: string;
+  /**
+   * Hash of what the block shows (times, title, status, privacy), the same for every rule of one
+   * user; see `dedupKeyFor`. Rules into one target calendar use it to write one block where they
+   * would write equal ones. Stored next to the marker, not in it.
+   */
+  dedupKey: string;
 }
 
 /** A block that slotmirror finds in the target calendar, recognised by its marker. */
@@ -62,6 +68,8 @@ export interface ExistingBlock {
   ruleTag: string;
   marker: string;
   contentHash: string;
+  /** See `DesiredBlock.dedupKey`. Empty for blocks written before it existed. */
+  dedupKey: string;
   start: string;
   end: string;
   allDay: boolean;

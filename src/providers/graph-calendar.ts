@@ -6,6 +6,9 @@ import {
   graphMarkerValue,
   LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
+  markerValueFor,
+  DEDUP_PROPERTY_ID,
+  graphDedupKey,
   parseMarkerValue,
 } from "../sync/graph-events";
 import {
@@ -116,14 +119,11 @@ export class GraphCalendar implements CalendarClient {
     return events;
   }
 
-  /**
-   * Blocks in the target calendar that one rule wrote. Blocks of other rules carry another tag
-   * and are not returned, so a rule never deletes them.
-   */
+  /** Blocks in the target calendar that the rules with these tags wrote. */
   async existingBlocks(
     calendarId: string,
     window: TimeWindow,
-    ruleTag: string,
+    ruleTags: readonly string[],
   ): Promise<ExistingBlock[]> {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.calendarView(calendarId, window)) {
@@ -132,10 +132,11 @@ export class GraphCalendar implements CalendarClient {
       const source = fromGraphEvent(raw);
       if (!value || !source) continue;
       const parsed = parseMarkerValue(value);
-      if (parsed.ruleTag !== ruleTag) continue;
+      if (!ruleTags.includes(parsed.ruleTag)) continue;
       blocks.push({
         targetId: event.id,
         ...parsed,
+        dedupKey: graphDedupKey(event.singleValueExtendedProperties),
         start: source.start,
         end: source.end,
         allDay: source.allDay,
@@ -251,7 +252,7 @@ export class GraphCalendar implements CalendarClient {
       startDateTime: window.start.toISOString(),
       endDateTime: window.end.toISOString(),
       $select: withBody ? `${GRAPH_EVENT_SELECT},body` : GRAPH_EVENT_SELECT,
-      $expand: `singleValueExtendedProperties($filter=id eq '${MARKER_PROPERTY_ID}' or id eq '${LEGACY_MARKER_PROPERTY_ID}')`,
+      $expand: `singleValueExtendedProperties($filter=id eq '${MARKER_PROPERTY_ID}' or id eq '${LEGACY_MARKER_PROPERTY_ID}' or id eq '${DEDUP_PROPERTY_ID}')`,
       $top: String(PAGE_SIZE),
     });
     let url: string | undefined =
@@ -316,7 +317,8 @@ export function toGraphBlock(block: DesiredBlock, ruleTag: string) {
     // Always set, so that an update also removes a category the rule no longer uses.
     categories: block.color ? [block.color] : [],
     singleValueExtendedProperties: [
-      { id: MARKER_PROPERTY_ID, value: `${ruleTag}.${block.marker}.${block.contentHash}` },
+      { id: MARKER_PROPERTY_ID, value: markerValueFor(ruleTag, block) },
+      { id: DEDUP_PROPERTY_ID, value: block.dedupKey },
     ],
   };
 }

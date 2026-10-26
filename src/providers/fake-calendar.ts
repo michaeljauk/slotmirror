@@ -70,10 +70,10 @@ export class FakeCalendar implements CalendarClient {
   async existingBlocks(
     calendarId: string,
     window: TimeWindow,
-    ruleTag: string,
+    ruleTags: readonly string[],
   ): Promise<ExistingBlock[]> {
     await this.call("existingBlocks");
-    return this.blocks(calendarId, window).filter((block) => block.ruleTag === ruleTag);
+    return this.blocks(calendarId, window).filter((block) => ruleTags.includes(block.ruleTag));
   }
 
   async applyBatch(
@@ -94,12 +94,14 @@ export class FakeCalendar implements CalendarClient {
       const { block } = action;
       this.sql.exec(
         `INSERT OR REPLACE INTO fake_blocks
-         (id, calendar_id, rule_tag, marker, content_hash, start, end) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (id, calendar_id, rule_tag, marker, content_hash, dedup_key, start, end)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         calendarId,
         ruleTag,
         block.marker,
         block.contentHash,
+        block.dedupKey,
         block.start,
         block.end,
       );
@@ -128,10 +130,11 @@ export class FakeCalendar implements CalendarClient {
         rule_tag: string;
         marker: string;
         content_hash: string;
+        dedup_key: string;
         start: string;
         end: string;
       }>(
-        `SELECT id, rule_tag, marker, content_hash, start, end FROM fake_blocks
+        `SELECT id, rule_tag, marker, content_hash, dedup_key, start, end FROM fake_blocks
          WHERE calendar_id = ? AND end > ? AND start < ?`,
         calendarId,
         window.start.toISOString(),
@@ -143,6 +146,7 @@ export class FakeCalendar implements CalendarClient {
         ruleTag: row.rule_tag,
         marker: row.marker,
         contentHash: row.content_hash,
+        dedupKey: row.dedup_key,
         start: row.start,
         end: row.end,
         allDay: false,
@@ -165,7 +169,17 @@ function ensureTables(sql: SqlStorage): void {
     subject TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0)`);
   sql.exec(`CREATE TABLE IF NOT EXISTS fake_blocks (
     id TEXT PRIMARY KEY, calendar_id TEXT NOT NULL, rule_tag TEXT NOT NULL, marker TEXT NOT NULL,
-    content_hash TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL)`);
+    content_hash TEXT NOT NULL, dedup_key TEXT NOT NULL DEFAULT '', start TEXT NOT NULL,
+    end TEXT NOT NULL)`);
+  // Tables from before the dedup key existed.
+  if (
+    !sql
+      .exec(`PRAGMA table_info(fake_blocks)`)
+      .toArray()
+      .some((col) => col.name === "dedup_key")
+  ) {
+    sql.exec(`ALTER TABLE fake_blocks ADD COLUMN dedup_key TEXT NOT NULL DEFAULT ''`);
+  }
   sql.exec(`CREATE TABLE IF NOT EXISTS fake_calls (
     operation TEXT PRIMARY KEY, count INTEGER NOT NULL)`);
 }

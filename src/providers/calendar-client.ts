@@ -44,8 +44,12 @@ export interface CalendarClient {
     window: TimeWindow,
     options?: { withBody?: boolean },
   ): Promise<SourceEvent[]>;
-  /** Blocks in the window that carry the given rule tag. */
-  existingBlocks(calendarId: string, window: TimeWindow, ruleTag: string): Promise<ExistingBlock[]>;
+  /** Blocks in the window that carry one of the given rule tags. */
+  existingBlocks(
+    calendarId: string,
+    window: TimeWindow,
+    ruleTags: readonly string[],
+  ): Promise<ExistingBlock[]>;
   /**
    * Ask the provider to call `url` when events of the calendar change. `token` comes back with
    * every notification, so that the Worker can tell real ones from forged ones.

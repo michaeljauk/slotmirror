@@ -1,7 +1,8 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MARKER_PROPERTY_ID } from "../src/sync/graph-events";
+import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
+import { inPrecedenceOrder, ruleTagFor } from "../src/sync/plan";
 import fixture from "./fixtures/graph/calendar-view.json";
 import { BASE, signIn } from "./helpers";
 
@@ -35,6 +36,25 @@ async function setupRule(accountId: string, options: object = {}) {
   return { stub, ruleId: `${accountId}-rule` };
 }
 
+/** The blocks a run wrote, as the target's calendarView returns them. */
+function writtenBlocks(calls: { url: string; init?: RequestInit }[], prefix: string): unknown[] {
+  const [template] = fixture.value;
+  return calls
+    .filter((call) => call.url.endsWith("/$batch"))
+    .flatMap((call) => (JSON.parse(call.init?.body as string) as { requests: unknown[] }).requests)
+    .map((request, index) => {
+      const body = (request as { body: Record<string, unknown> }).body;
+      return {
+        ...template,
+        ...body,
+        id: `${prefix}-${index}`,
+        type: "singleInstance",
+        seriesMasterId: null,
+        originalStart: null,
+      };
+    });
+}
+
 /** Fake Graph and token endpoint. Records every request. */
 function fakeGraph(target: unknown[] = []) {
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -48,8 +68,8 @@ function fakeGraph(target: unknown[] = []) {
         expires_in: 3600,
       });
     }
-    if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
-      return Response.json({ value: fixture.value });
+    // Also matches further source calendars such as `remote-source-2`.
+    if (url.includes(`/calendars/${SOURCE_CAL}`)) return Response.json({ value: fixture.value });
     if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
       return Response.json({ value: target });
     if (url.endsWith("/$batch")) {
@@ -107,13 +127,18 @@ describe("AccountSync.runRule", () => {
       const body = request.body as {
         subject: string;
         sensitivity: string;
-        singleValueExtendedProperties: { value: string }[];
+        singleValueExtendedProperties: { id: string; value: string }[];
       };
       expect(body.subject).toBe("Busy");
       expect(body.sensitivity).toBe("private");
-      expect(body.singleValueExtendedProperties[0]?.value).toMatch(
-        /^[0-9a-f]{12}\.[0-9a-f]{32}\.[0-9a-f]{32}$/,
-      );
+      // The marker keeps three parts, so that a deployment from before the dedup key reads it.
+      expect(body.singleValueExtendedProperties).toEqual([
+        {
+          id: MARKER_PROPERTY_ID,
+          value: expect.stringMatching(/^[0-9a-f]{12}\.[0-9a-f]{32}\.[0-9a-f]{32}$/),
+        },
+        { id: DEDUP_PROPERTY_ID, value: expect.stringMatching(/^[0-9a-f]{32}$/) },
+      ]);
       expect(body).not.toHaveProperty("attendees");
     }
   });
@@ -142,6 +167,53 @@ describe("AccountSync.runRule", () => {
     const result = await stub.runRule(ruleId, { dryRun: true });
     expect(result.stats).toMatchObject({ create: 15, delete: 0 });
     expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(false);
+  });
+
+  it("writes one block where two rules into one calendar would write equal ones", async () => {
+    const { stub, ruleId } = await setupRule("acc-dedupe");
+    await stub.storeTokens("acc-dedupe", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    // A second source calendar with the same events, for example a second subscription.
+    const owner = await env.DB.prepare("SELECT user_id FROM rules WHERE id = ?")
+      .bind(ruleId)
+      .first<{ user_id: string }>();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Copy')",
+      ).bind("acc-dedupe-src2", "acc-dedupe", `${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, ?, ?)",
+      ).bind("acc-dedupe-rule-2", owner?.user_id, "acc-dedupe-src2", "acc-dedupe-dst"),
+    ]);
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-dedupe-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+
+    // Before the rule with precedence has written, the other rule writes its own blocks.
+    let calls = fakeGraph();
+    expect(await stub.runRule(second)).toMatchObject({ applied: 15 });
+    const copies = writtenBlocks(calls, "copy");
+    vi.restoreAllMocks();
+
+    calls = fakeGraph(copies);
+    expect(await stub.runRule(first)).toMatchObject({ applied: 15 });
+    const kept = writtenBlocks(calls, "kept");
+    vi.restoreAllMocks();
+
+    // Then it removes its copies, and the rule with precedence keeps its blocks.
+    fakeGraph([...kept, ...copies]);
+    expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({
+      create: 0,
+      delete: 15,
+    });
+    expect((await stub.runRule(first, { dryRun: true })).stats).toMatchObject({
+      create: 0,
+      update: 0,
+      delete: 0,
+      unchanged: 15,
+    });
   });
 
   it("refreshes an expired token once and stores the rotated refresh token", async () => {
@@ -418,6 +490,47 @@ describe("alarm queue", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     expect(await runs()).toBe(2);
     expect(await runDurableObjectAlarm(stub)).toBe(false);
+  });
+
+  it("queues the later rules into the same calendar after a rule removed blocks", async () => {
+    const { stub, ruleId } = await setupRule("acc-follow");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-follow-src2', 'acc-follow', ?, 'Copy')",
+      ).bind(`${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-follow-rule-2', user_id, 'acc-follow-src2', target_calendar_id FROM rules WHERE id = ?",
+      ).bind(ruleId),
+    ]);
+    await stub.storeTokens("acc-follow", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-follow-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+    const [template] = fixture.value;
+    // A block of the first rule whose source event is gone: the first rule removes it.
+    fakeGraph([
+      {
+        ...template,
+        id: "stale",
+        singleValueExtendedProperties: [
+          {
+            id: MARKER_PROPERTY_ID,
+            value: `${await ruleTagFor(first)}.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef`,
+          },
+        ],
+      },
+    ]);
+    await runInDurableObject(stub, (_instance, state) => state.storage.put("ruleQueue", [first]));
+    await stub.requestSync();
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+    expect(queue).toEqual([second]);
   });
 });
 

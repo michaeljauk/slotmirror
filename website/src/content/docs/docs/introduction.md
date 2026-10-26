@@ -49,3 +49,5 @@ changed events and writes the matching blocks into the target calendars.
 - **Markers instead of a mapping table.** Each block carries a marker with the rule and the source
   occurrence. The target calendar itself records which blocks exist, so no mapping table can
   drift.
+- **One block per event.** If several rules would write equal blocks (same times, same title)
+  into one calendar, for example from two calendars that both hold a match, only one is written.

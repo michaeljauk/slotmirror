@@ -15,6 +15,10 @@ interface WorkerSecrets {
   DEV_FAKE_CALENDARS?: string;
   /** Local load tests only: simulated network time per provider call, in milliseconds. */
   DEV_FAKE_LATENCY_MS?: string;
+  /** Tests only: delay before a requested sync starts, in milliseconds. Default 5000. */
+  SYNC_DEBOUNCE_MS?: string;
+  /** Tests only: delay between two alarm runs, in milliseconds. Default 1000. */
+  SYNC_NEXT_RUN_MS?: string;
 }
 
 interface Env extends WorkerSecrets {}

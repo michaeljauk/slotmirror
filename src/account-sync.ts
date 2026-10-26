@@ -121,7 +121,7 @@ export class AccountSync extends DurableObject<Env> {
     this.sourceCache.clear();
     const pending = await this.ctx.storage.getAlarm();
     if (pending === null) {
-      await this.ctx.storage.setAlarm(Date.now() + DEBOUNCE_MS);
+      await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
     }
   }
 
@@ -310,7 +310,7 @@ export class AccountSync extends DurableObject<Env> {
     const remaining = plan.actions.length - applied - failed;
     if (remaining > 0) {
       // Continue soon; the next run plans again from the calendars, so nothing is lost.
-      await this.ctx.storage.setAlarm(Date.now() + (retryAfterMs ?? NEXT_RUN_MS));
+      await this.ctx.storage.setAlarm(Date.now() + (retryAfterMs ?? this.delays().nextRun));
     }
     return audit({
       ruleId,
@@ -359,7 +359,7 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.put(REMOVAL_QUEUE_KEY, queue);
     }
     const pending = await this.ctx.storage.getAlarm();
-    const soon = Date.now() + NEXT_RUN_MS;
+    const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.ctx.storage.setAlarm(soon);
   }
 
@@ -370,7 +370,7 @@ export class AccountSync extends DurableObject<Env> {
   async retire(): Promise<void> {
     await this.ctx.storage.put(RETIRING_KEY, true);
     const pending = await this.ctx.storage.getAlarm();
-    const soon = Date.now() + NEXT_RUN_MS;
+    const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.ctx.storage.setAlarm(soon);
   }
 
@@ -380,7 +380,7 @@ export class AccountSync extends DurableObject<Env> {
     const [job, ...rest] = queue;
     if (!job) return false;
     let next = rest;
-    let delayMs = NEXT_RUN_MS;
+    let delayMs = this.delays().nextRun;
     try {
       const { remaining } = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
       if (remaining > 0) next = [job, ...rest];
@@ -423,11 +423,11 @@ export class AccountSync extends DurableObject<Env> {
     }
 
     let unfinished = false;
-    let delayMs = NEXT_RUN_MS;
+    let delayMs = this.delays().nextRun;
     try {
       const result = await this.runRule(ruleId);
       unfinished = result.remaining > 0;
-      delayMs = result.retryAfterMs ?? NEXT_RUN_MS;
+      delayMs = result.retryAfterMs ?? this.delays().nextRun;
     } catch (error) {
       // One broken rule must not stop the others; runRule has recorded the failure.
       console.error("Rule run failed", ruleId, error);
@@ -538,6 +538,21 @@ export class AccountSync extends DurableObject<Env> {
       watch.resourceId,
       watch.expiresAt,
     );
+  }
+
+  /**
+   * Alarm delays. Tests set them long through SYNC_DEBOUNCE_MS and SYNC_NEXT_RUN_MS, so that an
+   * alarm runs only when a test triggers it: alarms fire by themselves once their time passes.
+   */
+  private delays(): { debounce: number; nextRun: number } {
+    const read = (value: string | undefined, fallback: number) => {
+      const number = Number(value);
+      return Number.isFinite(number) && number > 0 ? number : fallback;
+    };
+    return {
+      debounce: read(this.env.SYNC_DEBOUNCE_MS, DEBOUNCE_MS),
+      nextRun: read(this.env.SYNC_NEXT_RUN_MS, NEXT_RUN_MS),
+    };
   }
 
   /** A valid access token; refreshes and stores the rotated refresh token when needed. */

@@ -3,6 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
 import { webhookToken, webhookUrl } from "../src/webhooks";
+import fixture from "./fixtures/graph/calendar-view.json";
 import { BASE, signIn } from "./helpers";
 
 /** Two accounts with one rule from the first into the second, both with tokens. */
@@ -186,25 +187,135 @@ describe("cron ticks", () => {
 });
 
 describe("echo filter", () => {
+  /** A Graph notification about the given events in one account. */
+  const notifyGraph = async (accountId: string, ...ids: string[]) => {
+    const clientState = await webhookToken(env, accountId);
+    return exports.default.fetch(`${BASE}/webhooks/microsoft?account=${accountId}`, {
+      method: "POST",
+      body: JSON.stringify({ value: ids.map((id) => ({ clientState, resourceData: { id } })) }),
+    });
+  };
+
   it("skips a Graph notification about blocks this deployment just wrote", async () => {
     const { a, b } = await setup("echo");
-    await runInDurableObject(env.ACCOUNT_SYNC.getByName(a), (_instance, state) =>
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    await runInDurableObject(stub, (_instance, state) =>
       state.storage.put("recentWrites", { "block-1": Date.now() }),
     );
-    const notify = async (id: string) =>
-      exports.default.fetch(`${BASE}/webhooks/microsoft?account=${a}`, {
-        method: "POST",
-        body: JSON.stringify({
-          value: [{ clientState: await webhookToken(env, a), resourceData: { id } }],
-        }),
-      });
 
-    await notify("block-1");
+    // The webhook only notes the IDs; an alarm checks them.
+    await notifyGraph(a, "block-1");
+    expect(await alarmOf(b)).toBeNull();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
     expect(await alarmOf(a)).toBeNull();
     expect(await alarmOf(b)).toBeNull();
 
-    await notify("someone-elses-meeting");
+    await notifyGraph(a, "someone-elses-meeting");
+    await runDurableObjectAlarm(stub);
     expect(await alarmOf(a)).not.toBeNull();
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("checks a burst of Graph notifications in one alarm", async () => {
+    const { a, b } = await setup("eburst");
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("recentWrites", { "block-1": Date.now(), "block-2": Date.now() }),
+    );
+    await Promise.all([notifyGraph(a, "block-1"), notifyGraph(a, "block-1", "block-2")]);
+    await runDurableObjectAlarm(stub);
+    // No second check and no sync.
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("skips a Graph notification that arrives before its write is remembered", async () => {
+    const { a, b } = await setup("erace");
+    // The first account also reads the second, so that a sync there would reach it.
+    const { results } = await env.DB.prepare(
+      "SELECT user_id FROM rules WHERE id = 'erace-rule'",
+    ).all<{
+      user_id: string;
+    }>();
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES ('erace-back', ?, ?, ?)",
+    )
+      .bind(results[0]!.user_id, `${b}-cal`, `${a}-cal`)
+      .run();
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      urls.push(url);
+      if (url.includes(`/calendars/${a}-remote/calendarView`)) {
+        return Response.json({ value: [fixture.value[0]] });
+      }
+      if (url.includes(`/calendars/${b}-remote/calendarView`)) return Response.json({ value: [] });
+      if (url.endsWith("/$batch")) {
+        const { requests } = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+        // Graph reports the new block before it answers the batch.
+        await notifyGraph(b, ...requests.map((request) => `created-${request.id}`));
+        return Response.json({
+          responses: requests.map((request) => ({
+            id: request.id,
+            status: 201,
+            body: { id: `created-${request.id}` },
+          })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("ruleQueue", ["erace-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(urls.filter((url) => url.endsWith("/$batch"))).toHaveLength(1);
+    // The next alarm checks the notification and finds the block it wrote.
+    urls.length = 0;
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(urls).toEqual([]);
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("recognises its own write when Retry-After delays the check", async () => {
+    const { a, b } = await setup("edelay");
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    const writtenAt = Date.now();
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("recentWrites", { "block-1": writtenAt }),
+    );
+    await notifyGraph(a, "block-1");
+    // A throttled rule run moved the alarm by the longest Retry-After.
+    vi.spyOn(Date, "now").mockReturnValue(writtenAt + 5 * 60_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("runs queued rules in the same alarm when the check finds only its own writes", async () => {
+    const { a, b } = await setup("enext");
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("recentWrites", { "block-1": Date.now() });
+      await state.storage.put("ruleQueue", ["enext-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    await notifyGraph(b, "block-1");
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      urls.push(url);
+      return Response.json({ value: [] });
+    });
+    await runDurableObjectAlarm(target);
+    expect(urls.some((url) => url.includes(`/calendars/${a}-remote/calendarView`))).toBe(true);
+    expect(
+      await runInDurableObject(target, (_instance, state) => state.storage.get("ruleQueue")),
+    ).toBeUndefined();
+    expect(await alarmOf(a)).toBeNull();
   });
 
   /**

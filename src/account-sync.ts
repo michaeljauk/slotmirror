@@ -62,6 +62,12 @@ const RECENT_WRITES_KEY = "recentWrites";
 /** A change notification this soon after our own write is recognised as its echo. */
 const RECENT_WRITE_MS = 2 * 60_000;
 
+/**
+ * How long written IDs are kept. A check of Graph notifications can wait for the longest
+ * `Retry-After` of five minutes; it compares with the notification's time, not with its own.
+ */
+const RECENT_WRITES_KEPT_MS = 10 * 60_000;
+
 /** Durable Object storage key prefix: the change feed's sync token per calendar, for Google. */
 const SYNC_TOKEN_PREFIX = "syncToken:";
 
@@ -69,8 +75,14 @@ const SYNC_TOKEN_PREFIX = "syncToken:";
 const CHANGED_CALENDARS_KEY = "changedCalendars";
 
 /**
- * Durable Object storage key: the pending alarm is only for reading change feeds. Without it, an
- * alarm with an empty rule queue starts a full cycle.
+ * Durable Object storage key of the event IDs from Graph notifications that are still to check,
+ * with the time of the last notification about each.
+ */
+const NOTIFIED_EVENTS_KEY = "notifiedEvents";
+
+/**
+ * Durable Object storage key: the pending alarm is only for checking change notifications. Without
+ * it, an alarm with an empty rule queue starts a full cycle.
  */
 const FEED_ONLY_ALARM_KEY = "feedOnlyAlarm";
 
@@ -205,9 +217,19 @@ export class AccountSync extends DurableObject<Env> {
    * notification reports our own write, and a sync would find nothing to do.
    */
   async isOwnEcho(eventIds: string[]): Promise<boolean> {
-    if (eventIds.length === 0) return false;
+    const now = Date.now();
+    return this.reportsOwnWrites(Object.fromEntries(eventIds.map((id) => [id, now])));
+  }
+
+  /**
+   * True if this instance wrote every event at most two minutes before its notification, or after
+   * it: Graph may report a write before the `$batch` call returns.
+   */
+  private async reportsOwnWrites(notified: Record<string, number>): Promise<boolean> {
+    const entries = Object.entries(notified);
+    if (entries.length === 0) return false;
     const recent = await this.recentWrites();
-    return eventIds.every((id) => recent[id] !== undefined);
+    return entries.every(([id, at]) => (recent[id] ?? -Infinity) >= at - RECENT_WRITE_MS);
   }
 
   /**
@@ -227,6 +249,30 @@ export class AccountSync extends DurableObject<Env> {
     await this.updateQueue<string>(CHANGED_CALENDARS_KEY, (queue) =>
       queue.includes(calendarId) ? queue : [...queue, calendarId],
     );
+    await this.setCheckAlarm();
+  }
+
+  /**
+   * Graph reported changes to these events. An alarm syncs only if one of them is not a block this
+   * instance wrote. The check must not run at once: Graph may report a new block before the
+   * `$batch` call that wrote it returns, so before `rememberWrites()`. Alarms never overlap, so the
+   * check sees every write of an alarm. A manual run (`runRule` from the editor) is no alarm; for
+   * its writes only the debounce delay gives that time.
+   */
+  async graphChanged(eventIds: string[]): Promise<void> {
+    if (!this.accountIdOrNull()) return;
+    const now = Date.now();
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const queued =
+        (await this.ctx.storage.get<Record<string, number>>(NOTIFIED_EVENTS_KEY)) ?? {};
+      for (const id of eventIds) queued[id] = now;
+      await this.ctx.storage.put(NOTIFIED_EVENTS_KEY, queued);
+    });
+    await this.setCheckAlarm();
+  }
+
+  /** Set an alarm for a change check, unless one is pending. It runs before any other work. */
+  private async setCheckAlarm(): Promise<void> {
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, true);
       await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
@@ -234,20 +280,72 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * Read the change feed of one reported calendar, and sync if it shows more than our own writes.
-   * Returns false if no calendar waits. A throttled read waits for `Retry-After`; any other failed
-   * read syncs, so that no change is lost.
+   * Check the reported changes: all IDs from Graph notifications at once, or the change feed of one
+   * Google calendar. Sync if they show more than our own writes. Returns false if the alarm may go
+   * on with other work: nothing waited, or the check found only our own writes and so made no
+   * subrequest.
    */
   private async runChangeCheck(accountId: string): Promise<boolean> {
     // Read before the first provider call: a notification during it may set the flag anew.
     const feedOnly = (await this.ctx.storage.get<boolean>(FEED_ONLY_ALARM_KEY)) ?? false;
+    let delayMs = this.delays().nextRun;
+    // Out of the queue before the check, so that a notification during the check queues it again.
+    const notified = await this.ctx.blockConcurrencyWhile(async () => {
+      const queued =
+        (await this.ctx.storage.get<Record<string, number>>(NOTIFIED_EVENTS_KEY)) ?? {};
+      await this.ctx.storage.delete(NOTIFIED_EVENTS_KEY);
+      return queued;
+    });
+    if (Object.keys(notified).length > 0) {
+      let echo = false;
+      try {
+        echo = await this.reportsOwnWrites(notified);
+        if (!echo) await notifyChange(this.env, accountId);
+      } catch (error) {
+        console.error("Requesting a sync after a change failed", error);
+      }
+      // Notifications about a large run arrive for seconds; other work must not wait for a gap.
+      // The work sets its own next alarm.
+      if (echo && (await this.hasSyncWork(feedOnly))) return false;
+    } else {
+      const checked = await this.checkChangeFeed(accountId);
+      if (checked === null) return false;
+      delayMs = checked;
+    }
+    // Other work waits for the next alarm, so that this one stays within its budget.
+    const otherWork = await this.hasSyncWork(feedOnly);
+    const left =
+      ((await this.ctx.storage.get<string[]>(CHANGED_CALENDARS_KEY)) ?? []).length > 0 ||
+      (await this.ctx.storage.get(NOTIFIED_EVENTS_KEY)) !== undefined;
+    if (otherWork) await this.setSyncAlarm(Date.now() + delayMs);
+    else if (left) await this.ctx.storage.setAlarm(Date.now() + delayMs);
+    else await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
+    return true;
+  }
+
+  /** True if sync work waits: a full cycle, rules, removals, or the account's retirement. */
+  private async hasSyncWork(feedOnly: boolean): Promise<boolean> {
+    return (
+      !feedOnly ||
+      ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
+      ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []).length > 0 ||
+      ((await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false)
+    );
+  }
+
+  /**
+   * Read the change feed of one reported Google calendar, and sync if it shows more than our own
+   * writes. Returns the delay for the next alarm, or null if no calendar waits. A throttled read
+   * waits for `Retry-After`; any other failed read syncs, so that no change is lost.
+   */
+  private async checkChangeFeed(accountId: string): Promise<number | null> {
     let calendarId: string | undefined;
     // Out of the queue before the read, so that a notification during the read queues it again.
     await this.updateQueue<string>(CHANGED_CALENDARS_KEY, ([first, ...others]) => {
       calendarId = first;
       return others;
     });
-    if (calendarId === undefined) return false;
+    if (calendarId === undefined) return null;
     const tokenKey = `${SYNC_TOKEN_PREFIX}${calendarId}`;
     let delayMs = this.delays().nextRun;
     let feed: ChangeFeed | null = null;
@@ -281,17 +379,7 @@ export class AccountSync extends DurableObject<Env> {
         console.error("Requesting a sync after a change failed", calendarId, error);
       }
     }
-    // Other work waits for the next alarm, so that this one stays within its budget.
-    const otherWork =
-      !feedOnly ||
-      ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
-      ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []).length > 0 ||
-      ((await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false);
-    const left = (await this.ctx.storage.get<string[]>(CHANGED_CALENDARS_KEY)) ?? [];
-    if (otherWork) await this.setSyncAlarm(Date.now() + delayMs);
-    else if (left.length > 0) await this.ctx.storage.setAlarm(Date.now() + delayMs);
-    else await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
-    return true;
+    return delayMs;
   }
 
   /**
@@ -305,7 +393,7 @@ export class AccountSync extends DurableObject<Env> {
 
   private async recentWrites(): Promise<Record<string, number>> {
     const stored = (await this.ctx.storage.get<Record<string, number>>(RECENT_WRITES_KEY)) ?? {};
-    const cutoff = Date.now() - RECENT_WRITE_MS;
+    const cutoff = Date.now() - RECENT_WRITES_KEPT_MS;
     return Object.fromEntries(Object.entries(stored).filter(([, at]) => at >= cutoff));
   }
 

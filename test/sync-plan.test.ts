@@ -449,63 +449,113 @@ describe("buffer", () => {
 });
 
 describe("planSync in a sync window", () => {
-  const window = {
+  // The sync window starts at 00:00 UTC; the read window adds the largest buffer on each side.
+  const sync = {
     start: new Date("2026-10-27T00:00:00.000Z"),
     end: new Date("2026-11-26T00:00:00.000Z"),
   };
-  const event = (key: string, start: string, end: string, allDay = false): SourceEvent => ({
-    occurrenceKey: key,
-    start,
-    end,
-    allDay,
-    showAs: "busy",
-    isPrivate: false,
-    declined: false,
-    categories: [],
-    subject: "x",
-    location: "",
-    body: "",
-    isMirror: false,
+  const windows = {
+    sync,
+    read: {
+      start: new Date("2026-10-26T20:00:00.000Z"),
+      end: new Date("2026-11-26T04:00:00.000Z"),
+    },
+  };
+  const event = (key: string, start: string, end: string, changes: Partial<SourceEvent> = {}) =>
+    ({
+      occurrenceKey: key,
+      start,
+      end,
+      allDay: start.length === 10,
+      showAs: "busy",
+      isPrivate: false,
+      declined: false,
+      categories: [],
+      subject: "Trip",
+      location: "",
+      body: "",
+      isMirror: false,
+      ...changes,
+    }) satisfies SourceEvent;
+  const vacation = event("event:vacation", "2026-10-26", "2026-11-02");
+  const night = event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-27T01:00:00.000Z");
+  const evening = event("event:evening", "2026-10-26T21:00:00.000Z", "2026-10-26T22:00:00.000Z");
+
+  it("deletes the block of a deleted all-day event that started yesterday", async () => {
+    const written = await desiredBlocks(RULE, [vacation], options({ skipAllDay: false }));
+    const plan = planSync([], asExisting(written), windows);
+    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 0 });
   });
 
-  it("plans no block that lies outside the window, such as yesterday's all-day event", async () => {
-    const events = [
-      event("event:yesterday", "2026-10-26", "2026-10-27", true),
-      event("event:today", "2026-10-27", "2026-10-28", true),
-    ];
-    const desired = await desiredBlocks(RULE, events, options({ skipAllDay: false }));
-    const plan = planSync(desired, [], window);
-    expect(plan.actions.map((a) => a.kind === "create" && a.block.start)).toEqual(["2026-10-27"]);
+  it("deletes the block of a running event that a filter now leaves out", async () => {
+    const trip = event("event:trip", "2026-10-26T08:00:00.000Z", "2026-10-29T18:00:00.000Z");
+    const titled = options({ detailLevel: "title", skipTentative: true });
+    const written = await desiredBlocks(RULE, [trip], titled);
+    expect(written[0]?.subject).toBe("Trip");
+    const now = await desiredBlocks(RULE, [{ ...trip, showAs: "tentative" }], titled);
+    expect(planSync(now, asExisting(written), windows).stats.delete).toBe(1);
   });
 
-  it("plans the block of an event before the window that its buffer moves into it", async () => {
-    const events = [event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-26T23:50:00.000Z")];
-    const desired = await desiredBlocks(RULE, events, options({ bufferAfter: 30 }));
-    expect(planSync(desired, [], window).stats.create).toBe(1);
-  });
-
-  it("keeps a block that starts before the window when its event is no longer read", async () => {
-    const night = event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-26T23:50:00.000Z");
-    const later = event("event:later", "2026-10-27T09:00:00.000Z", "2026-10-27T10:00:00.000Z");
-    const written = await desiredBlocks(RULE, [night, later], options({ bufferAfter: 30 }));
-    // The buffer went down to 0: the night event is outside the read, its block is history.
-    const desired = await desiredBlocks(RULE, [], options());
-    const plan = planSync(desired, asExisting(written), window);
-    expect(plan.actions).toEqual([
-      { kind: "delete", targetId: "target-1", marker: written[1]?.marker },
-    ]);
-    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 1 });
-  });
-
-  it("still moves a block that starts before the window when its event moved", async () => {
-    const night = event("event:night", "2026-10-26T23:00:00.000Z", "2026-10-27T01:00:00.000Z");
+  it("deletes the block of a cancelled event across midnight", async () => {
     const written = await desiredBlocks(RULE, [night], options());
-    const moved = { ...night, start: "2026-10-27T15:00:00.000Z", end: "2026-10-27T16:00:00.000Z" };
-    const plan = planSync(
-      await desiredBlocks(RULE, [moved], options()),
-      asExisting(written),
-      window,
-    );
+    expect(planSync([], asExisting(written), windows).stats.delete).toBe(1);
+  });
+
+  it("keeps a timed block before the window, where its event can lie outside the read", async () => {
+    // The block of an event that ended at 20:00, with a buffer of two hours after it.
+    const late = event("event:late", "2026-10-26T19:00:00.000Z", "2026-10-26T20:00:00.000Z");
+    const written = await desiredBlocks(RULE, [late, evening], options({ bufferAfter: 120 }));
+    const plan = planSync([], asExisting(written), windows);
+    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 0, unchanged: 2 });
+  });
+
+  it("moves a block with its event when the buffer goes down", async () => {
+    const before = await desiredBlocks(RULE, [evening], options({ bufferAfter: 240 }));
+    const after = await desiredBlocks(RULE, [evening], options());
+    const plan = planSync(after, asExisting(before), windows);
     expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+  });
+
+  it("leaves out a block that only touches the read window", async () => {
+    const zero = event("event:zero", "2026-10-26T20:00:00.000Z", "2026-10-26T20:00:00.000Z");
+    const desired = await desiredBlocks(RULE, [zero], options({ bufferBefore: 30 }));
+    expect(planSync(desired, [], windows).actions).toEqual([]);
+  });
+
+  // Google answers all-day events in the calendar's zone, so the times of the window do not
+  // decide; the plan writes and keeps every all-day block the read returns.
+  it("keeps and writes the all-day block of the local day west of UTC (UTC-4)", async () => {
+    // 01:00 UTC on 27 October is 21:00 on 26 October in UTC-4.
+    const today = event("event:local-today", "2026-10-26", "2026-10-27");
+    const added = event("event:local-added", "2026-10-26", "2026-10-27");
+    const all = options({ skipAllDay: false });
+    const written = await desiredBlocks(RULE, [today], all);
+    const plan = planSync(
+      await desiredBlocks(RULE, [today, added], all),
+      asExisting(written),
+      windows,
+    );
+    expect(plan.stats).toEqual({ create: 1, update: 0, delete: 0, unchanged: 1 });
+  });
+
+  it("deletes the all-day block of a deleted event of the local day (UTC-4)", async () => {
+    const today = event("event:local-today", "2026-10-26", "2026-10-27");
+    const written = await desiredBlocks(RULE, [today], options({ skipAllDay: false }));
+    expect(planSync([], asExisting(written), windows).stats.delete).toBe(1);
+  });
+
+  it("writes the all-day block of the local day east of UTC (UTC+10)", async () => {
+    // 15:00 UTC on 26 October is 01:00 on 27 October in UTC+10; the sync window starts on 26.
+    const east = {
+      sync: { start: new Date("2026-10-26T00:00:00.000Z"), end: sync.end },
+      read: { start: new Date("2026-10-25T20:00:00.000Z"), end: windows.read.end },
+    };
+    const all = options({ skipAllDay: false });
+    const events = [
+      event("event:local-yesterday", "2026-10-26", "2026-10-27"),
+      event("event:local-today", "2026-10-27", "2026-10-28"),
+    ];
+    const plan = planSync(await desiredBlocks(RULE, events, all), [], east);
+    expect(plan.stats).toEqual({ create: 2, update: 0, delete: 0, unchanged: 0 });
   });
 });

@@ -16,7 +16,7 @@ import {
   loadRule,
   rulesTargetingAccount,
   siblingRuleIds,
-  sourceWindow,
+  readWindow,
   syncWindow,
 } from "./sync/rules";
 import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
@@ -778,13 +778,13 @@ export class AccountSync extends DurableObject<Env> {
         .level,
     };
     const withBody = ruleOptions.detailLevel === "full";
-    const readWindow = sourceWindow(window, rule.options);
+    const read = readWindow(window);
     const sourceEvents =
       rule.source.accountId === this.accountId()
-        ? await this.readSourceEvents(rule.source.remoteCalendarId, readWindow, withBody)
+        ? await this.readSourceEvents(rule.source.remoteCalendarId, read, withBody)
         : await accountSync(this.env, rule.source.accountId).readSourceEvents(
             rule.source.remoteCalendarId,
-            readWindow,
+            read,
             withBody,
           );
 
@@ -796,7 +796,8 @@ export class AccountSync extends DurableObject<Env> {
       (await siblingRuleIds(this.env.DB, rule.id)).map((id) => ruleTagFor(id)),
     );
     const precedingTags = siblingTags.filter((tag) => tag < ruleTag);
-    const blocks = await target.existingBlocks(rule.target.remoteCalendarId, window, [
+    // The target is read in the same window as the source, so that every planned block is found.
+    const blocks = await target.existingBlocks(rule.target.remoteCalendarId, read, [
       ruleTag,
       ...precedingTags,
     ]);
@@ -806,7 +807,7 @@ export class AccountSync extends DurableObject<Env> {
       scope: rule.userId,
       claimed,
     });
-    const plan = planSync(desired, existing, window);
+    const plan = planSync(desired, existing, { sync: window, read });
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

@@ -276,8 +276,8 @@ describe("AccountSync.runRule", () => {
       "2026-10-27T14:30:00",
     ]);
 
-    // The source is read wider than the target, by the buffers: a block that reaches into the
-    // window always has its event in the source read, so the run never deletes it as an orphan.
+    // Source and target are read in one window: the sync window from 00:00 UTC, with the largest
+    // buffer of 240 minutes before it.
     const window = (part: string) => {
       const call = calls.find((c) => c.url.includes(`/calendars/${part}/calendarView`));
       const params = new URL(call?.url ?? "https://x").searchParams;
@@ -286,9 +286,8 @@ describe("AccountSync.runRule", () => {
       );
     };
     const [sourceStart, sourceEnd] = window(SOURCE_CAL);
-    const [targetStart, targetEnd] = window(TARGET_CAL);
-    expect((targetStart ?? 0) - (sourceStart ?? 0)).toBe(30 * 60_000);
-    expect((sourceEnd ?? 0) - (targetEnd ?? 0)).toBe(15 * 60_000);
+    expect(window(TARGET_CAL)).toEqual([sourceStart, sourceEnd]);
+    expect(new Date((sourceStart ?? 0) + 240 * 60_000).toISOString()).toMatch(/T00:00:00\.000Z$/);
     vi.restoreAllMocks();
 
     fakeGraph(written);
@@ -1742,21 +1741,34 @@ describe("buffers at the edges of the sync window", () => {
     return { stub, ruleId };
   }
 
+  /** One real run against the windowed fake; returns the stats and the blocks it wrote. */
+  async function run(
+    stub: DurableObjectStub<AccountSync>,
+    ruleId: string,
+    target: unknown[],
+    source: unknown[],
+  ) {
+    // Each run is a new cycle, which reads the source again.
+    await runInDurableObject(stub, (instance) => {
+      (instance as unknown as { sourceCache: Map<string, unknown> }).sourceCache.clear();
+    });
+    const calls = fakeGraph(target, { source, windowed: true });
+    const result = await stub.runRule(ruleId);
+    vi.restoreAllMocks();
+    return { stats: result.stats, written: writtenBlocks(calls, `w${target.length}`) };
+  }
+
   const nothingToDo = (unchanged: number) => ({ create: 0, update: 0, delete: 0, unchanged });
 
   it("keeps the block of an event that ended before the window, buffered into it", async () => {
     const { stub, ruleId } = await bufferRule("acc-edge", { bufferAfter: 30 });
     const source = [graphEvent("night", at(-60), at(-10))];
-    const calls = fakeGraph([], { source, windowed: true });
-    expect((await stub.runRule(ruleId)).stats).toMatchObject({ create: 1 });
-    const written = writtenBlocks(calls, "edge");
-    vi.restoreAllMocks();
-
-    fakeGraph(written, { source, windowed: true });
-    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual(nothingToDo(1));
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    expect((await run(stub, ruleId, first.written, source)).stats).toEqual(nothingToDo(1));
   });
 
-  it("writes no block for yesterday's all-day event, run after run", async () => {
+  it("writes yesterday's all-day event once, and not again on every run", async () => {
     const { stub, ruleId } = await bufferRule("acc-edge-allday", {
       skipAllDay: false,
       bufferAfter: 30,
@@ -1765,25 +1777,72 @@ describe("buffers at the edges of the sync window", () => {
       graphEvent("yesterday", at(-1440), at(0), true),
       graphEvent("today", at(0), at(1440), true),
     ];
-    const calls = fakeGraph([], { source, windowed: true });
-    expect((await stub.runRule(ruleId)).stats).toMatchObject({ create: 1 });
-    const written = writtenBlocks(calls, "allday");
-    vi.restoreAllMocks();
-
-    fakeGraph(written, { source, windowed: true });
-    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual(nothingToDo(1));
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 2 });
+    expect((await run(stub, ruleId, first.written, source)).stats).toEqual(nothingToDo(2));
   });
 
-  it("keeps a block from before the window when the buffer goes down", async () => {
+  it("moves a block from before the window with its event when the buffer goes down", async () => {
     const { stub, ruleId } = await bufferRule("acc-edge-lower", { bufferAfter: 30 });
     const source = [graphEvent("night", at(-60), at(-10))];
-    const calls = fakeGraph([], { source, windowed: true });
-    expect((await stub.runRule(ruleId)).stats).toMatchObject({ create: 1 });
-    const written = writtenBlocks(calls, "lower");
-    vi.restoreAllMocks();
-
+    const first = await run(stub, ruleId, [], source);
     await env.DB.prepare("UPDATE rules SET options = '{}' WHERE id = ?").bind(ruleId).run();
-    fakeGraph(written, { source, windowed: true });
-    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual(nothingToDo(1));
+    const second = await run(stub, ruleId, first.written, source);
+    expect(second.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+    const moved = (first.written as Record<string, unknown>[]).map((block, index) => ({
+      ...block,
+      ...(second.written[index] as object),
+    }));
+    expect((await run(stub, ruleId, moved, source)).stats).toEqual(nothingToDo(1));
+  });
+
+  it("keeps a past block in the read when the read no longer returns its event", async () => {
+    // The block ends before 00:00 UTC; its event can end before the read starts, 240 minutes
+    // earlier, for example a day later or with a larger buffer.
+    const { stub, ruleId } = await bufferRule("acc-edge-history", { bufferAfter: 200 });
+    const source = [graphEvent("evening", at(-230), at(-220))];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    expect((await run(stub, ruleId, first.written, [])).stats).toEqual(nothingToDo(1));
+  });
+
+  it("deletes the block of a deleted vacation that started yesterday", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-vacation", { skipAllDay: false });
+    const source = [graphEvent("vacation", at(-1440), at(6 * 1440), true)];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    expect((await run(stub, ruleId, first.written, [])).stats).toMatchObject({ delete: 1 });
+  });
+
+  it("deletes the block of a running event once a filter leaves it out", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-filter", { detailLevel: "title" });
+    const source = [graphEvent("trip", at(-600), at(3 * 1440))];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify({ detailLevel: "title", skipTentative: true }), ruleId)
+      .run();
+    const tentative = [{ ...source[0], showAs: "tentative" }];
+    expect((await run(stub, ruleId, first.written, tentative)).stats).toMatchObject({ delete: 1 });
+  });
+
+  it("reads the source once for rules with different buffers", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-shared", { bufferAfter: 30 });
+    const windowOf = (url: string) => {
+      const params = new URL(url).searchParams;
+      return `${params.get("startDateTime")}|${params.get("endDateTime")}`;
+    };
+    const calls = fakeGraph([], { source: [], windowed: true });
+    await stub.runRule(ruleId, { dryRun: true });
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify({ bufferBefore: 120 }), ruleId)
+      .run();
+    await stub.runRule(ruleId, { dryRun: true });
+    const reads = calls.filter((call) =>
+      call.url.includes(`/calendars/${SOURCE_CAL}/calendarView`),
+    );
+    expect(reads).toHaveLength(1);
+    const target = calls.find((call) => call.url.includes(`/calendars/${TARGET_CAL}/calendarView`));
+    expect(windowOf(reads[0]?.url ?? "")).toBe(windowOf(target?.url ?? ""));
   });
 });

@@ -183,21 +183,29 @@ function sameInstant(a: string, b: string): boolean {
   return !Number.isNaN(ta) && ta === tb;
 }
 
+export interface TimeWindow {
+  start: Date;
+  end: Date;
+}
+
 /** True if a block overlaps a window. All-day dates count from midnight UTC. */
-function overlaps(block: { start: string; end: string }, window: SyncWindow): boolean {
+function overlaps(block: { start: string; end: string }, window: TimeWindow): boolean {
   return (
     Date.parse(block.start) < window.end.getTime() && Date.parse(block.end) > window.start.getTime()
   );
 }
 
-/** True if a block reaches into a window from before its start. */
-function startsBefore(block: { start: string; end: string }, window: SyncWindow): boolean {
-  return Date.parse(block.start) < window.start.getTime() && overlaps(block, window);
+/** True if a block only touches the edge of a window, such as an event of no length at its start. */
+function touches(block: { start: string; end: string }, window: TimeWindow): boolean {
+  return (
+    Date.parse(block.end) === window.start.getTime() ||
+    Date.parse(block.start) === window.end.getTime()
+  );
 }
 
-export interface SyncWindow {
-  start: Date;
-  end: Date;
+/** A timed block in the read that lies outside the sync window; see `planSync`. */
+function isHistory(block: ExistingBlock, windows: { sync: TimeWindow; read: TimeWindow }): boolean {
+  return !block.allDay && overlaps(block, windows.read) && !overlaps(block, windows.sync);
 }
 
 /**
@@ -207,17 +215,16 @@ export interface SyncWindow {
  * is gone. Duplicates of a marker (for example after a crash between write and bookkeeping) are
  * deleted except one. It never rebuilds blocks that already match.
  *
- * With the `window` of the run, the plan writes no all-day block outside it. The source is read
- * wider than the window for the buffers, so the read can hold an all-day event of yesterday, which
- * gets no buffer; the target read would never find its block again. A timed event in the read
- * always has its buffered block in the window. A block that starts before the window and has no
- * source event any more stays as a record: its event can lie outside the source read, for example
- * after the buffer went down.
+ * `windows.read` is the window of both reads, source and target: the sync window with the largest
+ * buffer added on each side. A timed block in it that lies outside the sync window can belong to
+ * an event outside the read, so the plan never deletes it; such a block is history, as on a day
+ * the window has passed. Every other block in the read belongs to an event in the read if the
+ * event still exists.
  */
 export function planSync(
   desired: DesiredBlock[],
   existing: ExistingBlock[],
-  window?: SyncWindow,
+  windows?: { sync: TimeWindow; read: TimeWindow },
 ): SyncPlan {
   const actions: SyncAction[] = [];
   let unchanged = 0;
@@ -230,7 +237,8 @@ export function planSync(
   }
 
   for (const block of desired) {
-    if (window && block.allDay && !overlaps(block, window)) continue;
+    // The provider may return an event that only touches the read; the target read never would.
+    if (windows && touches(block, windows.read)) continue;
     const [current, ...duplicates] = existingByMarker.get(block.marker) ?? [];
     existingByMarker.delete(block.marker);
     for (const duplicate of duplicates) {
@@ -247,7 +255,7 @@ export function planSync(
 
   for (const orphans of existingByMarker.values()) {
     for (const [index, orphan] of orphans.entries()) {
-      if (index === 0 && window && startsBefore(orphan, window)) {
+      if (index === 0 && windows && isHistory(orphan, windows)) {
         unchanged++;
         continue;
       }

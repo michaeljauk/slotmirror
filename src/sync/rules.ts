@@ -1,4 +1,4 @@
-import { parseRuleOptions, type RuleOptions } from "../config";
+import { MAX_BUFFER_MINUTES, parseRuleOptions, type RuleOptions } from "../config";
 
 /** A rule with everything the runner needs, joined from D1. */
 export interface RuleContext {
@@ -120,17 +120,16 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
 }
 
 /**
- * The window to read source events in: the sync window, earlier by the buffer after and later by
- * the buffer before. Every block that reaches into the sync window then has its event in the read,
- * so that the run does not delete it as an orphan. Without buffers it is the sync window.
+ * The window of both reads of a run, source and target: the sync window with the largest buffer
+ * added on each side. A block that reaches into the sync window then has its event in the read,
+ * whatever the buffers. The window does not depend on a rule's buffers, so that rules with
+ * different buffers share one source read, and a lower buffer never narrows it.
  */
-export function sourceWindow(
-  window: { start: Date; end: Date },
-  options: Pick<RuleOptions, "bufferBefore" | "bufferAfter">,
-): { start: Date; end: Date } {
+export function readWindow(window: { start: Date; end: Date }): { start: Date; end: Date } {
+  const margin = MAX_BUFFER_MINUTES * 60_000;
   return {
-    start: new Date(window.start.getTime() - options.bufferAfter * 60_000),
-    end: new Date(window.end.getTime() + options.bufferBefore * 60_000),
+    start: new Date(window.start.getTime() - margin),
+    end: new Date(window.end.getTime() + margin),
   };
 }
 

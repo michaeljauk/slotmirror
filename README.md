@@ -5,6 +5,10 @@
   </picture>
 </h1>
 
+<p align="center">
+  <img src="docs/images/demo.gif" width="760" alt="The sync editor: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
+</p>
+
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
 from one calendar into your others as "Busy" blocks, or with as much detail as you choose. It
 supports Microsoft 365 and Google Calendar and runs in your own Cloudflare account, on the free

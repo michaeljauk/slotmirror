@@ -249,7 +249,10 @@ export class GraphCalendar implements CalendarClient {
     if (!response.ok && response.status !== 404) throw await graphError(response, "unsubscribe");
   }
 
-  /** Graph notifications name the changed events; `AccountSync.isOwnEcho` reads them. */
+  /**
+   * Graph notifications name the changed events; `AccountSync.graphChanged` queues them with the
+   * notification time, and the alarm compares them with the recent writes.
+   */
   changesSince(): Promise<ChangeFeed | null> {
     return Promise.resolve(null);
   }

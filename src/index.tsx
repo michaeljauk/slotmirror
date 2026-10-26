@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getCookie } from "hono/cookie";
+import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import type { AppEnv } from "./app-env";
 import {
@@ -7,13 +7,13 @@ import {
   latestRuleOutcomes,
   orgActivity,
   purgeAuditEvents,
-  recordAudit,
   userActivity,
 } from "./audit";
 import { setupStatus, signInProviders } from "./config";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
+import { DeleteUserPage } from "./pages/delete-user";
 import { DisconnectPage } from "./pages/disconnect";
 import { HomePage, SignInPage, type AccountRow } from "./pages/home";
 import { MessagePage } from "./pages/message";
@@ -29,6 +29,8 @@ import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
 import { isValidToken, notifyChange } from "./webhooks";
+import { deleteUser, removeAccounts } from "./offboarding";
+import { scim } from "./routes/scim";
 
 export { AccountSync } from "./account-sync";
 
@@ -83,6 +85,9 @@ app.use(
     cookieOptions: { path: "/", sameSite: "Lax", secure: true, httpOnly: true, maxAge: 31_536_000 },
   }),
 );
+
+// SCIM provisioning from Entra: its own bearer token, independent of sessions and the setup.
+app.route("/scim/v2", scim);
 
 // Public, also before the setup is finished: Google requires a reachable privacy statement.
 app.get("/privacy", (c) =>
@@ -174,7 +179,8 @@ app.get("/accounts/:id/disconnect", async (c) => {
   );
 });
 
-// Remove an account of the signed-in user: its tokens and state first, then the registry row.
+// Remove an account of the signed-in user. Its blocks go through the removal queues, then its
+// Durable Object forgets the tokens.
 app.post("/accounts/:id/disconnect", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
@@ -183,47 +189,76 @@ app.post("/accounts/:id/disconnect", async (c) => {
     .bind(accountId, user.id)
     .first();
   if (!owned) return c.notFound();
-
-  // Remove every block that involves the account before its tokens go: blocks in its own
-  // calendars (written by rules that target it) and blocks it caused elsewhere (rules with it as
-  // source). Each target account deletes with its own tokens.
-  const { results: affected } = await c.env.DB.prepare(
-    `SELECT r.id AS ruleId, tc.account_id AS targetAccountId, tc.remote_id AS remoteCalendarId
-     FROM rules r
-     JOIN calendars sc ON sc.id = r.source_calendar_id
-     JOIN calendars tc ON tc.id = r.target_calendar_id
-     WHERE sc.account_id = ? OR tc.account_id = ?`,
-  )
-    .bind(accountId, accountId)
-    .all<{ ruleId: string; targetAccountId: string; remoteCalendarId: string }>();
-  let removed = 0;
-  let cleanupFailed = 0;
-  for (const rule of affected) {
-    try {
-      const result = await accountSync(c.env, rule.targetAccountId).removeRuleBlocks(
-        rule.ruleId,
-        rule.remoteCalendarId,
-      );
-      removed += result.removed;
-    } catch (error) {
-      cleanupFailed++;
-      console.error("Removing blocks failed", rule.ruleId, error);
-    }
-  }
-
-  await accountSync(c.env, accountId).forget();
-  // Deleting the account also deletes its calendars and every rule that uses them.
-  await c.env.DB.prepare("DELETE FROM accounts WHERE id = ? AND user_id = ?")
-    .bind(accountId, user.id)
-    .run();
-  await recordAudit(c.env.DB, {
-    orgId: user.orgId,
-    userId: user.id,
-    accountId,
-    kind: "account_disconnected",
-    detail: { rules: affected.length, removed, cleanupFailed },
-  });
+  await removeAccounts(c.env, user, [accountId]);
   return c.redirect("/");
+});
+
+async function accountCount(env: Env, userId: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?")
+    .bind(userId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// "Delete my data": confirmation, then the user goes with every account, rule and block.
+app.get("/account/delete", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  return render(
+    c,
+    <DeleteUserPage
+      user={user}
+      target={null}
+      ownAccounts={await accountCount(c.env, user.id)}
+      action="/account/delete"
+      cancel="/"
+    />,
+  );
+});
+
+app.post("/account/delete", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  await deleteUser(c.env, user, "self");
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
+  const { t } = i18nFromContext(c);
+  return render(c, <MessagePage title={t.deleteUser.doneTitle} message={t.deleteUser.doneText} />);
+});
+
+/** A user of the admin's org other than the admin, or null. */
+async function deletableUser(env: Env, admin: { id: string; orgId: string }, userId: string) {
+  if (userId === admin.id) return null;
+  return env.DB.prepare("SELECT id, email FROM users WHERE id = ? AND org_id = ?")
+    .bind(userId, admin.orgId)
+    .first<{ id: string; email: string }>();
+}
+
+app.get("/admin/users/:id/delete", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const target = await deletableUser(c.env, user, c.req.param("id"));
+  if (!target) return c.notFound();
+  return render(
+    c,
+    <DeleteUserPage
+      user={user}
+      target={{ email: target.email, accounts: await accountCount(c.env, target.id) }}
+      ownAccounts={0}
+      action={`/admin/users/${target.id}/delete`}
+      cancel="/admin"
+    />,
+  );
+});
+
+app.post("/admin/users/:id/delete", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const target = await deletableUser(c.env, user, c.req.param("id"));
+  if (!target) return c.notFound();
+  await deleteUser(c.env, { id: target.id, orgId: user.orgId }, "admin");
+  return c.redirect("/admin");
 });
 
 app.get("/activity", async (c) => {
@@ -245,7 +280,8 @@ app.get("/admin", async (c) => {
   }
   // Metadata only: no calendar contents, no tokens.
   const { results } = await c.env.DB.prepare(
-    `SELECT u.email, u.role, u.last_sign_in_at AS lastSignInAt, COUNT(a.id) AS accounts
+    `SELECT u.id, u.email, u.role, u.active, u.last_sign_in_at AS lastSignInAt,
+            COUNT(a.id) AS accounts
      FROM users u LEFT JOIN accounts a ON a.user_id = u.id
      WHERE u.org_id = ?
      GROUP BY u.id

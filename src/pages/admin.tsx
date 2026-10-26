@@ -7,7 +7,10 @@ import { ActivityTable } from "./activity";
 import { Layout } from "./layout";
 
 export interface AdminUserRow {
+  id: string;
   email: string;
+  /** 0 if Entra deactivated the user over SCIM. */
+  active: number;
   role: Role;
   lastSignInAt: string | null;
   accounts: number;
@@ -46,6 +49,7 @@ export function AdminPage(props: {
                 <th>{t.admin.role}</th>
                 <th>{t.admin.accounts}</th>
                 <th>{t.admin.lastSignIn}</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -56,10 +60,18 @@ export function AdminPage(props: {
                     <span class={row.role === "admin" ? "badge admin" : "badge"}>
                       {t.roles[row.role]}
                     </span>
+                    {row.active === 0 ? <span class="badge">{t.admin.inactive}</span> : null}
                   </td>
                   <td>{row.accounts}</td>
                   <td class="muted">
                     {row.lastSignInAt ? formatTimestamp(row.lastSignInAt) : t.admin.never}
+                  </td>
+                  <td>
+                    {row.id === props.user.id ? null : (
+                      <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
+                        {t.admin.deleteUser}
+                      </a>
+                    )}
                   </td>
                 </tr>
               ))}

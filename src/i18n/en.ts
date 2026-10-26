@@ -10,6 +10,7 @@ export const en = {
     admin: "Admin",
     accountMenu: "Account menu",
     signOut: "Sign out",
+    deleteMyData: "Delete my data",
     privacy: "Privacy",
     language: "Language",
   },
@@ -225,6 +226,8 @@ export const en = {
     lastSignIn: "Last sign-in",
     never: "never",
     onlyAdmins: "Only admins can open this page.",
+    deleteUser: "Delete",
+    inactive: "deactivated",
     capsTitle: "Privacy limits",
     capsLead:
       "How much of an event may move between work calendars and private calendars. This applies to everyone on this deployment, also if someone sets more in their own sync settings.",
@@ -264,6 +267,10 @@ export const en = {
       rule_updated: "Rule changed",
       group_changed: "Block group changed",
       settings_changed: "Sync settings changed",
+      user_provisioned: "User provisioned",
+      user_deactivated: "User deactivated",
+      user_reactivated: "User reactivated",
+      user_deleted: "User deleted",
       sync_run: "Sync run",
       sync_failed: "Sync failed",
     },
@@ -285,6 +292,25 @@ export const en = {
     keyHint: "A base64-encoded 32-byte key. Generate with: openssl rand -base64 32",
     providerHint:
       "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. See the README for the app registration steps.",
+  },
+  deleteUser: {
+    titleSelf: "Delete my data",
+    titleOther: (email: string) => `Delete ${email}`,
+    intro: "This removes:",
+    accounts: (count: number) =>
+      count === 1
+        ? "1 connected account, with its tokens"
+        : `${count} connected accounts, with their tokens`,
+    rules: "All sync settings and rules",
+    blocks: "The blocks they wrote, from today on. Past blocks stay in the calendars.",
+    userRow: "The user itself",
+    activityStays:
+      "Activity entries stay until the retention period ends, without event contents. This cannot be undone.",
+    confirmSelf: "Delete my data",
+    confirmOther: "Delete user",
+    cancel: "Cancel",
+    doneTitle: "Your data is deleted",
+    doneText: "The blocks disappear from your calendars within a few minutes.",
   },
   messages: {
     back: "Back to the start page",

@@ -108,6 +108,10 @@ describe("cleanup", () => {
     const deletes = await fakeTarget(ruleId);
 
     expect((await post(`/accounts/${a}/disconnect`, cookie)).status).toBe(302);
+    // The other account removes the blocks in its alarm; the disconnected one then retires.
+    expect(deletes).toHaveLength(0);
+    await runDurableObjectAlarm(env.ACCOUNT_SYNC.getByName(b));
+    await runDurableObjectAlarm(env.ACCOUNT_SYNC.getByName(a));
     expect(deletes).toHaveLength(2);
     expect(deletes.every((d) => d.token === `Bearer token-${b}`)).toBe(true);
     expect(

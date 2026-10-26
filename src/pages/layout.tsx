@@ -127,6 +127,9 @@ export function Layout(props: {
                     <LanguageSwitch />
                   </div>
                   <div class="menu-separator" />
+                  <a class="menu-item" href="/account/delete">
+                    {t.nav.deleteMyData}
+                  </a>
                   <form method="post" action="/auth/logout">
                     <button type="submit" class="menu-item">
                       {t.nav.signOut}

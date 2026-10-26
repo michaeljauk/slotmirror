@@ -4,7 +4,8 @@
  */
 
 export const SESSION_COOKIE = "slotmirror_session";
-export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+/** Twelve hours: a working day. Signing in again is one click with the provider. */
+export const SESSION_TTL_SECONDS = 60 * 60 * 12;
 
 export interface Session {
   userId: string;

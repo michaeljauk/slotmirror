@@ -63,6 +63,9 @@ const WATCH_LIFETIME_MS = 6 * 24 * 60 * 60 * 1000;
 /** Renew a watch when less than this is left. The cron runs every 10 minutes, so this is plenty. */
 const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
 
+/** Durable Object storage key: forget the tokens once every queued removal ran. */
+const RETIRING_KEY = "retiring";
+
 /** Give up on a removal after this many failed attempts; the blocks then stay. */
 const MAX_REMOVAL_ATTEMPTS = 5;
 
@@ -328,6 +331,17 @@ export class AccountSync extends DurableObject<Env> {
     if (pending === null || pending > soon) await this.ctx.storage.setAlarm(soon);
   }
 
+  /**
+   * The account is going: remove the queued blocks first, then stop the watches and forget the
+   * tokens. The removals need the tokens, so the account cannot go at once.
+   */
+  async retire(): Promise<void> {
+    await this.ctx.storage.put(RETIRING_KEY, true);
+    const pending = await this.ctx.storage.getAlarm();
+    const soon = Date.now() + NEXT_RUN_MS;
+    if (pending === null || pending > soon) await this.ctx.storage.setAlarm(soon);
+  }
+
   /** Run one queued removal. Returns false if there was none. */
   private async runRemoval(): Promise<boolean> {
     const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
@@ -364,6 +378,10 @@ export class AccountSync extends DurableObject<Env> {
     if (!accountId) return;
     // Removals come first, one per alarm; the rules follow once none is left.
     if (await this.runRemoval()) return;
+    if (await this.ctx.storage.get<boolean>(RETIRING_KEY)) {
+      await this.forget();
+      return;
+    }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) queue = await rulesTargetingAccount(this.env.DB, accountId);
     const [ruleId, ...rest] = queue;
@@ -413,7 +431,8 @@ export class AccountSync extends DurableObject<Env> {
     const { results } = await this.env.DB.prepare(
       `SELECT DISTINCT c.remote_id AS remoteId FROM calendars c
        JOIN rules r ON (r.source_calendar_id = c.id OR r.target_calendar_id = c.id)
-       WHERE c.account_id = ? AND r.enabled = 1`,
+       JOIN users u ON u.id = r.user_id
+       WHERE c.account_id = ? AND r.enabled = 1 AND u.active = 1`,
     )
       .bind(accountId)
       .all<{ remoteId: string }>();

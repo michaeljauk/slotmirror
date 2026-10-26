@@ -97,8 +97,10 @@ and makes their own choices. Nobody sees another user's calendars.
 | `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`         |
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                       |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                        |
+| `SCIM_TOKEN`                      | secret   | Optional. Bearer token for user provisioning from Entra over SCIM.                         |
 
-If you remove someone from these settings, their access ends at their next request.
+If you remove someone from these settings, their access ends at their next request. Sessions last 12
+hours; signing in again is one click with the provider.
 
 **Org accounts** are accounts whose Entra tenant is in `ALLOWED_TENANT_IDS` or whose domain is in
 `ALLOWED_DOMAINS`. The detail caps apply between them and every other account, at every run. A
@@ -142,6 +144,31 @@ data. Changing `DATA_JURISDICTION` later disconnects every account.
 5. Under **Clients**, create a **Web application** client with the redirect URI
    `https://<your-worker>/auth/google/callback`.
 6. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+## Users joining and leaving
+
+Each user can delete their own data under **Delete my data** in the account menu. Admins can
+delete other users on the admin page. Both remove the user's accounts with their tokens, their
+rules, and the blocks those rules wrote from today on. Past blocks stay in the calendars, and
+activity entries stay until the retention period ends.
+
+For a team on Microsoft 365, Entra can manage users over SCIM 2.0: it creates them before their
+first sign-in, deactivates them when they leave, and deletes them. A deactivated user cannot sign
+in, and any open session ends at the next request. Their rules stop and their blocks are removed;
+accounts and rules stay, so a reactivation syncs again.
+
+To set it up:
+
+1. Set a long random secret: `wrangler secret put SCIM_TOKEN` (for example from
+   `openssl rand -base64 48`). Without it, `/scim/v2` does not exist.
+2. In the Entra admin center, create an enterprise application ("Create your own application",
+   "Integrate any other application you don't find in the gallery").
+3. Under **Provisioning**, choose "Automatic", set the tenant URL to
+   `https://<your deployment>/scim/v2` and the secret token to `SCIM_TOKEN`, and test the
+   connection.
+4. Under **Attribute mapping**, keep the users mapping and turn off groups. slotmirror stores
+   `userName` (the sign-in address), `externalId` and `active`, and ignores the rest.
+5. Assign the users or groups who should use slotmirror, then start provisioning.
 
 ## Push notifications
 

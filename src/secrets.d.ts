@@ -9,6 +9,8 @@ interface WorkerSecrets {
   MICROSOFT_CLIENT_SECRET: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
+  /** Optional. Bearer token for SCIM provisioning from Entra; without it /scim/v2 does not exist. */
+  SCIM_TOKEN?: string;
 }
 
 interface Env extends WorkerSecrets {}

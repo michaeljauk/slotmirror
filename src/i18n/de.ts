@@ -8,6 +8,7 @@ export const de: Messages = {
     admin: "Verwaltung",
     accountMenu: "Kontomenü",
     signOut: "Abmelden",
+    deleteMyData: "Meine Daten löschen",
     privacy: "Datenschutz",
     language: "Sprache",
   },
@@ -227,6 +228,8 @@ export const de: Messages = {
     lastSignIn: "Letzte Anmeldung",
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
+    deleteUser: "Löschen",
+    inactive: "deaktiviert",
     capsTitle: "Datenschutz-Grenzen",
     capsLead:
       "Wie viel von einem Termin höchstens zwischen Firmenkalendern und privaten Kalendern wandert. Das gilt für alle in dieser Installation, auch wenn jemand in seinen Sync-Einstellungen mehr wählt.",
@@ -266,6 +269,10 @@ export const de: Messages = {
       rule_updated: "Regel geändert",
       group_changed: "Gruppe geändert",
       settings_changed: "Sync-Einstellungen geändert",
+      user_provisioned: "Nutzer angelegt",
+      user_deactivated: "Nutzer deaktiviert",
+      user_reactivated: "Nutzer reaktiviert",
+      user_deleted: "Nutzer gelöscht",
       sync_run: "Synchronisierung",
       sync_failed: "Synchronisierung fehlgeschlagen",
     },
@@ -287,6 +294,25 @@ export const de: Messages = {
     keyHint: "Ein Base64-kodierter 32-Byte-Schlüssel. Erzeugen mit: openssl rand -base64 32",
     providerHint:
       "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Die Schritte zur App-Registrierung stehen in der README.",
+  },
+  deleteUser: {
+    titleSelf: "Meine Daten löschen",
+    titleOther: (email: string) => `${email} löschen`,
+    intro: "Damit wird entfernt:",
+    accounts: (count: number) =>
+      count === 1
+        ? "1 verbundenes Konto mit seinen Tokens"
+        : `${count} verbundene Konten mit ihren Tokens`,
+    rules: "Alle Sync-Einstellungen und Regeln",
+    blocks: "Die geschriebenen Blöcke ab heute. Vergangene Blöcke bleiben in den Kalendern.",
+    userRow: "Der Nutzer selbst",
+    activityStays:
+      "Einträge im Aktivitätslog bleiben bis zum Ende der Aufbewahrungsfrist, ohne Termininhalte. Das lässt sich nicht rückgängig machen.",
+    confirmSelf: "Meine Daten löschen",
+    confirmOther: "Nutzer löschen",
+    cancel: "Abbrechen",
+    doneTitle: "Deine Daten sind gelöscht",
+    doneText: "Die Blöcke verschwinden in den nächsten Minuten aus deinen Kalendern.",
   },
   messages: {
     back: "Zurück zur Startseite",

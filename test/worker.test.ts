@@ -129,6 +129,9 @@ describe("account actions", () => {
     });
     expect(response.status).toBe(302);
     expect(await env.DB.prepare("SELECT 1 FROM accounts WHERE id = 'acc-del'").first()).toBeNull();
+    // The account retires in its own alarm: queued removals first, then the tokens go.
+    expect(await stub.hasTokens()).toBe(true);
+    await runDurableObjectAlarm(stub);
     expect(await stub.hasTokens()).toBe(false);
 
     const event = await env.DB.prepare(

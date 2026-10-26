@@ -21,6 +21,10 @@ export type AuditKind =
   | "rule_updated"
   | "group_changed"
   | "settings_changed"
+  | "user_provisioned"
+  | "user_deactivated"
+  | "user_reactivated"
+  | "user_deleted"
   | "sync_run"
   | "sync_failed";
 

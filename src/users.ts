@@ -27,6 +27,11 @@ export async function signInUser(env: Env, identity: SignInIdentity): Promise<Cu
 
   const orgName = env.ORG_NAME?.trim() || "slotmirror";
   const email = identity.email.trim().toLowerCase();
+  // A user that Entra deactivated over SCIM cannot sign in, whatever the policy says.
+  const inactive = await env.DB.prepare("SELECT 1 FROM users WHERE email = ? AND active = 0")
+    .bind(email)
+    .first();
+  if (inactive) return null;
   const [, user] = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO orgs (id, name, policy) VALUES (?, ?, ?)
@@ -47,13 +52,14 @@ export async function signInUser(env: Env, identity: SignInIdentity): Promise<Cu
 
 /**
  * Load the user of a session and check the org policy again, so that removing someone from the
- * policy ends their access at the next request instead of when the session cookie expires.
+ * policy ends their access at the next request instead of when the session cookie expires. A
+ * deactivated user has no session either.
  */
 export async function loadUser(env: Env, userId: string): Promise<CurrentUser | null> {
   const row = await env.DB.prepare(
     `SELECT u.id, u.org_id AS orgId, u.email, u.tenant_id AS tenantId, o.policy
      FROM users u JOIN orgs o ON o.id = u.org_id
-     WHERE u.id = ?`,
+     WHERE u.id = ? AND u.active = 1`,
   )
     .bind(userId)
     .first<{ id: string; orgId: string; email: string; tenantId: string | null; policy: string }>();

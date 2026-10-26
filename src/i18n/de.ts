@@ -214,7 +214,7 @@ export const de: Messages = {
       "In Cloudflare Workers, D1 und Durable Objects im Cloudflare-Konto des Betreibers sowie bei Microsoft und Google, wenn Kalender gelesen und geschrieben werden.",
     deleteTitle: "Wie du deine Daten löschst",
     delete:
-      "Trennst du ein Konto, werden seine Tokens und die von slotmirror dafür geschriebenen Blöcke gelöscht. Um deinen Nutzer zu löschen, wende dich an den Betreiber.",
+      "Trennst du ein Konto, werden seine Tokens und die von slotmirror dafür geschriebenen Blöcke gelöscht. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
     googleTitle: "Nutzerdaten von Google",
     google:
       "Die Nutzung und Weitergabe von Informationen aus Google APIs durch slotmirror entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",

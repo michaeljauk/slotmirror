@@ -212,7 +212,7 @@ export const en = {
       "On Cloudflare Workers, D1 and Durable Objects in the operator's Cloudflare account, and at Microsoft and Google when calendars are read and written.",
     deleteTitle: "How to delete your data",
     delete:
-      "Disconnecting an account deletes its tokens and the blocks slotmirror wrote for it. To delete your user, contact the operator.",
+      "Disconnecting an account deletes its tokens and the blocks slotmirror wrote for it. To delete your user and all its data, use “Delete my data” in the account menu.",
     googleTitle: "Google user data",
     google:
       "slotmirror's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",

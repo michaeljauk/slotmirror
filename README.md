@@ -28,7 +28,7 @@ tokens stay with you and not with a sync service.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes within seconds.** Microsoft and Google notify your deployment when a calendar
-  changes. A sync every 10 minutes catches anything a notification missed.
+  changes. A full sync every hour catches anything a notification missed.
 - **Recurring events are exact.** Each occurrence is mirrored on its own, so a moved or
   cancelled single occurrence moves or removes its block.
 - **Only differences are written.** Every run compares what each target should contain with what
@@ -178,13 +178,13 @@ To set it up:
 With `PUBLIC_URL` set, slotmirror asks Microsoft and Google to notify it when a calendar that a
 rule reads or writes changes. A change then syncs within seconds. Microsoft subscriptions last up
 to 7 days and Google channels until Google ends them; the cron renews both a day before they
-expire. The cron also keeps syncing every 10 minutes, so a missed notification costs at most
-that delay.
+expire. Every 10 minutes the cron also syncs calendars without an active subscription. Once an
+hour it syncs every rule, so a missed notification costs at most one hour.
 
 Each notification carries a token that only your deployment can compute, an HMAC of the account
 with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `SESSION_SECRET`, the
 existing subscriptions no longer match until they expire and are created again, which can take up
-to 7 days. The cron keeps syncing every 10 minutes in the meantime.
+to 7 days. In the meantime the hourly full sync keeps the blocks current.
 
 ## Limits
 

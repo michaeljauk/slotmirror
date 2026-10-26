@@ -3,6 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
 import { webhookToken, webhookUrl } from "../src/webhooks";
+import fixture from "./fixtures/graph/calendar-view.json";
 import { BASE, signIn } from "./helpers";
 
 /** Two accounts with one rule from the first into the second, both with tokens. */
@@ -199,12 +200,84 @@ describe("echo filter", () => {
         }),
       });
 
+    // The webhook only notes the IDs; an alarm checks them.
     await notify("block-1");
+    expect(await alarmOf(b)).toBeNull();
+    expect(await runDurableObjectAlarm(env.ACCOUNT_SYNC.getByName(a))).toBe(true);
     expect(await alarmOf(a)).toBeNull();
     expect(await alarmOf(b)).toBeNull();
 
     await notify("someone-elses-meeting");
+    await runDurableObjectAlarm(env.ACCOUNT_SYNC.getByName(a));
     expect(await alarmOf(a)).not.toBeNull();
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("checks a burst of Graph notifications in one alarm", async () => {
+    const { a } = await setup("eburst");
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    const token = await webhookToken(env, a);
+    const notify = (...ids: string[]) =>
+      exports.default.fetch(`${BASE}/webhooks/microsoft?account=${a}`, {
+        method: "POST",
+        body: JSON.stringify({
+          value: ids.map((id) => ({ clientState: token, resourceData: { id } })),
+        }),
+      });
+    await Promise.all([notify("block-1"), notify("block-1", "block-2")]);
+    const queued = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("notifiedEvents"),
+    );
+    expect(queued?.toSorted()).toEqual(["block-1", "block-2"]);
+  });
+
+  it("skips a Graph notification that arrives before its write is remembered", async () => {
+    const { a, b } = await setup("erace");
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    const token = await webhookToken(env, b);
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      urls.push(url);
+      if (url.includes(`/calendars/${a}-remote/calendarView`)) {
+        return Response.json({ value: [fixture.value[0]] });
+      }
+      if (url.includes(`/calendars/${b}-remote/calendarView`)) return Response.json({ value: [] });
+      if (url.endsWith("/$batch")) {
+        const { requests } = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+        // Graph reports the new block before it answers the batch.
+        await exports.default.fetch(`${BASE}/webhooks/microsoft?account=${b}`, {
+          method: "POST",
+          body: JSON.stringify({
+            value: requests.map((request) => ({
+              clientState: token,
+              resourceData: { id: `created-${request.id}` },
+            })),
+          }),
+        });
+        return Response.json({
+          responses: requests.map((request) => ({
+            id: request.id,
+            status: 201,
+            body: { id: `created-${request.id}` },
+          })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("ruleQueue", ["erace-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(urls.filter((url) => url.endsWith("/$batch"))).toHaveLength(1);
+    // The next alarm checks the notification and finds the block it wrote.
+    urls.length = 0;
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(urls).toEqual([]);
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
   });
 
   /**

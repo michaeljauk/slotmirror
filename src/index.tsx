@@ -58,13 +58,15 @@ app.post("/webhooks/microsoft", async (c) => {
   for (const item of body?.value ?? []) {
     if (await isValidToken(c.env, accountId, item.clientState)) valid.push(item);
   }
-  // Notifications about blocks this deployment just wrote change nothing; skip their sync.
+  // The instance skips the sync if the notification is only about blocks it wrote itself. Without
+  // event IDs that cannot be told, so the sync starts at once.
   const ids = valid.map((item) => item.resourceData?.id);
-  const echo =
-    valid.length > 0 &&
-    ids.every((id): id is string => typeof id === "string") &&
-    (await accountSync(c.env, accountId).isOwnEcho(ids));
-  if (valid.length > 0 && !echo) await notifyChange(c.env, accountId);
+  if (valid.length === 0) return c.body(null, 202);
+  if (ids.every((id): id is string => typeof id === "string" && id !== "")) {
+    await accountSync(c.env, accountId).graphChanged(ids);
+  } else {
+    await notifyChange(c.env, accountId);
+  }
   return c.body(null, 202);
 });
 

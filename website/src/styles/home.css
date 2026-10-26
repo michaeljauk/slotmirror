@@ -278,11 +278,14 @@ nav.links a:hover {
   color: var(--muted);
 }
 
+/* As wide as "Syncing…", so that the header does not wrap differently while the demo syncs. */
 .demo-head .status {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  min-width: 5.6em;
 }
 
 .demo-head .dot {
@@ -381,7 +384,10 @@ nav.links a:hover {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  transition: top 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+  user-select: none;
+  transition-property: top, left, right;
+  transition-duration: 0.5s;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .ev small {
@@ -397,7 +403,7 @@ nav.links a:hover {
   color: var(--on-c);
 }
 
-.ev.real.main {
+.ev.real.movable {
   cursor: grab;
   touch-action: none;
   box-shadow: 0 1px 2px rgb(0 0 0 / 12%);

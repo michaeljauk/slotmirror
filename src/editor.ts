@@ -1,5 +1,5 @@
 import { recordAudit } from "./audit";
-import { ACCOUNT_COLORS, resolveAccountColors, type AccountColor } from "./colors";
+import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
@@ -146,7 +146,19 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       isSource: number;
     }>();
   const names = shortNames(accountRows.map((row) => row.email));
-  const colors = resolveAccountColors(accountRows.map((row) => row.color));
+  const colors = resolveAccountColorState(accountRows.map((row) => row.color));
+  // Store assigned colours, so that they stay when another account gets a colour later.
+  const assigned = accountRows.filter((row, index) => colors[index]?.stored !== row.color);
+  if (assigned.length > 0) {
+    await env.DB.batch(
+      assigned.map((row) =>
+        env.DB.prepare("UPDATE accounts SET color = ? WHERE id = ?").bind(
+          colors[accountRows.indexOf(row)]?.stored ?? null,
+          row.id,
+        ),
+      ),
+    );
+  }
   const accounts: EditorAccount[] = accountRows.map((row, index) => {
     const own = calendarRows.filter((calendar) => calendar.accountId === row.id);
     const main = own.find((calendar) => calendar.isMain === 1);
@@ -158,8 +170,8 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       inGroup: row.inGroup === 1,
       needsReconnect: row.needsReconnect === 1,
       name: row.displayName ?? names[index] ?? row.email,
-      color: colors[index] ?? "slate",
-      colorChosen: row.color !== null && Object.hasOwn(ACCOUNT_COLORS, row.color),
+      color: colors[index]?.color ?? "slate",
+      colorChosen: colors[index]?.chosen ?? false,
       calendar: main ? { id: main.id, remoteId: main.remoteId, canEdit: main.canEdit === 1 } : null,
       calendars: own.map((calendar) => ({
         id: calendar.id,

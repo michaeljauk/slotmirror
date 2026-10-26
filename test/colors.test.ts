@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveAccountColors } from "../src/colors";
+import { resolveAccountColorState, resolveAccountColors } from "../src/colors";
 import { ruleOptionsSchema } from "../src/config";
 import { blockColorFor, loadEditorState, setBlockColor, setDirection } from "../src/editor";
 import { toGraphBlock } from "../src/providers/graph-calendar";
@@ -54,6 +54,25 @@ describe("resolveAccountColors", () => {
   it("starts the order again after all eight colours", () => {
     const colors = resolveAccountColors(Array.from({ length: 10 }, () => null));
     expect(colors.slice(8)).toEqual(["green", "vermilion"]);
+  });
+
+  it("keeps assigned colours when another account gets a chosen colour", () => {
+    const first = resolveAccountColorState([null, null, null]);
+    expect(first.map((entry) => entry.stored)).toEqual([
+      "auto:green",
+      "auto:vermilion",
+      "auto:purple",
+    ]);
+    // Account 2 chooses indigo. Account 3 keeps purple and does not take the freed vermilion.
+    const after = resolveAccountColorState(["auto:green", "indigo", "auto:purple"]);
+    expect(after.map((entry) => entry.color)).toEqual(["green", "indigo", "purple"]);
+    expect(after.map((entry) => entry.chosen)).toEqual([false, true, false]);
+  });
+
+  it("moves an assigned colour only if a chosen colour takes it", () => {
+    const state = resolveAccountColorState(["auto:green", "green", "auto:green"]);
+    expect(state.map((entry) => entry.color)).toEqual(["vermilion", "green", "purple"]);
+    expect(state[0]?.stored).toBe("auto:vermilion");
   });
 });
 

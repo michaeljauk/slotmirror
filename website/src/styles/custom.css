@@ -1,0 +1,23 @@
+/* Brand blue from the logo's event block. */
+:root {
+  --sl-color-accent-low: #142a5c;
+  --sl-color-accent: #2b59c3;
+  --sl-color-accent-high: #c9d6f5;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #dbe4f8;
+  --sl-color-accent: #2b59c3;
+  --sl-color-accent-high: #16306e;
+}
+
+.site-title img {
+  height: 1.6rem;
+  width: auto;
+}
+
+/* Screenshots of the app sit on a white page; a border separates them from the site. */
+.sl-markdown-content img[src*="/_astro/"] {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.5rem;
+}

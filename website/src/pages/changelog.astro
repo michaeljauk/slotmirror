@@ -1,0 +1,23 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+
+// release-please writes CHANGELOG.md at the repository root with the first release.
+const files = import.meta.glob<{ Content: astro.MarkdownInstance<object>["Content"] }>(
+  "../../../CHANGELOG.md",
+  { eager: true },
+);
+const changelog = Object.values(files)[0];
+---
+
+<StarlightPage frontmatter={{ title: "Changelog", description: "Releases of slotmirror." }}>
+  {
+    changelog ? (
+      <changelog.Content />
+    ) : (
+      <p>
+        No release yet. Releases appear here and on{" "}
+        <a href="https://github.com/michaeljauk/slotmirror/releases">GitHub</a>.
+      </p>
+    )
+  }
+</StarlightPage>

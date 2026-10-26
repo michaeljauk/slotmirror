@@ -2,7 +2,9 @@ import * as z from "zod/mini";
 import { parseMarkerValue } from "./graph-events";
 import type { DesiredBlock, SourceEvent } from "./types";
 
-/** Key in `extendedProperties.private` that marks blocks written by freebusy-sync. */
+/** Key in `extendedProperties.private` that marks blocks written by slotmirror. */
+// The key keeps the project's former name, freebusy-sync: existing blocks carry it, and a new key
+// would make the sync miss them and write every block again.
 export const GOOGLE_MARKER_KEY = "freebusySyncMarker";
 
 const eventTime = z.object({

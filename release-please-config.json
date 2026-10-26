@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "freebusy-sync",
+      "package-name": "slotmirror",
       "bump-minor-pre-major": true,
       "initial-version": "0.1.0",
       "changelog-sections": [

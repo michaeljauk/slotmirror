@@ -1,6 +1,6 @@
 <p align="center"><img src="design/logo/mark-light-bg.svg" width="72" height="72" alt=""></p>
 
-# freebusy-sync
+# slotmirror
 
 Mirror busy blocks between Microsoft 365 and Google calendars. Self-hosted on Cloudflare Workers,
 runs on the Workers Free plan.
@@ -11,7 +11,7 @@ runs on the Workers Free plan.
 ## What it does
 
 If you work in more than one calendar (two Microsoft 365 tenants, a work and a private Google
-account, or a mix), colleagues only see the calendar they share a tenant with. freebusy-sync reads
+account, or a mix), colleagues only see the calendar they share a tenant with. slotmirror reads
 your events in one calendar and writes matching blocks into the others.
 
 - **You choose the detail per direction.** Work events can arrive in your private calendar with
@@ -19,7 +19,7 @@ your events in one calendar and writes matching blocks into the others.
   private. The default is "Busy" only.
 - **Recurring events are exact.** Every occurrence of a series is mirrored on its own, so a moved
   or cancelled single occurrence moves or removes its block.
-- **Every run compares the full window.** freebusy-sync checks what each target calendar should
+- **Every run compares the full window.** slotmirror checks what each target calendar should
   contain and fixes any difference, instead of trusting that it saw every change. Only differences
   are written; blocks are never rebuilt.
 - **You can see what happened.** The status shows numbers, not just "success", and an audit log
@@ -88,7 +88,7 @@ tenant: anyone can create a Google account on an address at your domain.
 
 **Data location.** With `DATA_JURISDICTION=eu`, tokens and the sync itself, which reads event
 contents, stay in the EU. Create the D1 database in the EU too:
-`wrangler d1 create freebusy-sync --jurisdiction=eu`. Neither setting can change for existing
+`wrangler d1 create slotmirror --jurisdiction=eu`. Neither setting can change for existing
 data. Changing `DATA_JURISDICTION` later disconnects every account.
 
 Until all required settings are present, every dashboard page shows a setup checklist. The
@@ -106,7 +106,7 @@ expires refresh tokens after 7 days.
 
 ## Free plan limits
 
-The Workers Free plan allows 10 ms CPU time and 50 subrequests per invocation. freebusy-sync
+The Workers Free plan allows 10 ms CPU time and 50 subrequests per invocation. slotmirror
 splits each sync into one step per rule direction, so that a step stays inside these limits.
 The daily quotas (100,000 Worker requests, 100,000 Durable Object requests) cover a person or a
 small team. Each connected account needs a few hundred requests a day, so a large team needs
@@ -114,7 +114,7 @@ Workers Paid ($5/month).
 
 ## Provider rate limits
 
-Microsoft and Google throttle a client that sends too many requests. freebusy-sync stays inside
+Microsoft and Google throttle a client that sends too many requests. slotmirror stays inside
 their limits and recovers when it is throttled.
 
 - **Outlook** allows four concurrent requests per app and mailbox, and 10,000 requests in 10

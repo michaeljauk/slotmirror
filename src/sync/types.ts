@@ -23,7 +23,7 @@ export interface SourceEvent {
   subject: string;
   location: string;
   body: string;
-  /** True if the event is a block that freebusy-sync wrote itself. Such events are never mirrored. */
+  /** True if the event is a block that slotmirror wrote itself. Such events are never mirrored. */
   isMirror: boolean;
 }
 
@@ -50,7 +50,7 @@ export interface DesiredBlock extends BlockContent {
   contentHash: string;
 }
 
-/** A block that freebusy-sync finds in the target calendar, recognised by its marker. */
+/** A block that slotmirror finds in the target calendar, recognised by its marker. */
 export interface ExistingBlock {
   targetId: string;
   /** Tag of the rule that wrote the block; see `ruleTagFor`. */

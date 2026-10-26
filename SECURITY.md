@@ -1,6 +1,6 @@
 # Security policy
 
-freebusy-sync stores OAuth tokens with write access to calendars. Please report security problems
+slotmirror stores OAuth tokens with write access to calendars. Please report security problems
 privately.
 
 ## Reporting a vulnerability

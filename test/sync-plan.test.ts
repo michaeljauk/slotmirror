@@ -84,7 +84,7 @@ describe("fromGraphEvent", () => {
     expect(allDay).toMatchObject({ allDay: true, start: "2026-10-29", end: "2026-10-30" });
   });
 
-  it("recognises blocks written by freebusy-sync", () => {
+  it("recognises blocks written by slotmirror", () => {
     const [single] = bySubject("FBS single");
     const [event] = sourceEvents([
       { ...single, singleValueExtendedProperties: [{ id: MARKER_PROPERTY_ID, value: "abc" }] },

@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "freebusy-sync",
+  "name": "slotmirror",
   "main": "src/index.tsx",
   "compatibility_date": "2026-10-25",
   "observability": { "enabled": true },
@@ -9,7 +9,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "freebusy-sync",
+      "database_name": "slotmirror",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations",
     },

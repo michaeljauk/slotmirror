@@ -25,7 +25,7 @@ export async function signInUser(env: Env, identity: SignInIdentity): Promise<Cu
   const decision = decideAccess(policy, identity);
   if (!decision.allowed) return null;
 
-  const orgName = env.ORG_NAME?.trim() || "freebusy-sync";
+  const orgName = env.ORG_NAME?.trim() || "slotmirror";
   const email = identity.email.trim().toLowerCase();
   const [, user] = await env.DB.batch([
     env.DB.prepare(

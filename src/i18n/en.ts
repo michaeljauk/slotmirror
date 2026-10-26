@@ -45,7 +45,7 @@ export const en = {
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
     disconnectText: (email: string) =>
-      `freebusy-sync deletes its tokens for ${email} and stops reading and writing its calendars.`,
+      `slotmirror deletes its tokens for ${email} and stops reading and writing its calendars.`,
     disconnectRules: (count: number) =>
       count === 0
         ? "No rule uses this account."
@@ -171,10 +171,10 @@ export const en = {
   privacy: {
     title: "Privacy",
     operator: (name: string, contact: string) =>
-      `This deployment of freebusy-sync is operated by ${name}. Contact: ${contact}.`,
+      `This deployment of slotmirror is operated by ${name}. Contact: ${contact}.`,
     operatorUnknown: "The operator of this deployment has not set a contact address.",
     intro:
-      "freebusy-sync mirrors busy times between calendars. It is open-source software that each operator runs in their own Cloudflare account.",
+      "slotmirror mirrors busy times between calendars. It is open-source software that each operator runs in their own Cloudflare account.",
     storedTitle: "What is stored",
     stored: [
       "Your email address and, for Microsoft accounts, the tenant ID, to identify you and your connected accounts.",
@@ -191,10 +191,10 @@ export const en = {
       "On Cloudflare Workers, D1 and Durable Objects in the operator's Cloudflare account, and at Microsoft and Google when calendars are read and written.",
     deleteTitle: "How to delete your data",
     delete:
-      "Disconnecting an account deletes its tokens and the blocks freebusy-sync wrote for it. To delete your user, contact the operator.",
+      "Disconnecting an account deletes its tokens and the blocks slotmirror wrote for it. To delete your user, contact the operator.",
     googleTitle: "Google user data",
     google:
-      "freebusy-sync's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",
+      "slotmirror's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",
     noTracking: "There is no tracking, no analytics and no advertising.",
   },
   admin: {

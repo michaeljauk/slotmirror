@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { SESSION_COOKIE, signSession } from "../src/session";
 import { signInUser, type CurrentUser } from "../src/users";
 
-export const BASE = "https://freebusy-sync.example.workers.dev";
+export const BASE = "https://slotmirror.example.workers.dev";
 
 /** Sign in an address allowed by the test bindings and return the user and its session cookie. */
 export async function signIn(email: string): Promise<{ user: CurrentUser; cookie: string }> {

@@ -44,7 +44,7 @@ export const de: Messages = {
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
     disconnectText: (email) =>
-      `freebusy-sync löscht seine Tokens für ${email} und liest und schreibt dessen Kalender nicht mehr.`,
+      `slotmirror löscht seine Tokens für ${email} und liest und schreibt dessen Kalender nicht mehr.`,
     disconnectRules: (count) =>
       count === 0
         ? "Keine Regel nutzt dieses Konto."
@@ -173,10 +173,10 @@ export const de: Messages = {
   privacy: {
     title: "Datenschutz",
     operator: (name, contact) =>
-      `Diese Installation von freebusy-sync betreibt ${name}. Kontakt: ${contact}.`,
+      `Diese Installation von slotmirror betreibt ${name}. Kontakt: ${contact}.`,
     operatorUnknown: "Der Betreiber dieser Installation hat keine Kontaktadresse hinterlegt.",
     intro:
-      "freebusy-sync spiegelt Belegt-Zeiten zwischen Kalendern. Es ist Open-Source-Software, die jeder Betreiber in seinem eigenen Cloudflare-Konto betreibt.",
+      "slotmirror spiegelt Belegt-Zeiten zwischen Kalendern. Es ist Open-Source-Software, die jeder Betreiber in seinem eigenen Cloudflare-Konto betreibt.",
     storedTitle: "Was gespeichert wird",
     stored: [
       "Deine E-Mail-Adresse und bei Microsoft-Konten die Tenant-ID, um dich und deine verbundenen Konten zu erkennen.",
@@ -193,10 +193,10 @@ export const de: Messages = {
       "In Cloudflare Workers, D1 und Durable Objects im Cloudflare-Konto des Betreibers sowie bei Microsoft und Google, wenn Kalender gelesen und geschrieben werden.",
     deleteTitle: "Wie du deine Daten löschst",
     delete:
-      "Trennst du ein Konto, werden seine Tokens und die von freebusy-sync dafür geschriebenen Blöcke gelöscht. Um deinen Nutzer zu löschen, wende dich an den Betreiber.",
+      "Trennst du ein Konto, werden seine Tokens und die von slotmirror dafür geschriebenen Blöcke gelöscht. Um deinen Nutzer zu löschen, wende dich an den Betreiber.",
     googleTitle: "Nutzerdaten von Google",
     google:
-      "Die Nutzung und Weitergabe von Informationen aus Google APIs durch freebusy-sync entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",
+      "Die Nutzung und Weitergabe von Informationen aus Google APIs durch slotmirror entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",
     noTracking: "Es gibt kein Tracking, keine Analyse und keine Werbung.",
   },
   admin: {

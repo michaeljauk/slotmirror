@@ -5,7 +5,7 @@ repository. Humans: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What this is
 
-freebusy-sync mirrors busy blocks between Microsoft 365 and Google calendars. It runs as one
+slotmirror mirrors busy blocks between Microsoft 365 and Google calendars. It runs as one
 Cloudflare Worker on the Workers Free plan and is self-hosted: every deployment holds its own OAuth
 tokens. Privacy is the product: by default only "Busy" crosses from one calendar to another.
 

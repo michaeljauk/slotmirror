@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in freebusy-sync. Bug reports, fixes, docs and translations are welcome.
+Thanks for your interest in slotmirror. Bug reports, fixes, docs and translations are welcome.
 
 ## Before you start
 

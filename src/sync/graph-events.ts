@@ -2,8 +2,9 @@ import * as z from "zod/mini";
 import type { ShowAs, SourceEvent } from "./types";
 
 /**
- * Single-value extended property that marks blocks written by freebusy-sync.
- * Its value is `<ruleTag>.<marker>.<contentHash>`.
+ * Single-value extended property that marks blocks written by slotmirror.
+ * Its value is `<ruleTag>.<marker>.<contentHash>`. The name keeps the project's former name,
+ * freebusy-sync: existing blocks carry it, and a new name would make the sync miss them.
  */
 export const MARKER_PROPERTY_ID =
   "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10} Name freebusySyncMarker";

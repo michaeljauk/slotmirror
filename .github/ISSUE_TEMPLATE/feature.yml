@@ -13,4 +13,4 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: How could freebusy-sync solve it?
+      description: How could slotmirror solve it?

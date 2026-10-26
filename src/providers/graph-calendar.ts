@@ -20,7 +20,13 @@ import {
   type BatchResult,
 } from "../sync/throttle";
 import type { DesiredBlock, ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
-import type { CalendarClient, CalendarInfo, TimeWindow, Watch } from "./calendar-client";
+import type {
+  CalendarClient,
+  CalendarInfo,
+  ChangeFeed,
+  TimeWindow,
+  Watch,
+} from "./calendar-client";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -241,6 +247,11 @@ export class GraphCalendar implements CalendarClient {
       headers: this.headers(),
     });
     if (!response.ok && response.status !== 404) throw await graphError(response, "unsubscribe");
+  }
+
+  /** Graph notifications name the changed events; `AccountSync.isOwnEcho` reads them. */
+  changesSince(): Promise<ChangeFeed | null> {
+    return Promise.resolve(null);
   }
 
   private async calendarView(

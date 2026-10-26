@@ -25,6 +25,14 @@ export interface Watch {
   expiresAt: number;
 }
 
+/** The events of a calendar that changed since the last call. */
+export interface ChangeFeed {
+  /** IDs of changed and deleted events. Null if unknown: there was no token yet, or it expired. */
+  ids: string[] | null;
+  /** Pass this to the next call. */
+  syncToken: string;
+}
+
 export interface TimeWindow {
   start: Date;
   end: Date;
@@ -59,6 +67,11 @@ export interface CalendarClient {
   renew(watch: Watch, expiresAt: number): Promise<Watch | null>;
   /** Stop a watch. A watch that is already gone counts as stopped. */
   unwatch(watch: Watch): Promise<void>;
+  /**
+   * The events changed since `syncToken`, for a notification that names no events. Without a
+   * token, only the first token. Null if the provider has no such feed.
+   */
+  changesSince(calendarId: string, syncToken: string | null): Promise<ChangeFeed | null>;
   /** Apply up to `batchLimit` actions; already deleted blocks count as success. */
   applyBatch(calendarId: string, ruleTag: string, actions: SyncAction[]): Promise<BatchResult>;
 }
@@ -79,6 +92,7 @@ export function oneCallAtATime(
     watch: (...args) => run(() => client.watch(...args)),
     renew: (...args) => run(() => client.renew(...args)),
     unwatch: (...args) => run(() => client.unwatch(...args)),
+    changesSince: (...args) => run(() => client.changesSince(...args)),
   };
 }
 

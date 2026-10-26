@@ -77,7 +77,8 @@ app.post("/webhooks/google", async (c) => {
     state !== "sync" &&
     (await isValidToken(c.env, accountId, c.req.header("x-goog-channel-token")))
   ) {
-    await notifyChange(c.env, accountId);
+    // The instance skips the sync if the change is only blocks it wrote itself.
+    await accountSync(c.env, accountId).googleChanged(c.req.header("x-goog-channel-id") ?? "");
   }
   return c.body(null, 200);
 });

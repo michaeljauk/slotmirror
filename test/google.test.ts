@@ -122,10 +122,17 @@ describe("Google batch", () => {
           "Content-ID: <response-item0>",
           "",
           "HTTP/1.1 200 OK",
+          "Content-Type: application/json",
+          "",
+          '{"id":"new-1"}',
           "--r",
           "Content-ID: <response-item1>",
           "",
           "HTTP/1.1 410 Gone",
+          "--r",
+          "Content-ID: <response-item2>",
+          "",
+          "HTTP/1.1 200 OK",
           "--r--",
         ].join("\r\n"),
         { headers: { "content-type": "multipart/mixed; boundary=r" } },
@@ -139,8 +146,15 @@ describe("Google batch", () => {
     const result = await new GoogleCalendar("token").applyBatch("primary", "tag", [
       { kind: "create", block: block! },
       { kind: "delete", targetId: "old", marker: "m" },
+      { kind: "update", targetId: "kept", block: block! },
     ]);
-    expect(result).toEqual({ failed: 0, throttled: 0, statuses: {} });
+    // The IDs of written blocks, so that their change notifications count as echoes.
+    expect(result).toEqual({
+      failed: 0,
+      throttled: 0,
+      statuses: {},
+      writtenIds: ["new-1", "kept"],
+    });
     expect(sent).toContain("POST /calendar/v3/calendars/primary/events HTTP/1.1");
     expect(sent).toContain("DELETE /calendar/v3/calendars/primary/events/old HTTP/1.1");
   });

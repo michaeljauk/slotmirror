@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadEditorState,
   resetDirection,
+  setBlockBuffer,
   setBlockColor,
   setDirection,
   setGroupMembership,
@@ -452,5 +453,70 @@ describe("check with real events", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("Next sync: 2 new, 0 changed, 0 removed");
+  });
+});
+
+describe("block buffer per direction", () => {
+  const optionsOf = async (userId: string, from: string, to: string) =>
+    (await loadEditorState(env, userId)).directions.find((d) => d.from === from && d.to === to)
+      ?.options;
+
+  it("saves the buffers from the page, shows them again, and refuses invalid values", async () => {
+    const { user, cookie, w, o, g } = await setup("buf");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, w, o, "busy");
+    const save = (fields: Record<string, string>) =>
+      exports.default.fetch(`${BASE}/rules/choices`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(fields),
+      });
+    const saved = await save({ [`bufferBefore.${w}.${g}`]: "15", [`bufferAfter.${w}.${g}`]: "30" });
+    expect(saved.status).toBe(204);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, bufferAfter: 30 });
+    expect(await optionsOf(user.id, w, o)).toMatchObject({ bufferBefore: 0, bufferAfter: 0 });
+
+    const html = await (
+      await exports.default.fetch(`${BASE}/rules?open=${w}`, { headers: { cookie } })
+    ).text();
+    const forms = html.match(/<form[^>]*block-buffer[\s\S]*?<\/form>/g) ?? [];
+    const form = forms.find((f) => f.includes(`name="to" value="${g}"`)) ?? "";
+    expect(form).toMatch(/name="bufferBefore"[^>]*value="15"/);
+    expect(form).toMatch(/name="bufferAfter"[^>]*value="30"/);
+    expect(html).toContain("Buffer there:");
+
+    // Settings for all rules keep the buffer of each direction.
+    await save({ settings: "1", "settings.daysAhead": "30" });
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, daysAhead: 30 });
+
+    for (const value of ["241", "-5", "1.5", "abc"]) {
+      expect((await save({ [`bufferAfter.${w}.${g}`]: value })).status).toBe(400);
+    }
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, bufferAfter: 30 });
+  });
+
+  it("saves from the form without the editor script, and the reset clears the buffers", async () => {
+    const { user, cookie, w, g } = await setup("bufform");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, w, g, "title");
+    const response = await exports.default.fetch(`${BASE}/rules/direction/buffer`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ from: w, to: g, bufferBefore: "240", bufferAfter: "" }),
+    });
+    expect(response.status).toBe(302);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 240, bufferAfter: 0 });
+
+    await resetDirection(env, user, w, g);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 0, bufferAfter: 0 });
+  });
+
+  it("changes nothing for a direction without rules", async () => {
+    const { user, w, g } = await setup("bufoff");
+    expect(await setBlockBuffer(env, user, w, g, { bufferBefore: 10 })).toBe(true);
+    expect(await optionsOf(user.id, w, g)).toBeNull();
   });
 });

@@ -25,13 +25,14 @@ export function isIncluded(event: SourceEvent, options: RuleOptions): boolean {
 /**
  * The block content for a source event at the rule's detail level.
  * Events the source marks private never carry more than "busy", whatever the rule says.
+ * The buffers widen timed blocks only; the times of all-day blocks are dates.
  */
 export function blockContent(event: SourceEvent, options: RuleOptions): BlockContent {
   const level = event.isPrivate ? "busy" : options.detailLevel;
   const withTitle = level !== "busy" && event.subject.trim() !== "";
   return {
-    start: event.start,
-    end: event.end,
+    start: event.allDay ? event.start : shifted(event.start, -options.bufferBefore),
+    end: event.allDay ? event.end : shifted(event.end, options.bufferAfter),
     allDay: event.allDay,
     showAs: event.showAs === "unknown" ? "busy" : event.showAs,
     isPrivate: options.markPrivate || event.isPrivate,
@@ -40,6 +41,16 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
     body: level === "full" ? event.body : "",
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
   };
+}
+
+/**
+ * A time moved by some minutes. Without a move the text stays as the source wrote it, so that the
+ * content hash of blocks without a buffer does not change.
+ */
+function shifted(time: string, minutes: number): string {
+  const instant = Date.parse(time);
+  if (minutes === 0 || Number.isNaN(instant)) return time;
+  return new Date(instant + minutes * 60_000).toISOString();
 }
 
 /** Marker for a block: SHA-256 of rule ID and occurrence key, so no source ID leaves the source. */
@@ -69,7 +80,8 @@ export async function inPrecedenceOrder(ruleIds: string[]): Promise<string[]> {
  * Key of a block as people see it: times, title, status and privacy, hashed with a per-user scope.
  * Two blocks with the same key block the same way, so one of them is enough. The same match in two
  * subscribed calendars gets one key; so do two private "Busy" blocks at the same time. A tentative
- * block never stands in for a busy one, and an open block never for a private one.
+ * block never stands in for a busy one, and an open block never for a private one. The times are
+ * those of the block, buffers included, so rules with different buffers each write their block.
  */
 export async function dedupKeyFor(scope: string, content: BlockContent): Promise<string> {
   const subject = content.subject.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();

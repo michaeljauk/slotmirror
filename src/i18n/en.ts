@@ -179,6 +179,11 @@ export const en = {
     blockCategoryPlaceholder: "No category",
     blockCategoryHint:
       "Outlook shows a colour if a category with this name exists. Create it in Outlook first.",
+    bufferLabel: "Buffer there:",
+    bufferBefore: "min. before",
+    bufferAfter: "min. after",
+    bufferHint:
+      "Copies start earlier and end later by these minutes, for example for travel time. All-day events get no buffer.",
     reconnectText: (name: string) =>
       `${name} is no longer connected. Until you connect it again, its calendars do not sync.`,
     reconnect: (name: string) => `Connect ${name} again`,

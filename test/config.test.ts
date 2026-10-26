@@ -14,7 +14,20 @@ describe("parseRuleOptions", () => {
       skipCategories: [],
       markPrivate: true,
       blockColor: "",
+      bufferBefore: 0,
+      bufferAfter: 0,
     });
+  });
+
+  it("accepts buffers from 0 to 240 whole minutes", () => {
+    expect(parseRuleOptions('{"bufferBefore": 240, "bufferAfter": 15}')).toMatchObject({
+      bufferBefore: 240,
+      bufferAfter: 15,
+    });
+    for (const value of ["241", "-1", "1.5", '"15"']) {
+      expect(() => parseRuleOptions(`{"bufferBefore": ${value}}`)).toThrow();
+      expect(() => parseRuleOptions(`{"bufferAfter": ${value}}`)).toThrow();
+    }
   });
 
   it("rejects a window beyond 365 days", () => {

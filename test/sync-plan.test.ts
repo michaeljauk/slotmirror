@@ -314,3 +314,127 @@ describe("category filter", () => {
     expect(isIncluded(event([]), options)).toBe(true);
   });
 });
+
+describe("buffer", () => {
+  const timed: SourceEvent = {
+    occurrenceKey: "event:buffer",
+    start: "2026-10-27T10:00:00.000Z",
+    end: "2026-10-27T11:00:00.000Z",
+    allDay: false,
+    showAs: "busy",
+    isPrivate: false,
+    declined: false,
+    categories: [],
+    subject: "Visit",
+    location: "",
+    body: "",
+    isMirror: false,
+  };
+
+  async function blockOf(event: SourceEvent, overrides: Partial<RuleOptions>, rule = RULE) {
+    const [block] = await desiredBlocks(rule, [event], options(overrides), { scope: "user" });
+    if (!block) throw new Error("no block");
+    return block;
+  }
+
+  it("starts the block earlier by bufferBefore", async () => {
+    const block = await blockOf(timed, { bufferBefore: 30 });
+    expect(block).toMatchObject({
+      start: "2026-10-27T09:30:00.000Z",
+      end: "2026-10-27T11:00:00.000Z",
+    });
+  });
+
+  it("ends the block later by bufferAfter", async () => {
+    const block = await blockOf(timed, { bufferAfter: 45 });
+    expect(block).toMatchObject({
+      start: "2026-10-27T10:00:00.000Z",
+      end: "2026-10-27T11:45:00.000Z",
+    });
+  });
+
+  it("applies both buffers, across midnight", async () => {
+    const late = { ...timed, start: "2026-10-27T23:30:00.000Z", end: "2026-10-27T23:50:00.000Z" };
+    const block = await blockOf(late, { bufferBefore: 240, bufferAfter: 15 });
+    expect(block).toMatchObject({
+      start: "2026-10-27T19:30:00.000Z",
+      end: "2026-10-28T00:05:00.000Z",
+    });
+  });
+
+  it("never widens an all-day block", async () => {
+    const allDay = { ...timed, allDay: true, start: "2026-10-27", end: "2026-10-28" };
+    const overrides = { skipAllDay: false, bufferBefore: 60, bufferAfter: 60 };
+    const block = await blockOf(allDay, overrides);
+    expect(block).toMatchObject({ allDay: true, start: "2026-10-27", end: "2026-10-28" });
+    expect(block.contentHash).toBe((await blockOf(allDay, { skipAllDay: false })).contentHash);
+  });
+
+  it("keeps the blocks of rules without a buffer exactly as before", async () => {
+    const block = await blockOf(timed, {});
+    expect(await blockOf(timed, { bufferBefore: 0, bufferAfter: 0 })).toEqual(block);
+    // Hash and dedup key as computed before buffers existed: no rule rewrites its blocks.
+    expect(block.contentHash).toBe("e2017962879850ddec59cee5aabb4f7e");
+    expect(block.dedupKey).toBe("74cbc6995f91445218fc104bd5fb7fbb");
+  });
+
+  it("keeps the marker of the occurrence, so a changed buffer updates the block", async () => {
+    const plain = await blockOf(timed, {});
+    const buffered = await blockOf(timed, { bufferBefore: 15, bufferAfter: 15 });
+    expect(buffered.marker).toBe(plain.marker);
+    const plan = planSync([buffered], asExisting([plain]));
+    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+  });
+
+  it("plans no change on the second run with an unchanged event", async () => {
+    const overrides = { bufferBefore: 20, bufferAfter: 10 };
+    const first = await desiredBlocks(RULE, sourceEvents(), options(overrides));
+    const created = planSync(first, []);
+    expect(created.stats.create).toBe(15);
+    // The target returns the times in its own notation; the plan compares instants.
+    const stored = asExisting(first).map((block) => ({
+      ...block,
+      start: block.start.replace(".000Z", "Z"),
+      end: block.end.replace(".000Z", "Z"),
+    }));
+    const second = await desiredBlocks(RULE, sourceEvents(), options(overrides));
+    expect(planSync(second, stored)).toEqual({
+      actions: [],
+      stats: { create: 0, update: 0, delete: 0, unchanged: 15 },
+    });
+  });
+
+  it("writes one block per event where buffered blocks overlap, and keeps them stable", async () => {
+    const next = {
+      ...timed,
+      occurrenceKey: "event:next",
+      start: "2026-10-27T11:00:00.000Z",
+      end: "2026-10-27T12:00:00.000Z",
+    };
+    const overrides = { bufferBefore: 30, bufferAfter: 30 };
+    const blocks = await desiredBlocks(RULE, [timed, next], options(overrides));
+    expect(blocks.map((block) => [block.start, block.end])).toEqual([
+      ["2026-10-27T09:30:00.000Z", "2026-10-27T11:30:00.000Z"],
+      ["2026-10-27T10:30:00.000Z", "2026-10-27T12:30:00.000Z"],
+    ]);
+    const again = await desiredBlocks(RULE, [timed, next], options(overrides));
+    expect(planSync(again, asExisting(blocks)).actions).toEqual([]);
+  });
+
+  it("dedups rules with the same buffer, but not rules with different buffers", async () => {
+    const a = await blockOf(timed, { bufferBefore: 15 }, "rule-a");
+    const same = await blockOf(timed, { bufferBefore: 15 }, "rule-b");
+    const other = await blockOf(timed, { bufferBefore: 30 }, "rule-b");
+    const none = await blockOf(timed, {}, "rule-b");
+    expect(same.dedupKey).toBe(a.dedupKey);
+    expect(other.dedupKey).not.toBe(a.dedupKey);
+    expect(none.dedupKey).not.toBe(a.dedupKey);
+
+    const claimed = new Set([a.dedupKey]);
+    const write = (overrides: Partial<RuleOptions>) =>
+      desiredBlocks("rule-b", [timed], options(overrides), { scope: "user", claimed });
+    expect(await write({ bufferBefore: 15 })).toEqual([]);
+    const [own] = await write({ bufferBefore: 30 });
+    expect(own).toMatchObject({ start: "2026-10-27T09:30:00.000Z", dedupKey: other.dedupKey });
+  });
+});

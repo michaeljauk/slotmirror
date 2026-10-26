@@ -217,6 +217,49 @@ describe("AccountSync.runRule", () => {
     });
   });
 
+  it("writes buffered blocks, and the next run with the same events changes nothing", async () => {
+    const { stub, ruleId } = await setupRule("acc-buffer", { bufferBefore: 15, bufferAfter: 30 });
+    await stub.storeTokens("acc-buffer", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const calls = fakeGraph();
+    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 15, failed: 0 });
+    const written = writtenBlocks(calls, "buffered") as {
+      start: { dateTime: string };
+      end: { dateTime: string };
+    }[];
+    // "FBS single" runs from 13:00 to 14:00.
+    expect(written.map((block) => [block.start.dateTime, block.end.dateTime])).toContainEqual([
+      "2026-10-27T12:45:00",
+      "2026-10-27T14:30:00",
+    ]);
+
+    // The source is read wider than the target, by the buffers: a block that reaches into the
+    // window always has its event in the source read, so the run never deletes it as an orphan.
+    const window = (part: string) => {
+      const call = calls.find((c) => c.url.includes(`/calendars/${part}/calendarView`));
+      const params = new URL(call?.url ?? "https://x").searchParams;
+      return [params.get("startDateTime"), params.get("endDateTime")].map((v) =>
+        Date.parse(v ?? ""),
+      );
+    };
+    const [sourceStart, sourceEnd] = window(SOURCE_CAL);
+    const [targetStart, targetEnd] = window(TARGET_CAL);
+    expect((targetStart ?? 0) - (sourceStart ?? 0)).toBe(30 * 60_000);
+    expect((sourceEnd ?? 0) - (targetEnd ?? 0)).toBe(15 * 60_000);
+    vi.restoreAllMocks();
+
+    fakeGraph(written);
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: 0,
+      unchanged: 15,
+    });
+  });
+
   it("refreshes an expired token once and stores the rotated refresh token", async () => {
     const { stub, ruleId } = await setupRule("acc-refresh");
     await stub.storeTokens("acc-refresh", {

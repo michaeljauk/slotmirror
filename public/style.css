@@ -1897,6 +1897,39 @@ details.source > .source-head .provider-icon,
   border-color: var(--accent);
 }
 
+/* Buffer around the blocks in the target, per direction. */
+
+.block-buffer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.buffer-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.buffer-field input {
+  width: 64px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.block-buffer.pending .block-color-label,
+.block-buffer.pending .buffer-field input {
+  color: var(--accent);
+}
+
+.block-buffer.pending .buffer-field input {
+  border-color: var(--accent);
+}
+
 /* The overview is narrow: there the colour mark stands for the account, without the logo. */
 .matrix .account-name svg {
   display: none;

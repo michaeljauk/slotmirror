@@ -120,6 +120,21 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
 }
 
 /**
+ * The window to read source events in: the sync window, earlier by the buffer after and later by
+ * the buffer before. Every block that reaches into the sync window then has its event in the read,
+ * so that the run does not delete it as an orphan. Without buffers it is the sync window.
+ */
+export function sourceWindow(
+  window: { start: Date; end: Date },
+  options: Pick<RuleOptions, "bufferBefore" | "bufferAfter">,
+): { start: Date; end: Date } {
+  return {
+    start: new Date(window.start.getTime() - options.bufferAfter * 60_000),
+    end: new Date(window.end.getTime() + options.bufferBefore * 60_000),
+  };
+}
+
+/**
  * Window for removing a rule's blocks: from the start of the current UTC day to one year and a
  * month ahead, wider than any rule window. Past blocks stay as a record of when the user was busy.
  */

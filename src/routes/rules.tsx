@@ -10,10 +10,12 @@ import {
   loadEditorState,
   resetDirection,
   setDirection,
+  setBlockBuffer,
   setBlockColor,
   setGroupMembership,
   setSettings,
   setSourceCalendar,
+  type BlockBuffer,
   type SyncSettings,
   type Choice,
 } from "../editor";
@@ -105,6 +107,8 @@ rules.post("/", async (c) => {
     markPrivate: form.has("markPrivate"),
     skipAllDay: form.has("skipAllDay"),
     skipTentative: form.has("skipTentative"),
+    bufferBefore: minutes(formText(form, "bufferBefore")),
+    bufferAfter: minutes(formText(form, "bufferAfter")),
   });
   const valid =
     parsed.success &&
@@ -137,6 +141,11 @@ rules.post("/", async (c) => {
 function formText(form: FormData, name: string): string {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
+}
+
+/** Minutes from a number field. An empty field is 0; the options schema refuses the rest. */
+function minutes(value: string): number {
+  return value.trim() === "" ? 0 : Number(value);
 }
 
 /** The editor script asks for fragments with this header; forms without the script do not. */
@@ -212,6 +221,21 @@ rules.post("/choices", async (c) => {
       return c.text("Bad block colour", 400);
     }
   }
+  // Buffers per direction: fields "bufferBefore.<from>.<to>" and "bufferAfter.<from>.<to>".
+  const buffers = new Map<string, { from: string; to: string; buffer: BlockBuffer }>();
+  for (const [name, value] of form.entries()) {
+    const [prefix, from, to, ...rest] = name.split(".");
+    if (prefix !== "bufferBefore" && prefix !== "bufferAfter") continue;
+    if (!from || !to || rest.length > 0 || typeof value !== "string") {
+      return c.text("Bad buffer", 400);
+    }
+    const entry = buffers.get(`${from}>${to}`) ?? { from, to, buffer: {} };
+    entry.buffer[prefix] = minutes(value);
+    buffers.set(`${from}>${to}`, entry);
+  }
+  for (const { from, to, buffer } of buffers.values()) {
+    if (!(await setBlockBuffer(c.env, user, from, to, buffer))) return c.text("Bad buffer", 400);
+  }
   if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
@@ -228,6 +252,17 @@ rules.post("/direction/color", async (c) => {
     formText(form, "blockColor"),
   );
   if (!ok) return c.text("Bad block colour", 400);
+  return backTo(c, from);
+});
+
+rules.post("/direction/buffer", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const ok = await setBlockBuffer(c.env, currentUser(c), from, formText(form, "to"), {
+    bufferBefore: minutes(formText(form, "bufferBefore")),
+    bufferAfter: minutes(formText(form, "bufferAfter")),
+  });
+  if (!ok) return c.text("Bad buffer", 400);
   return backTo(c, from);
 });
 

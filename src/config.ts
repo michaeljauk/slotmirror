@@ -1,6 +1,11 @@
 import * as z from "zod/mini";
 import { policyAdmitsAnyone, policyFromEnv } from "./access";
 
+/** Longest buffer before or after a block, in minutes. */
+export const MAX_BUFFER_MINUTES = 240;
+
+const bufferMinutes = z._default(z.int().check(z.minimum(0), z.maximum(MAX_BUFFER_MINUTES)), 0);
+
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */
 export const ruleOptionsSchema = z.object({
   /**
@@ -33,6 +38,12 @@ export const ruleOptionsSchema = z.object({
    * Outlook category name. Empty: no colour, the calendar's default.
    */
   blockColor: z._default(z.string().check(z.maxLength(100)), ""),
+  /**
+   * Minutes the block starts before and ends after a timed event, for example for travel time.
+   * All-day blocks keep their dates. With 0, a block is exactly as long as its event.
+   */
+  bufferBefore: bufferMinutes,
+  bufferAfter: bufferMinutes,
 });
 
 export type RuleOptions = z.infer<typeof ruleOptionsSchema>;

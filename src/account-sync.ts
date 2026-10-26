@@ -16,6 +16,7 @@ import {
   loadRule,
   rulesTargetingAccount,
   siblingRuleIds,
+  sourceWindow,
   syncWindow,
 } from "./sync/rules";
 import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
@@ -521,12 +522,13 @@ export class AccountSync extends DurableObject<Env> {
         .level,
     };
     const withBody = ruleOptions.detailLevel === "full";
+    const readWindow = sourceWindow(window, rule.options);
     const sourceEvents =
       rule.source.accountId === this.accountId()
-        ? await this.readSourceEvents(rule.source.remoteCalendarId, window, withBody)
+        ? await this.readSourceEvents(rule.source.remoteCalendarId, readWindow, withBody)
         : await accountSync(this.env, rule.source.accountId).readSourceEvents(
             rule.source.remoteCalendarId,
-            window,
+            readWindow,
             withBody,
           );
 

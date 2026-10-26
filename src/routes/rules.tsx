@@ -12,10 +12,12 @@ import {
   setDirection,
   setBlockColor,
   setGroupMembership,
+  setWorkingHours,
   setSettings,
   setSourceCalendar,
   type SyncSettings,
   type Choice,
+  type WorkingHours,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
 import { render } from "../render";
@@ -204,6 +206,25 @@ rules.post("/choices", async (c) => {
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
+  // Working hours per direction: fields "workDays.<from>.<to>" (comma-separated ISO weekdays),
+  // "workStart.<from>.<to>", "workEnd.<from>.<to>" and "workTimeZone.<from>.<to>".
+  const hours = new Map<string, { from: string; to: string; hours: WorkingHours }>();
+  for (const [name, value] of form.entries()) {
+    const [prefix, from, to, ...rest] = name.split(".");
+    if (!isWorkingHoursField(prefix)) continue;
+    if (!from || !to || rest.length > 0 || typeof value !== "string") {
+      return c.text("Bad working hours", 400);
+    }
+    const entry = hours.get(`${from}>${to}`) ?? { from, to, hours: {} };
+    if (prefix === "workDays") entry.hours.workDays = weekdays(value.split(","));
+    else entry.hours[prefix] = value;
+    hours.set(`${from}>${to}`, entry);
+  }
+  for (const entry of hours.values()) {
+    if (!(await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours))) {
+      return c.text("Bad working hours", 400);
+    }
+  }
   // Block colours after the choices, so that a direction turned on in the same save has its rules.
   for (const [name, value] of form.entries()) {
     const [prefix, from, to, ...rest] = name.split(".");
@@ -215,6 +236,34 @@ rules.post("/choices", async (c) => {
   if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
+});
+
+/** ISO weekdays from form values. Anything else becomes NaN, which the options schema refuses. */
+function weekdays(values: (string | File)[]): number[] {
+  return values
+    .filter((value) => typeof value !== "string" || value.trim() !== "")
+    .map((value) => (typeof value === "string" ? Number(value) : Number.NaN));
+}
+
+const WORKING_HOURS_FIELDS = ["workDays", "workStart", "workEnd", "workTimeZone"] as const;
+
+function isWorkingHoursField(
+  name: string | undefined,
+): name is (typeof WORKING_HOURS_FIELDS)[number] {
+  return (WORKING_HOURS_FIELDS as readonly (string | undefined)[]).includes(name);
+}
+
+rules.post("/direction/hours", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const ok = await setWorkingHours(c.env, currentUser(c), from, formText(form, "to"), {
+    workDays: weekdays(form.getAll("workDays")),
+    workStart: formText(form, "workStart"),
+    workEnd: formText(form, "workEnd"),
+    workTimeZone: formText(form, "workTimeZone"),
+  });
+  if (!ok) return c.text("Bad working hours", 400);
+  return backTo(c, from);
 });
 
 rules.post("/direction/color", async (c) => {

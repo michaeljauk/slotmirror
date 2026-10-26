@@ -9,6 +9,7 @@ import {
   MAX_CATEGORY_LENGTH,
 } from "../editor";
 import { useI18n } from "../i18n";
+import { ALL_WEEKDAYS } from "../sync/working-hours";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { Layout } from "./layout";
@@ -240,6 +241,78 @@ function GroupCard(props: { state: EditorState }) {
 }
 
 /**
+ * Working hours of a direction: weekdays, a time range and its time zone. Only events that touch
+ * them are copied. With the editor script a change joins the page's unsaved changes.
+ */
+function WorkingHours(props: {
+  source: EditorAccount;
+  target: EditorAccount;
+  direction: EditorDirection;
+}) {
+  const { t, timeZone } = useI18n();
+  const { direction, source, target } = props;
+  if (!direction.ruleId || direction.effective === "off") return null;
+  const days = new Set(direction.options?.workDays ?? ALL_WEEKDAYS);
+  return (
+    <form
+      method="post"
+      action="/rules/direction/hours"
+      class="dest-note working-hours"
+      data-key={`${source.id}>${target.id}`}
+    >
+      <input type="hidden" name="from" value={source.id} />
+      <input type="hidden" name="to" value={target.id} />
+      <span class="block-color-label">{t.editor.workHoursLabel}</span>
+      <span class="weekday-row" role="group" aria-label={t.editor.workHoursLabel}>
+        {ALL_WEEKDAYS.map((day) => (
+          <label class="weekday" title={t.editor.weekdayNames[day - 1]}>
+            <input
+              type="checkbox"
+              name="workDays"
+              value={String(day)}
+              checked={days.has(day)}
+              aria-label={t.editor.weekdayNames[day - 1]}
+            />
+            <span>{t.editor.weekdays[day - 1]}</span>
+          </label>
+        ))}
+      </span>
+      <span class="work-time">
+        <input
+          type="time"
+          name="workStart"
+          value={direction.options?.workStart ?? ""}
+          aria-label={t.editor.workStart}
+          title={t.editor.workStart}
+        />
+        {"–"}
+        <input
+          type="time"
+          name="workEnd"
+          value={direction.options?.workEnd ?? ""}
+          aria-label={t.editor.workEnd}
+          title={t.editor.workEnd}
+        />
+      </span>
+      <input
+        type="text"
+        name="workTimeZone"
+        class="work-zone"
+        maxlength={64}
+        value={direction.options?.workTimeZone || timeZone}
+        aria-label={t.editor.workTimeZone}
+        title={t.editor.workTimeZone}
+        autocomplete="off"
+      />
+      <span class="block-color-hint">{t.editor.workHoursHint}</span>
+      <button type="submit" class="button small nojs-only">
+        {t.editor.save}
+      </button>
+    </form>
+  );
+}
+
+/**
  * The colour of the blocks in the target: a Google event colour, or an Outlook category. With the
  * editor script a change joins the page's unsaved changes.
  */
@@ -343,6 +416,7 @@ function DestinationRow(props: {
           </span>
         ))}
       </div>
+      <WorkingHours source={source} target={target} direction={direction} />
       <BlockColor source={source} target={target} direction={direction} />
       {fromGroup ? <div class="dest-note faint">{t.editor.fromGroup}</div> : null}
       {isException ? (

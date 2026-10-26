@@ -1,8 +1,9 @@
 import * as z from "zod/mini";
 import { policyAdmitsAnyone, policyFromEnv } from "./access";
+import { ALL_WEEKDAYS, isTimeZone, TIME_OF_DAY } from "./sync/working-hours";
 
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */
-export const ruleOptionsSchema = z.object({
+const ruleOptionsFields = z.object({
   /**
    * How much of each source event reaches the target: "busy" (default), "title",
    * "title_location" or "full" (adds the body). A rule has one direction, so each direction has
@@ -26,6 +27,33 @@ export const ruleOptionsSchema = z.object({
     z.array(z.string().check(z.maxLength(100))).check(z.maxLength(50)),
     [],
   ),
+  /**
+   * Working hours: mirror only events that overlap `workStart` to `workEnd` on one of `workDays`
+   * (ISO weekdays, Monday 1), read in `workTimeZone`. Blocks keep the event's times. All seven
+   * days and no times: no filter. An empty zone means UTC; the editor stores the deployment's.
+   */
+  workDays: z._default(
+    z.array(z.int().check(z.minimum(1), z.maximum(7))).check(
+      z.minLength(1),
+      z.refine((days) => new Set(days).size === days.length),
+    ),
+    [...ALL_WEEKDAYS],
+  ),
+  workStart: z._default(
+    z.string().check(z.refine((time) => time === "" || TIME_OF_DAY.test(time))),
+    "",
+  ),
+  workEnd: z._default(
+    z.string().check(z.refine((time) => time === "" || TIME_OF_DAY.test(time))),
+    "",
+  ),
+  workTimeZone: z._default(
+    z.string().check(
+      z.maxLength(64),
+      z.refine((zone) => zone === "" || isTimeZone(zone)),
+    ),
+    "",
+  ),
   /** Mark blocks as private so that people with access to the target calendar see no detail. */
   markPrivate: z._default(z.boolean(), true),
   /**
@@ -34,6 +62,20 @@ export const ruleOptionsSchema = z.object({
    */
   blockColor: z._default(z.string().check(z.maxLength(100)), ""),
 });
+
+/**
+ * The rule options with the checks across fields: a time range has a start and an end, and the
+ * end is after the start. A window over midnight is not supported.
+ */
+export const ruleOptionsSchema = ruleOptionsFields.check(
+  z.refine(
+    (options) =>
+      options.workStart === ""
+        ? options.workEnd === ""
+        : options.workEnd !== "" && options.workEnd > options.workStart,
+    { path: ["workEnd"] },
+  ),
+);
 
 export type RuleOptions = z.infer<typeof ruleOptionsSchema>;
 

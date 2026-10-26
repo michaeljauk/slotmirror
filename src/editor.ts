@@ -3,6 +3,8 @@ import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
+import { displayTimeZone } from "./i18n";
+import { ALL_WEEKDAYS, canonicalTimeZone, hasWorkingHours } from "./sync/working-hours";
 import type { CurrentUser } from "./users";
 
 /**
@@ -361,6 +363,71 @@ export async function setAccountColor(
   return updated.meta.changes > 0;
 }
 
+/** Working hours of one direction. A field that is missing keeps its value. */
+export type WorkingHours = Partial<
+  Pick<RuleOptions, "workDays" | "workStart" | "workEnd" | "workTimeZone">
+>;
+
+/** Working hours that filter nothing: the defaults of every rule. */
+export const NO_WORKING_HOURS: Required<WorkingHours> = {
+  workDays: [...ALL_WEEKDAYS],
+  workStart: "",
+  workEnd: "",
+  workTimeZone: "",
+};
+
+/**
+ * Set the working hours of one direction, for every rule of the direction. A direction without
+ * rules ("off") has no blocks, so nothing is stored. Without a time zone the rules get the
+ * deployment's zone, so that their hours stay put if TIME_ZONE changes later. With the filter off
+ * the zone is cleared, so that the rules have their default options again. Returns false for
+ * invalid hours, for example an end at or before the start.
+ */
+export async function setWorkingHours(
+  env: Env,
+  user: CurrentUser,
+  fromId: string,
+  toId: string,
+  hours: WorkingHours,
+): Promise<boolean> {
+  const input = { ...hours };
+  if (input.workTimeZone !== undefined) input.workTimeZone = input.workTimeZone.trim();
+  if (input.workDays) input.workDays = [...input.workDays].sort((a, b) => a - b);
+  const state = await loadEditorState(env, user.id);
+  const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
+  if (!direction) return false;
+  const rules = direction.slots.flatMap(({ rule }) => (rule ? [rule] : []));
+  // A direction without rules stores nothing, but invalid hours are still refused.
+  if (rules.length === 0) {
+    return ruleOptionsSchema.safeParse({ ...NO_WORKING_HOURS, ...input }).success;
+  }
+  const hoursOf = (o: RuleOptions) =>
+    JSON.stringify([o.workDays, o.workStart, o.workEnd, o.workTimeZone]);
+  const updates: { ruleId: string; options: RuleOptions }[] = [];
+  for (const rule of rules) {
+    const parsed = ruleOptionsSchema.safeParse({ ...rule.options, ...input });
+    if (!parsed.success) return false;
+    const options = parsed.data;
+    if (!hasWorkingHours(options)) options.workTimeZone = "";
+    else if (options.workTimeZone === "") options.workTimeZone = displayTimeZone(env.TIME_ZONE);
+    else options.workTimeZone = canonicalTimeZone(options.workTimeZone);
+    if (hoursOf(options) !== hoursOf(rule.options)) updates.push({ ruleId: rule.id, options });
+  }
+  for (const { ruleId, options } of updates) {
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND user_id = ?")
+      .bind(JSON.stringify(options), ruleId, user.id)
+      .run();
+    await audit(env, user, toId, ruleId, "rule_updated", {
+      workDays: options.workDays.join(","),
+      workStart: options.workStart,
+      workEnd: options.workEnd,
+      workTimeZone: options.workTimeZone,
+    });
+  }
+  if (updates.length > 0) await accountSync(env, toId).requestSync();
+  return true;
+}
+
 /** Longest Outlook category name for blocks. */
 export const MAX_CATEGORY_LENGTH = 100;
 
@@ -607,6 +674,8 @@ export async function resetDirection(
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to) return;
   await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
+  // The group mirrors at all times, so the working hours go as well.
+  await setWorkingHours(env, user, fromId, toId, NO_WORKING_HOURS);
   await setBlockColor(env, user, fromId, toId, "");
 }
 

@@ -1853,6 +1853,81 @@ details.source > .source-head .provider-icon,
   margin-top: 2px;
 }
 
+/* Working hours of a direction: weekdays, a time range and its time zone. */
+
+.working-hours {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.weekday-row {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.weekday {
+  position: relative;
+  cursor: pointer;
+}
+
+.weekday input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.weekday span {
+  display: inline-block;
+  min-width: 26px;
+  padding: 2px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.weekday input:checked + span {
+  border-color: var(--accent);
+  background: #eef2fb;
+  color: var(--accent);
+}
+
+.weekday input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.work-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.work-time input,
+.working-hours .work-zone {
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.working-hours .work-zone {
+  width: 140px;
+}
+
+.working-hours.pending .block-color-label {
+  color: var(--accent);
+}
+
+.working-hours.pending .work-time input,
+.working-hours.pending .work-zone {
+  border-color: var(--accent);
+}
+
 /* Block colour in the target, per direction. */
 
 .block-color {

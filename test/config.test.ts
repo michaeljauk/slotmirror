@@ -12,6 +12,10 @@ describe("parseRuleOptions", () => {
       skipTentative: false,
       skipDeclined: true,
       skipCategories: [],
+      workDays: [1, 2, 3, 4, 5, 6, 7],
+      workStart: "",
+      workEnd: "",
+      workTimeZone: "",
       markPrivate: true,
       blockColor: "",
     });

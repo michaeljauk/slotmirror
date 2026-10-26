@@ -29,6 +29,12 @@ tokens stay with you and not with a sync service.
   others only as "Busy", marked private.
 - **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
   with title, or everything. An example event shows the result before you save.
+- **Working hours.** Per calendar and target you can mirror only events on chosen weekdays and
+  inside a time range, for example Monday to Friday, 08:00 to 18:00, Europe/Vienna. An event is
+  mirrored if it overlaps the range on one chosen day. Its block keeps the event's real times; it
+  is never cut to the range. An all-day event counts if one of its dates is a chosen weekday. The
+  end must be after the start, so a range over midnight is not possible. The default is every day,
+  all day; the time zone defaults to the deployment's `TIME_ZONE`.
 - **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
   colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
@@ -98,7 +104,7 @@ and makes their own choices. Nobody sees another user's calendars.
 | `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.             |
 | `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).      |
 | `ORG_NAME`                        | variable | Optional display name.                                                                     |
-| `TIME_ZONE`                       | variable | IANA time zone for dates in the dashboard, e.g. `Europe/Vienna`. Default `UTC`.            |
+| `TIME_ZONE`                       | variable | IANA time zone for dashboard dates and working hours, e.g. `Europe/Vienna`. Default `UTC`. |
 | `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
 | `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in; connecting accounts stays open.   |
 | `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.               |

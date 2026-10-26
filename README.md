@@ -1,6 +1,9 @@
-<p align="center"><img src="design/logo/mark-light-bg.svg" width="72" height="72" alt=""></p>
-
-# slotmirror
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="design/logo/lockup-dark-bg.svg">
+    <img src="design/logo/lockup-light-bg.svg" width="310" alt="slotmirror">
+  </picture>
+</h1>
 
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
 from one calendar into your others as "Busy" blocks, or with as much detail as you choose. It

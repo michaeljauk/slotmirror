@@ -8,6 +8,8 @@
   --line-strong: #d6d5cf;
   --accent: #2b59c3;
   --accent-hover: #2149a8;
+  --page-width: 1040px;
+  --page-gutter: 20px;
   --ok: #2f8a57;
   --danger: #b4372e;
   --radius: 10px;
@@ -67,9 +69,9 @@ code {
 /* One width for every page, so that header and content line up everywhere. */
 .topbar-inner,
 main {
-  max-width: 1040px;
+  max-width: var(--page-width);
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 var(--page-gutter);
 }
 
 .topbar-inner {
@@ -149,7 +151,7 @@ main {
 .menu {
   inset: auto;
   top: 52px;
-  right: max(20px, calc((100vw - 760px) / 2 + 20px));
+  right: calc(max(0px, (100vw - var(--page-width)) / 2) + var(--page-gutter));
   min-width: 240px;
   margin: 0;
   padding: 6px;
@@ -1346,9 +1348,13 @@ details.source.dirty {
 /* Phones */
 
 @media (max-width: 560px) {
+  /* The account menu aligns with the header padding. */
+  :root {
+    --page-gutter: 12px;
+  }
+
   .topbar-inner {
     gap: 8px;
-    padding: 0 12px;
   }
 
   .brand-name {

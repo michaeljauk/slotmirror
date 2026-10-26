@@ -82,14 +82,18 @@ export async function loadRule(db: D1Database, ruleId: string): Promise<RuleCont
 
 /**
  * Enabled rules whose target calendar belongs to the account; they run in its Durable Object.
- * Rules of a deactivated user do not run.
+ * Rules of a deactivated user do not run. Rules from an account that needs reconnecting would
+ * only fail, so they wait until it is connected again.
  */
 export async function rulesTargetingAccount(db: D1Database, accountId: string): Promise<string[]> {
   const { results } = await db
     .prepare(
       `SELECT r.id FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN accounts sa ON sa.id = sc.account_id
        JOIN users u ON u.id = r.user_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 ORDER BY r.id`,
+       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
+       ORDER BY r.id`,
     )
     .bind(accountId)
     .all<{ id: string }>();

@@ -207,13 +207,15 @@ admin ended the sessions, or Google's testing mode ended the token after 7 days.
 marks the account and stops its work until the user connects it again:
 
 - The accounts page shows a notice at the top. It names the account's address and provider and
-  has a **Reconnect** button, which starts the provider's sign-in. The account's row shows the
-  same state, and the sync page shows the notice too.
+  has a **Reconnect** button. The button starts the provider's sign-in with that address
+  preselected. The account's row shows the same state, and the sync page shows the notice too.
 - The admin page lists which users have accounts that need reconnecting, without the addresses.
-- The activity log records "Token refresh failed" once, with the provider's error code.
-- The account asks the provider nothing more, not even the token endpoint. Rules into its
-  calendars pause. Rules that read from it fail at once, without a request, with the provider's
-  code, such as `token_invalid_grant`.
+- The activity log records "Token refresh failed", with the provider's error code.
+- The account asks the provider nothing more. Rules into its calendars pause, and rules that read
+  from it wait.
+- Once a day, slotmirror tries the refused token again. Some refusals end by themselves, for
+  example when an admin enables a disabled user again. If the provider accepts the token, the
+  mark goes and a full sync starts. A refused try adds one more "Token refresh failed" entry.
 - When the user connects the same account again, the mark goes and a full sync starts.
 
 **Alerts.** If you set the secret `ALERT_WEBHOOK_URL`, slotmirror posts `{"text": "..."}` to it

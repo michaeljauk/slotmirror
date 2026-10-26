@@ -36,7 +36,12 @@ function message(
   return render(c, <MessagePage title={title} message={text} />, status);
 }
 
-async function startFlow(c: Context<AppEnv>, provider: Provider, purpose: OAuthPurpose) {
+async function startFlow(
+  c: Context<AppEnv>,
+  provider: Provider,
+  purpose: OAuthPurpose,
+  loginHint?: string,
+) {
   const { t } = i18nFromContext(c);
   const { clientId } = clientCredentials(c.env, provider);
   if (!clientId) {
@@ -66,6 +71,7 @@ async function startFlow(c: Context<AppEnv>, provider: Provider, purpose: OAuthP
       state,
       codeChallenge,
       purpose,
+      loginHint,
     }),
   );
 }
@@ -96,8 +102,19 @@ auth.get("/:provider/login", async (c) => {
 auth.get("/:provider/connect", async (c) => {
   const provider = parseProvider(c.req.param("provider"));
   if (!provider) return c.notFound();
-  if (!c.get("user")) return c.redirect("/");
-  return startFlow(c, provider, "connect");
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  // "Reconnect" names the account by ID. Only the address of the user's own account of this
+  // provider becomes the hint; the query never reaches the provider's URL.
+  const accountId = c.req.query("account");
+  const account = accountId
+    ? await c.env.DB.prepare(
+        "SELECT email FROM accounts WHERE id = ? AND user_id = ? AND provider = ?",
+      )
+        .bind(accountId, user.id, provider)
+        .first<{ email: string }>()
+    : null;
+  return startFlow(c, provider, "connect", account?.email);
 });
 
 auth.get("/:provider/callback", async (c) => {

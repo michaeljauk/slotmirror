@@ -104,6 +104,11 @@ export const GOOGLE_COLORS: readonly { id: string; hex: string }[] = [
   { id: "11", hex: "#d50000" },
 ];
 
+/** The connect flow of the account's provider, with the account preselected. */
+export function reconnectUrl(account: { id: string; provider: Provider }): string {
+  return `/auth/${account.provider}/connect?account=${encodeURIComponent(account.id)}`;
+}
+
 /**
  * A notice for every account whose connection the provider ended, with the way back: the connect
  * flow of its provider. Nothing of that account syncs until the user connects it again. Shown on
@@ -132,7 +137,7 @@ export function ReconnectNotice(props: {
           </span>
           <a
             class="button small primary"
-            href={`/auth/${account.provider}/connect`}
+            href={reconnectUrl(account)}
             aria-label={t.editor.reconnect(account.email)}
           >
             {t.editor.reconnectShort}

@@ -6,7 +6,7 @@ import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
 import { MAX_NAME_LENGTH, type EditorState } from "../editor";
 import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
-import { colorStyle, ReconnectNotice, SourcePills } from "./calendar-editor";
+import { colorStyle, ReconnectNotice, reconnectUrl, SourcePills } from "./calendar-editor";
 
 export interface AccountRow {
   id: string;
@@ -141,7 +141,7 @@ export function HomePage(props: {
                     {account.needsReconnect ? (
                       <a
                         class="status error"
-                        href={`/auth/${account.provider}/connect`}
+                        href={reconnectUrl(account)}
                         title={t.editor.reconnectText}
                       >
                         {t.editor.reconnectShort}

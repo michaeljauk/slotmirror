@@ -132,7 +132,10 @@ describe("admin page", () => {
     const page = async () =>
       (await exports.default.fetch(`${BASE}/admin`, { headers: { cookie: admin.cookie } })).text();
 
-    expect(await page()).not.toContain("need reconnecting");
+    const before = await page();
+    expect(before).not.toContain("needs reconnecting");
+    expect(before).not.toContain("need reconnecting");
+    expect(before).not.toContain("badge error");
 
     await env.DB.prepare(
       "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-admin-broken'",

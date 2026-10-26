@@ -106,10 +106,26 @@ const REMOVAL_QUEUE_KEY = "removalQueue";
 const RECONNECT_CODES = new Set(["invalid_grant", "interaction_required", "consent_required"]);
 
 /**
- * Durable Object storage key: the provider refused the refresh token with this code. Until new
- * tokens arrive, the instance asks no provider and its alarm does no work.
+ * Durable Object storage key of the pause after a refused refresh token. While it is set, the
+ * instance asks no provider and its alarm does no sync work. New tokens end it.
  */
-const NEEDS_RECONNECT_KEY = "needsReconnect";
+const PAUSE_KEY = "needsReconnect";
+
+/** While paused, try the refused token again after this long; some refusals end by themselves. */
+const PROBE_EVERY_MS = 24 * 60 * 60_000;
+
+interface Pause {
+  /** The provider's error code. */
+  code: string;
+  /** When the refusal was seen. Tells this pause from a later one. */
+  since: number;
+  /** D1 does not show the account as needing a reconnect yet. */
+  flagPending: boolean;
+  /** The alert to ALERT_WEBHOOK_URL is not sent yet. */
+  alertPending: boolean;
+  /** No token probe before this time. */
+  probeAt: number;
+}
 
 /**
  * How long a source calendar's events are reused. Within one sync cycle, every rule from that
@@ -190,7 +206,12 @@ export class AccountSync extends DurableObject<Env> {
    */
   async tick(): Promise<void> {
     const accountId = this.accountIdOrNull();
-    if (!accountId || (await this.refusedCode()) !== null) return;
+    if (!accountId) return;
+    const pause = await this.pause();
+    if (pause) {
+      await this.whilePaused(accountId, pause);
+      return;
+    }
     const lastFull = (await this.ctx.storage.get<number>(FULL_CYCLE_KEY)) ?? 0;
     if (Date.now() - lastFull >= FULL_CYCLE_EVERY_MS) {
       await this.requestSync();
@@ -200,9 +221,10 @@ export class AccountSync extends DurableObject<Env> {
     const { results } = await this.env.DB.prepare(
       `SELECT r.id FROM rules r
        JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN accounts sa ON sa.id = sc.account_id
        JOIN calendars tc ON tc.id = r.target_calendar_id
        JOIN users u ON u.id = r.user_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1
+       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
          AND (sc.watched_until IS NULL OR sc.watched_until < ?
               OR tc.watched_until IS NULL OR tc.watched_until < ?)
        ORDER BY r.id`,
@@ -415,11 +437,24 @@ export class AccountSync extends DurableObject<Env> {
     await this.ctx.storage.put(RECENT_WRITES_KEY, Object.fromEntries(entries));
   }
 
-  /** Replace the stored tokens. Called after an OAuth connect and after every refresh. */
+  /**
+   * Store the tokens of an OAuth connect. They end any pause, also one that a refusal stored while
+   * this call ran.
+   */
   async storeTokens(
     accountId: string,
     tokens: StoredTokens,
     provider: Provider = "microsoft",
+  ): Promise<void> {
+    await this.writeTokens(accountId, tokens, provider);
+    await this.unpause();
+  }
+
+  /** Replace the stored tokens. */
+  private async writeTokens(
+    accountId: string,
+    tokens: StoredTokens,
+    provider: Provider,
   ): Promise<void> {
     const blob = await encryptJson(tokens, this.env.TOKEN_ENCRYPTION_KEY, accountId);
     this.ctx.storage.sql.exec(
@@ -437,16 +472,120 @@ export class AccountSync extends DurableObject<Env> {
       blob.iv,
       tokens.accessExpiresAt,
     );
-    // New tokens after a refusal: the user connected the account again. A full cycle catches up.
-    if ((await this.refusedCode()) !== null) {
-      await this.ctx.storage.delete([NEEDS_RECONNECT_KEY, RULE_QUEUE_KEY, FULL_CYCLE_KEY]);
-      await this.requestSync();
+  }
+
+  private async pause(): Promise<Pause | null> {
+    return (await this.ctx.storage.get<Pause>(PAUSE_KEY)) ?? null;
+  }
+
+  /** Change the pause that started at `since`. Returns null if that pause is over. */
+  private updatePause(since: number, change: (pause: Pause) => Pause): Promise<Pause | null> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const pause = await this.pause();
+      if (pause?.since !== since) return null;
+      const next = change(pause);
+      await this.ctx.storage.put(PAUSE_KEY, next);
+      return next;
+    });
+  }
+
+  /**
+   * End a pause, if any. Its rule queue is stale, so a full cycle starts. A refusal cannot store a
+   * pause after this: it compares the refused token with the stored one first, in one step.
+   */
+  private async unpause(): Promise<void> {
+    if (!(await this.pause())) return;
+    await this.ctx.storage.delete([PAUSE_KEY, RULE_QUEUE_KEY, FULL_CYCLE_KEY]);
+    // Other accounts skip rules from this one while the flag is set.
+    await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
+      .bind(this.accountId())
+      .run();
+    await this.requestSync();
+  }
+
+  /**
+   * Pause after the provider refused `refusedToken`. The pause is stored first, so that an
+   * eviction cannot lose it; the D1 flag and the alert follow and are finished by a later tick if
+   * needed. A reconnect while the refresh waited on the network replaced the refused token; then
+   * nothing changes.
+   */
+  private async pauseAfterRefusal(
+    accountId: string,
+    refusedToken: string,
+    code: string,
+  ): Promise<void> {
+    const before = await this.env.DB.prepare(
+      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
+    )
+      .bind(accountId)
+      .first<{ flag: number }>();
+    // A disconnected account is on its way out; it needs no pause and no alert.
+    if (!before) return;
+    const since = Date.now();
+    const started = await this.ctx.blockConcurrencyWhile(async () => {
+      const current = await this.readTokens().catch(() => null);
+      if (current?.tokens.refreshToken !== refusedToken || (await this.pause())) return false;
+      const pause: Pause = {
+        code,
+        since,
+        flagPending: true,
+        // An account that the pages already show as needing a reconnect had its alert.
+        alertPending: before.flag !== 1,
+        probeAt: since + PROBE_EVERY_MS,
+      };
+      await this.ctx.storage.put(PAUSE_KEY, pause);
+      return true;
+    });
+    if (started) await this.finishPause(accountId, since);
+  }
+
+  /** Set the D1 flag and send the alert of a pause, each once. */
+  private async finishPause(accountId: string, since: number): Promise<void> {
+    let pause = await this.pause();
+    if (pause?.since !== since) return;
+    if (pause.flagPending) {
+      await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
+        .bind(accountId)
+        .run();
+      pause = await this.updatePause(since, (current) => ({ ...current, flagPending: false }));
+      if (!pause) {
+        // New tokens ended the pause during the write, which may have landed after their reset.
+        if (!(await this.pause())) {
+          await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
+            .bind(accountId)
+            .run();
+        }
+        return;
+      }
+    }
+    if (pause.alertPending) {
+      await sendReconnectAlert(this.env, this.providerOrDefault());
+      await this.updatePause(since, (current) => ({ ...current, alertPending: false }));
     }
   }
 
-  /** The provider's code if it refused the refresh token, or null. */
-  private async refusedCode(): Promise<string | null> {
-    return (await this.ctx.storage.get<string>(NEEDS_RECONNECT_KEY)) ?? null;
+  /** The alarm's and the tick's work while paused: finish the pause, and probe once a day. */
+  private async whilePaused(accountId: string, pause: Pause): Promise<void> {
+    await this.finishPause(accountId, pause.since);
+    if (Date.now() >= pause.probeAt) await this.probe(pause.since);
+  }
+
+  /**
+   * Try the refused token again. Some refusals end by themselves, such as a user who was disabled
+   * for a while. If the provider accepts it, the pause ends and a sync starts.
+   */
+  private async probe(since: number): Promise<void> {
+    // The next probe waits a day, also if this one fails or the instance goes away during it.
+    const next = Date.now() + PROBE_EVERY_MS;
+    if (!(await this.updatePause(since, (current) => ({ ...current, probeAt: next })))) return;
+    const stored = await this.readTokens();
+    try {
+      await this.refresh(stored.accountId, stored.provider, stored.tokens.refreshToken);
+    } catch (error) {
+      console.error("Token probe failed", errorCode(error));
+      return;
+    }
+    await this.unpause();
   }
 
   async hasTokens(): Promise<boolean> {
@@ -740,8 +879,10 @@ export class AccountSync extends DurableObject<Env> {
     if (!accountId) return;
     // Every provider call would fail. The work waits for new tokens, which start a full cycle;
     // queued removals stay. A retiring account cannot remove its blocks, so it goes now.
-    if ((await this.refusedCode()) !== null) {
+    const pause = await this.pause();
+    if (pause) {
       if (await this.ctx.storage.get<boolean>(RETIRING_KEY)) await this.forget();
+      else await this.whilePaused(accountId, pause);
       return;
     }
     // Change feeds come first, then removals, one per alarm; the rules follow once none is left.
@@ -955,8 +1096,8 @@ export class AccountSync extends DurableObject<Env> {
       return stored.tokens.accessToken;
     }
     // A refused refresh token stays refused; do not ask the token endpoint again.
-    const refused = await this.refusedCode();
-    if (refused !== null) throw new TokenError(refused, "the account needs to be connected again");
+    const pause = await this.pause();
+    if (pause) throw new TokenError(pause.code, "the account needs to be connected again");
     // Requests interleave while a refresh waits on the network; refresh only once.
     this.refreshing ??= this.refresh(
       stored.accountId,
@@ -1006,7 +1147,7 @@ export class AccountSync extends DurableObject<Env> {
     } catch (error) {
       // A refused refresh token does not recover by itself; the user has to connect again.
       if (error instanceof TokenError && RECONNECT_CODES.has(error.code)) {
-        await this.markNeedsReconnect(accountId, provider, refreshToken, error.code);
+        await this.pauseAfterRefusal(accountId, refreshToken, error.code);
       }
       const owner = await accountOwner(this.env.DB, accountId);
       if (owner) {
@@ -1019,7 +1160,7 @@ export class AccountSync extends DurableObject<Env> {
       }
       throw error;
     }
-    await this.storeTokens(
+    await this.writeTokens(
       accountId,
       {
         refreshToken: response.refresh_token ?? refreshToken,
@@ -1028,31 +1169,14 @@ export class AccountSync extends DurableObject<Env> {
       },
       provider,
     );
-    return response.access_token;
-  }
-
-  /**
-   * Stop provider work until the user connects the account again, and alert once per refusal. A
-   * reconnect while the refresh waited on the network replaced the refused token; then nothing
-   * changes.
-   */
-  private async markNeedsReconnect(
-    accountId: string,
-    provider: Provider,
-    refusedToken: string,
-    code: string,
-  ): Promise<void> {
-    const current = await this.readTokens().catch(() => null);
-    if (current?.tokens.refreshToken !== refusedToken) return;
-    // D1 first: if that write fails, the work must not stop without a notice in the pages.
-    const { meta } = await this.env.DB.prepare(
-      "UPDATE accounts SET needs_reconnect = 1 WHERE id = ? AND needs_reconnect = 0",
+    // The provider accepted the token, so a flag from an older refusal is stale. No row changes
+    // in the normal case.
+    await this.env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 0 WHERE id = ? AND needs_reconnect = 1",
     )
       .bind(accountId)
       .run();
-    await this.ctx.storage.put(NEEDS_RECONNECT_KEY, code);
-    // Only the change from 0 to 1 alerts: not an account that was flagged before.
-    if (meta.changes > 0) await sendReconnectAlert(this.env, provider);
+    return response.access_token;
   }
 
   /** Record that a rule run threw. Looks up the owner itself, because the run may not have got far. */

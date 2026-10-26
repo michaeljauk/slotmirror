@@ -174,6 +174,52 @@ describe("Microsoft connect", () => {
   });
 });
 
+describe("reconnect links", () => {
+  async function connectLocation(path: string, cookie: string): Promise<URL> {
+    const response = await exports.default.fetch(`${BASE}${path}`, {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    expect(response.status).toBe(302);
+    return new URL(response.headers.get("location") ?? "");
+  }
+
+  it("passes the address of the user's own account as login_hint, encoded", async () => {
+    const { user, cookie } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-hint", "a+b&prompt=none@example.com");
+    const location = await connectLocation("/auth/microsoft/connect?account=acc-hint", cookie);
+    expect(location.origin).toBe("https://login.microsoftonline.com");
+    expect(location.searchParams.get("login_hint")).toBe("a+b&prompt=none@example.com");
+    expect(location.searchParams.getAll("prompt")).toEqual(["select_account"]);
+
+    await env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email) VALUES ('acc-hint-g', ?, 'google', 'g@example.com')",
+    )
+      .bind(user.id)
+      .run();
+    const google = await connectLocation("/auth/google/connect?account=acc-hint-g", cookie);
+    expect(google.searchParams.get("login_hint")).toBe("g@example.com");
+  });
+
+  it("gives no hint for another user's account, another provider or an unknown ID", async () => {
+    const other = await signIn("other@elsewhere.org");
+    await addAccount(other.user.id, "acc-hint-other", "secret-other@example.com");
+    const { user, cookie } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-hint-ms", "mine@example.com");
+    for (const path of [
+      "/auth/microsoft/connect?account=acc-hint-other",
+      "/auth/google/connect?account=acc-hint-ms",
+      "/auth/microsoft/connect?account=nope",
+      "/auth/microsoft/connect?account=https%3A%2F%2Fevil.example",
+    ]) {
+      const location = await connectLocation(path, cookie);
+      expect(location.searchParams.has("login_hint")).toBe(false);
+      expect(location.toString()).not.toContain("secret-other");
+      expect(location.toString()).not.toContain("evil.example");
+    }
+  });
+});
+
 describe("Microsoft connect conflicts", () => {
   it("refuses an account that another user already connected", async () => {
     const other = await signIn("other@elsewhere.org");

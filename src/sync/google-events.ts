@@ -120,10 +120,18 @@ function toTime(value: { date?: string; dateTime?: string }): string {
   return new Date(value.dateTime).toISOString();
 }
 
-/** Google event body for a block. No attendees, so that no invitations are sent. */
-export function toGoogleBlock(block: DesiredBlock, ruleTag: string) {
+/**
+ * Google event body for a block. No attendees, so that no invitations are sent.
+ *
+ * With `update`, the body is for a PATCH. PATCH merges `start` and `end` into the stored event, and
+ * only null removes a field. Without the nulls, a block that turns all-day keeps its `dateTime`, and
+ * a block that turns timed keeps its `date`. A create sends no nulls.
+ */
+export function toGoogleBlock(block: DesiredBlock, ruleTag: string, { update = false } = {}) {
   const time = (value: string) =>
-    block.allDay ? { date: value } : { dateTime: value, timeZone: "UTC" };
+    block.allDay
+      ? { date: value, ...(update ? { dateTime: null, timeZone: null } : {}) }
+      : { dateTime: value, timeZone: "UTC", ...(update ? { date: null } : {}) };
   return {
     summary: block.subject,
     location: block.location,

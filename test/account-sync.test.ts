@@ -1014,7 +1014,116 @@ describe("alarm queue", () => {
     );
     expect(queue).toEqual([second]);
   });
+
+  it("queues the later rules into the same calendar after a rule moved a block", async () => {
+    const { stub, ruleId } = await setupRule("acc-follow-move");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-follow-move-src2', 'acc-follow-move', ?, 'Copy')",
+      ).bind(`${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-follow-move-rule-2', user_id, 'acc-follow-move-src2', target_calendar_id FROM rules WHERE id = ?",
+      ).bind(ruleId),
+    ]);
+    await stub.storeTokens("acc-follow-move", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-follow-move-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+    // Both sources hold the same events: the first rule blocks them, the second writes nothing.
+    const firstSource = first === ruleId ? SOURCE_CAL : `${SOURCE_CAL}-2`;
+    const secondSource = first === ruleId ? `${SOURCE_CAL}-2` : SOURCE_CAL;
+    const sources: Record<string, unknown[]> = {
+      [firstSource]: fixture.value,
+      [secondSource]: fixture.value,
+    };
+    statefulGraph(sources);
+    expect((await stub.runRule(first)).stats.create).toBeGreaterThan(0);
+    expect((await stub.runRule(second)).stats.create).toBe(0);
+
+    // The single event moves by two hours in the first rule's source only. The first rule updates
+    // its block, which frees the dedup key that kept the second rule from blocking the event.
+    const later = (time: { dateTime: string; timeZone: string }) => ({
+      ...time,
+      dateTime: new Date(Date.parse(`${time.dateTime.slice(0, 19)}Z`) + 2 * 3_600_000)
+        .toISOString()
+        .replace("Z", "0000"),
+    });
+    sources[firstSource] = fixture.value.map((event) =>
+      event.id.startsWith("event-08")
+        ? { ...event, start: later(event.start), end: later(event.end) }
+        : event,
+    );
+    await runInDurableObject(stub, (_instance, state) => state.storage.put("ruleQueue", [first]));
+    // Clears the cached source events, as a change notification does.
+    await stub.requestSync();
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const [run] = (await auditOf(first, "sync_run")).slice(-1);
+    expect(run?.detail).toMatchObject({ create: 0, update: 1, delete: 0 });
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+    expect(queue).toEqual([second]);
+    // The queued rule has work: a block for the event that nothing blocks any more.
+    expect((await stub.runRule(second, { dryRun: true })).stats.create).toBe(1);
+  });
 });
+
+/**
+ * Fake Graph with a target calendar that keeps what the batches write. Each source calendar
+ * answers with `sources[calendar]`, or with the result of a function there.
+ */
+function statefulGraph(sources: Record<string, unknown[] | (() => Response)>) {
+  const [template] = fixture.value;
+  const store = new Map<string, Record<string, unknown>>();
+  let next = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "a", refresh_token: "r", expires_in: 3600 });
+    }
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
+      return Response.json({ value: [...store.values()] });
+    }
+    for (const [calendar, answer] of Object.entries(sources)) {
+      if (url.includes(`/calendars/${calendar}/calendarView`)) {
+        return typeof answer === "function" ? answer() : Response.json({ value: answer });
+      }
+    }
+    if (url.endsWith("/$batch")) {
+      const body = JSON.parse(init?.body as string) as {
+        requests: { id: string; method: string; url: string; body?: Record<string, unknown> }[];
+      };
+      const responses = body.requests.map((request) => {
+        if (request.method === "POST") {
+          const id = `blk-${next++}`;
+          store.set(id, {
+            ...template,
+            ...request.body,
+            id,
+            type: "singleInstance",
+            seriesMasterId: null,
+            originalStart: null,
+          });
+          return { id: request.id, status: 201, body: { id } };
+        }
+        const id = decodeURIComponent(request.url.split("/").pop()!);
+        if (request.method === "PATCH") {
+          store.set(id, { ...store.get(id), ...request.body });
+          return { id: request.id, status: 200 };
+        }
+        store.delete(id);
+        return { id: request.id, status: 204 };
+      });
+      return Response.json({ responses });
+    }
+    return new Response("unexpected", { status: 500 });
+  });
+  return store;
+}
 
 /** Fake Graph whose `$batch` throttles every request after the first `accepted` ones. */
 function throttlingGraph(accepted: number, retryAfterSeconds: string) {
@@ -1134,6 +1243,144 @@ describe("throttling", () => {
     const wait = await alarmIn(stub);
     expect(wait).toBeGreaterThan(55_000);
     expect(wait).toBeLessThanOrEqual(60_000);
+  });
+
+  it("runs the other rules while the source account of the first rule throttles", async () => {
+    const { stub, ruleId: ownRule } = await setupRule("acc-src-throttle");
+    await stub.storeTokens("acc-src-throttle", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    // A second account whose mailbox throttles. Its calendar is the source of the first rule.
+    await bareAccount("acc-src-throttle-other");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-src-throttle-other-src', 'acc-src-throttle-other', 'remote-throttled', 'Other')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-src-throttle-rule-2', user_id, 'acc-src-throttle-other-src', target_calendar_id FROM rules WHERE id = ?",
+      ).bind(ownRule),
+    ]);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    statefulGraph({
+      [SOURCE_CAL]: fixture.value,
+      "remote-throttled": () =>
+        new Response("busy", { status: 429, headers: { "Retry-After": "7" } }),
+    });
+    const throttledRule = "acc-src-throttle-rule-2";
+    const stored = <T>(key: string) =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get<T>(key));
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [throttledRule, ownRule]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    // The throttled rule moves behind the other one and waits for the Retry-After of its source.
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(throttledRule, "sync_failed")).toHaveLength(1);
+    expect(await stored("ruleQueue")).toEqual([ownRule, throttledRule]);
+    const wait = ((await stored<Record<string, number>>("ruleNotBefore")) ?? {})[throttledRule];
+    expect((wait ?? 0) - Date.now()).toBeGreaterThan(4_000);
+    expect((wait ?? 0) - Date.now()).toBeLessThanOrEqual(7_000);
+
+    // The next alarm runs the other rule.
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(ownRule, "sync_run")).toHaveLength(1);
+    expect(await stored("ruleQueue")).toEqual([throttledRule]);
+
+    // Before its wait is over, the throttled rule does not run again.
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(throttledRule, "sync_failed")).toHaveLength(1);
+    expect(await stored("ruleQueue")).toEqual([throttledRule]);
+    expect(await alarmIn(stub)).toBeLessThanOrEqual(7_000);
+  });
+
+  it("queues the later rules again after a rule that waited for its source writes blocks", async () => {
+    const { user } = await signIn("owner@example.com");
+    await bareAccount("acc-late");
+    await bareAccount("acc-late-other");
+    // The rule from the throttled account takes precedence; the other rule runs before it.
+    const [first, second] = await inPrecedenceOrder(["acc-late-rule-a", "acc-late-rule-b"]);
+    if (!first || !second) throw new Error("no rules");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-late-src', 'acc-late', ?, 'Work'), ('acc-late-dst', 'acc-late', ?, 'Test'), ('acc-late-other-src', 'acc-late-other', 'remote-throttled', 'Other')",
+      ).bind(SOURCE_CAL, TARGET_CAL),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, 'acc-late-other-src', 'acc-late-dst'), (?, ?, 'acc-late-src', 'acc-late-dst')",
+      ).bind(first, user.id, second, user.id),
+    ]);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let throttling = true;
+    const store = statefulGraph({
+      [SOURCE_CAL]: fixture.value,
+      "remote-throttled": () =>
+        throttling
+          ? new Response("busy", { status: 429, headers: { "Retry-After": "7" } })
+          : Response.json({ value: fixture.value }),
+    });
+    const stub = env.ACCOUNT_SYNC.getByName("acc-late");
+    const queue = () =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get<string[]>("ruleQueue"));
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [first, second]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect(await queue()).toEqual([first]);
+    const blocks = store.size;
+    expect(blocks).toBeGreaterThan(0);
+
+    // The wait is over and the source answers. The rule writes the same blocks, which the later
+    // rule must now leave to it.
+    throttling = false;
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("ruleNotBefore", { [first]: Date.now() - 1 }),
+    );
+    await runDurableObjectAlarm(stub);
+    expect(await queue()).toEqual([second]);
+    await runDurableObjectAlarm(stub);
+    expect(store.size).toBe(blocks);
+  });
+
+  it("holds every rule when the read of this account's own mailbox is throttled", async () => {
+    const { stub, ruleId } = await setupRule("acc-own-throttle");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-own-throttle-src2', 'acc-own-throttle', ?, 'Copy')",
+      ).bind(`${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-own-throttle-rule-2', user_id, 'acc-own-throttle-src2', target_calendar_id FROM rules WHERE id = ?",
+      ).bind(ruleId),
+    ]);
+    await stub.storeTokens("acc-own-throttle", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("busy", { status: 429, headers: { "Retry-After": "7" } }),
+    );
+    const queued = [ruleId, "acc-own-throttle-rule-2"];
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", queued);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    await runDurableObjectAlarm(stub);
+
+    // The other rule reads and writes the same mailbox, so it waits too.
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+    expect(queue).toEqual(queued);
+    const wait = await alarmIn(stub);
+    expect(wait).toBeGreaterThan(4_000);
+    expect(wait).toBeLessThanOrEqual(7_000);
   });
 });
 

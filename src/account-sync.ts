@@ -56,6 +56,13 @@ const DEBOUNCE_MS = 5_000;
 /** Durable Object storage key of the rules still to run in the current cycle. */
 const RULE_QUEUE_KEY = "ruleQueue";
 
+/**
+ * Durable Object storage key: a full cycle is requested. The next full cycle clears it when it
+ * stores its queue. If it is still set when a queue is done, the request came during that queue,
+ * after some rules ran, so one more full cycle follows.
+ */
+const CYCLE_AGAIN_KEY = "fullCycleRequested";
+
 /** Durable Object storage key: event IDs this instance wrote recently, with the time. */
 const RECENT_WRITES_KEY = "recentWrites";
 
@@ -193,18 +200,27 @@ export class AccountSync extends DurableObject<Env> {
   private sourceCache = new Map<string, { at: number; events: Promise<SourceEvent[]> }>();
   /** The last queued provider call. See `client()`. */
   private providerQueue: Promise<unknown> = Promise.resolve();
+  /**
+   * Real rule runs in progress, by rule ID. In memory is enough: requests to one instance share it,
+   * and a new instance has no run in progress.
+   */
+  private runningRules = new Map<string, Promise<RunResult>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () => this.migrate());
   }
 
-  /** Ask for a sync soon. Repeated calls before the alarm fires do not move it. */
+  /**
+   * Ask for a full cycle soon. Repeated calls before the alarm fires do not move it. During a
+   * cycle, the alarm goes on with the queue, and one full cycle follows for all calls together.
+   */
   async requestSync(): Promise<void> {
     // A new cycle starts from the provider's current data.
     this.sourceCache.clear();
     const pending = await this.pendingAlarm();
     await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
+    await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
     if (pending === null) {
       await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
     }
@@ -224,6 +240,12 @@ export class AccountSync extends DurableObject<Env> {
       return;
     }
     const now = Date.now();
+    // A requested full cycle runs every rule. Queued rules would run before it and delay it.
+    if (await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) {
+      if ((await this.pendingAlarm()) === null)
+        await this.setSyncAlarm(now + this.delays().debounce);
+      return;
+    }
     const { results } = await this.env.DB.prepare(
       `SELECT r.id FROM rules r
        JOIN calendars sc ON sc.id = r.source_calendar_id
@@ -355,10 +377,14 @@ export class AccountSync extends DurableObject<Env> {
     return true;
   }
 
-  /** True if sync work waits: a full cycle, rules, removals, or the account's retirement. */
+  /**
+   * True if sync work waits: a full cycle (the alarm's own, or a requested one), rules, removals,
+   * or the account's retirement.
+   */
   private async hasSyncWork(feedOnly: boolean): Promise<boolean> {
     return (
       !feedOnly ||
+      ((await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) ?? false) ||
       ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
       ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []).length > 0 ||
       ((await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false)
@@ -615,6 +641,38 @@ export class AccountSync extends DurableObject<Env> {
    * write nothing.
    */
   async runRule(ruleId: string, options: { dryRun?: boolean } = {}): Promise<RunResult> {
+    if (options.dryRun) return this.runRuleOnce(ruleId, options);
+    // Two runs that overlap would plan the same creates and write every block twice, for example
+    // after a double click on "Run" or a click while the alarm runs the rule. A second run from the
+    // UI gets the result of the first, so that "Run" reports what was written. The alarm waits
+    // instead (`runRuleAfterOthers()`). A dry run writes nothing and never joins a real run.
+    return this.runningRules.get(ruleId) ?? this.startRun(ruleId);
+  }
+
+  /**
+   * Run a rule after every run of it in progress. The alarm uses this: a run in progress may have
+   * read the source before the change that the alarm is for.
+   */
+  private async runRuleAfterOthers(ruleId: string): Promise<RunResult> {
+    for (
+      let current = this.runningRules.get(ruleId);
+      current;
+      current = this.runningRules.get(ruleId)
+    ) {
+      await current.catch(() => undefined);
+    }
+    return this.startRun(ruleId);
+  }
+
+  private startRun(ruleId: string): Promise<RunResult> {
+    const run: Promise<RunResult> = this.runRuleOnce(ruleId, {}).finally(() => {
+      if (this.runningRules.get(ruleId) === run) this.runningRules.delete(ruleId);
+    });
+    this.runningRules.set(ruleId, run);
+    return run;
+  }
+
+  private async runRuleOnce(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
     try {
       return await this.executeRule(ruleId, options);
     } catch (error) {
@@ -855,6 +913,9 @@ export class AccountSync extends DurableObject<Env> {
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
+      // This cycle covers every request so far. Cleared before the rule list is read: a request
+      // during the read, for example for a new rule, marks again and gets one more cycle.
+      await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
       const all = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
       // Stored before the run, so that the end of the run reads the whole cycle back.
       // A tick may have queued some rules meanwhile; the full cycle still runs all of them.
@@ -873,7 +934,7 @@ export class AccountSync extends DurableObject<Env> {
     let removedBlocks = false;
     let delayMs = this.delays().nextRun;
     try {
-      const result = await this.runRule(ruleId);
+      const result = await this.runRuleAfterOthers(ruleId);
       unfinished = result.remaining > 0;
       removedBlocks = result.stats.delete > 0;
       delayMs = result.retryAfterMs ?? this.delays().nextRun;
@@ -898,7 +959,13 @@ export class AccountSync extends DurableObject<Env> {
     if (next.length > 0) {
       await this.setSyncAlarm(Date.now() + delayMs);
     } else {
-      // The cycle is done: check the watches once per cycle, with the rest of the budget.
+      // A sync requested during the queue starts a full cycle. It waits for the debounce, so that
+      // a stream of notifications still collapses.
+      if (await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) {
+        await this.setSyncAlarm(Date.now() + Math.max(delayMs, this.delays().debounce));
+      }
+      // The cycle is done: check the watches once per cycle, with the rest of the budget. Also
+      // before a further cycle, so that a steady stream of changes cannot let the watches expire.
       await this.ensureWatchesSafely();
     }
   }

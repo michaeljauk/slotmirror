@@ -600,8 +600,9 @@ describe("alarm queue", () => {
       await state.storage.put("ruleQueue", [ruleId]);
       // A recent full cycle, so that the tick queues only the unwatched rules.
       await state.storage.put("fullCycleAt", Date.now());
+      // An alarm for the queue, but no requested full cycle: that would make the tick wait for it.
+      await state.storage.setAlarm(Date.now() + 60_000);
     });
-    await stub.requestSync();
 
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
@@ -864,5 +865,325 @@ describe("written IDs", () => {
     expect(written).toEqual(
       expect.objectContaining({ "created-0": expect.any(Number), "created-1": expect.any(Number) }),
     );
+  });
+});
+
+describe("changes during a cycle", () => {
+  /**
+   * One account with two rules between its calendars, in both directions. Graph returns the
+   * events in `events` per calendar and records the start of every created block.
+   */
+  async function setupCycle(accountId: string) {
+    const { stub, ruleId } = await setupRule(accountId);
+    const otherRule = `${accountId}-rule-2`;
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT ?, user_id, target_calendar_id, source_calendar_id FROM rules WHERE id = ?",
+    )
+      .bind(otherRule, ruleId)
+      .run();
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [first, second] = await inPrecedenceOrder([ruleId, otherRule]);
+    if (!first || !second) throw new Error("no rules");
+    const sourceOf = (id: string) => (id === ruleId ? SOURCE_CAL : TARGET_CAL);
+    const events: Record<string, unknown[]> = {
+      [SOURCE_CAL]: fixture.value.slice(0, 2),
+      [TARGET_CAL]: [],
+    };
+    const created: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      for (const calendar of Object.keys(events)) {
+        if (url.includes(`/calendars/${calendar}/calendarView`)) {
+          return Response.json({ value: events[calendar] });
+        }
+      }
+      if (url.endsWith("/$batch")) {
+        const body = JSON.parse(init?.body as string) as {
+          requests: { id: string; method: string; body?: { start: { dateTime: string } } }[];
+        };
+        for (const request of body.requests) {
+          if (request.method === "POST" && request.body) created.push(request.body.start.dateTime);
+        }
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 201 })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const runs = async (id: string) => (await auditOf(id, "sync_run")).length;
+    const marked = () =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get("fullCycleRequested"));
+    const runAllAlarms = async () => {
+      for (let i = 0; i < 10 && (await runDurableObjectAlarm(stub)); i++);
+    };
+    return { stub, first, second, sourceOf, events, created, runs, marked, runAllAlarms };
+  }
+
+  const newEvent = {
+    ...fixture.value[0],
+    id: "new-meeting",
+    type: "singleInstance",
+    seriesMasterId: null,
+    originalStart: null,
+    start: { dateTime: "2026-12-01T10:00:00.0000000", timeZone: "UTC" },
+    end: { dateTime: "2026-12-01T11:00:00.0000000", timeZone: "UTC" },
+  };
+
+  it("runs the rules that already ran again for a change that arrives during the cycle", async () => {
+    const { stub, first, second, sourceOf, events, created, runs, runAllAlarms } =
+      await setupCycle("acc-mid");
+
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await runs(first)).toBe(1);
+    // The source of the rule that just ran changes, and its notification asks for a sync.
+    events[sourceOf(first)]!.push(newEvent);
+    await stub.requestSync();
+    await runAllAlarms();
+
+    expect(created.some((start) => start.startsWith("2026-12-01T10:00"))).toBe(true);
+    expect(await runs(first)).toBe(2);
+    expect(await runs(second)).toBe(2);
+  });
+
+  it("runs at most one more cycle for many changes during a cycle", async () => {
+    const { stub, first, second, runs, marked, runAllAlarms } = await setupCycle("acc-burst");
+
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    for (let i = 0; i < 5; i++) await stub.requestSync();
+    await runAllAlarms();
+
+    expect(await runs(first)).toBe(2);
+    expect(await runs(second)).toBe(2);
+    expect(await marked()).toBeUndefined();
+    expect(await alarmIn(stub)).toBeNull();
+  });
+
+  it("runs no further cycle when no change arrives during the cycle", async () => {
+    const { stub, first, second, runs, marked, runAllAlarms } = await setupCycle("acc-calm");
+
+    await stub.requestSync();
+    await runAllAlarms();
+
+    expect(await runs(first)).toBe(1);
+    expect(await runs(second)).toBe(1);
+    expect(await marked()).toBeUndefined();
+  });
+
+  it("waits for the debounce before the further cycle", async () => {
+    const { stub } = await setupCycle("acc-wait");
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    vi.spyOn(instance as unknown as { delays: () => object }, "delays").mockReturnValue({
+      debounce: 900_000,
+      nextRun: 600_000,
+    });
+
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    // The queue is done; the further cycle waits like any requested sync.
+    expect(await alarmIn(stub)).toBeGreaterThan(800_000);
+  });
+
+  it("runs a further cycle for a request that arrives while the cycle reads its rules", async () => {
+    const { stub, first, second, runs, runAllAlarms } = await setupCycle("acc-list");
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    const db = (instance as unknown as { env: Env }).env.DB;
+    const prepare = db.prepare.bind(db);
+    let raced = false;
+    vi.spyOn(db, "prepare").mockImplementation((query: string) => {
+      const statement = prepare(query);
+      if (raced || !query.includes("JOIN calendars tc ON tc.id = r.target_calendar_id")) {
+        return statement;
+      }
+      raced = true;
+      // A request, for example after a new rule, arrives while the cycle reads the rule list.
+      return {
+        bind: (...values: unknown[]) => {
+          const bound = statement.bind(...values);
+          return {
+            all: async () => {
+              await instance.requestSync();
+              return bound.all();
+            },
+          };
+        },
+      } as unknown as D1PreparedStatement;
+    });
+
+    await stub.requestSync();
+    await runAllAlarms();
+
+    expect(raced).toBe(true);
+    expect(await runs(first)).toBe(2);
+    expect(await runs(second)).toBe(2);
+  });
+
+  it("runs the requested full cycle when a tick queues rules before it starts", async () => {
+    const { stub, first, second, events, runs, runAllAlarms } = await setupCycle("acc-tick");
+    events["remote-unwatched"] = [];
+    // A third calendar without a watch, read by a third rule; the other two are watched.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-tick-src2', 'acc-tick', 'remote-unwatched', 'Other')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-tick-rule-3', user_id, 'acc-tick-src2', target_calendar_id FROM rules WHERE id = 'acc-tick-rule'",
+      ),
+      env.DB.prepare(
+        "UPDATE calendars SET watched_until = ? WHERE id IN ('acc-tick-src', 'acc-tick-dst')",
+      ).bind(Date.now() + 86_400_000),
+    ]);
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("fullCycleAt", Date.now()),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await stub.requestSync();
+    // The cron fires within the debounce and polls only the unwatched rule.
+    await stub.tick();
+    await runAllAlarms();
+
+    expect(await runs(first)).toBe(1);
+    expect(await runs(second)).toBe(1);
+    expect(await runs("acc-tick-rule-3")).toBe(1);
+  });
+});
+
+describe("overlapping runs", () => {
+  it("writes each block once when two runs of one rule overlap", async () => {
+    const { stub, ruleId } = await setupRule("acc-overlap");
+    await stub.storeTokens("acc-overlap", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [template] = fixture.value;
+    // Blocks written by `$batch` show up in later reads of the target calendar.
+    const target: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
+        return Response.json({ value: fixture.value });
+      if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
+        return Response.json({ value: [...target] });
+      if (url.endsWith("/$batch")) {
+        const body = JSON.parse(init?.body as string) as {
+          requests: { id: string; method: string; body?: Record<string, unknown> }[];
+        };
+        for (const request of body.requests) {
+          if (request.method !== "POST") continue;
+          target.push({
+            ...template,
+            ...request.body,
+            id: `block-${target.length}`,
+            type: "singleInstance",
+            seriesMasterId: null,
+            originalStart: null,
+          });
+        }
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 201 })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    // A double click on "Run", or a click while the alarm runs the same rule. A preview at the
+    // same time plans on its own and writes nothing.
+    const [one, two, preview] = await Promise.all([
+      stub.runRule(ruleId),
+      stub.runRule(ruleId),
+      stub.runRule(ruleId, { dryRun: true }),
+    ]);
+
+    expect(target).toHaveLength(15);
+    expect(one).toMatchObject({ dryRun: false, applied: 15 });
+    // The second click reports the writes of the run it joined.
+    expect(two).toEqual(one);
+    expect(preview).toMatchObject({ dryRun: true, applied: 0 });
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(2);
+    // Once the first run is done, a new run plans from the calendar again.
+    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 0, stats: { create: 0 } });
+  });
+
+  it("runs the rule again in the alarm after a manual run that read the source before a change", async () => {
+    const { stub, ruleId } = await setupRule("acc-manual");
+    await stub.storeTokens("acc-manual", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const source: unknown[] = fixture.value.slice(0, 2);
+    const target: { start: { dateTime: string } }[] = [];
+    // Flags and timers, not shared promises: a promise resolved in the Durable Object would
+    // continue the test in its I/O context.
+    const sleep = () => new Promise((resolve) => setTimeout(resolve, 1));
+    let sourceRead = false;
+    let batchReleased = false;
+    let firstBatch = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`)) {
+        sourceRead = true;
+        return Response.json({ value: [...source] });
+      }
+      if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
+        return Response.json({ value: [...target] });
+      if (url.endsWith("/$batch")) {
+        // The manual run waits here with the plan it made before the change.
+        if (firstBatch) {
+          firstBatch = false;
+          while (!batchReleased) await sleep();
+        }
+        const body = JSON.parse(init?.body as string) as {
+          requests: { id: string; method: string; body?: { start: { dateTime: string } } }[];
+        };
+        for (const request of body.requests) {
+          if (request.method !== "POST" || !request.body) continue;
+          target.push({
+            ...fixture.value[0],
+            ...request.body,
+            id: `block-${target.length}`,
+            type: "singleInstance",
+            seriesMasterId: null,
+            originalStart: null,
+          } as unknown as { start: { dateTime: string } });
+        }
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 201 })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const manual = stub.runRule(ruleId);
+    while (!sourceRead) await sleep();
+    // The source changes after the manual run read it, and the notification asks for a sync.
+    source.push({
+      ...fixture.value[0],
+      id: "new-meeting",
+      type: "singleInstance",
+      seriesMasterId: null,
+      originalStart: null,
+      start: { dateTime: "2026-12-01T10:00:00.0000000", timeZone: "UTC" },
+      end: { dateTime: "2026-12-01T11:00:00.0000000", timeZone: "UTC" },
+    });
+    await stub.requestSync();
+    const alarm = runDurableObjectAlarm(stub);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    batchReleased = true;
+    await manual;
+    await alarm;
+
+    expect(target.some((block) => block.start.dateTime.startsWith("2026-12-01T10:00"))).toBe(true);
   });
 });

@@ -1,6 +1,21 @@
 // Calendar editor without a reload per click. A choice changes its card, the pills and the
 // overview at once; the bar at the bottom saves every change of the page in one request.
 // Without this script every button is a plain form submit, so the editor also works without it.
+
+// A copy button copies the value of the field it names; without the script, the field is selectable.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-copy]");
+  const field = button && document.getElementById(button.dataset.copy);
+  if (!field) return;
+  field.select();
+  try {
+    await navigator.clipboard.writeText(field.value);
+    button.textContent = button.dataset.copied;
+  } catch {
+    // The field stays selected for a manual copy.
+  }
+});
+
 (() => {
   document.documentElement.classList.add("js");
   const bar = document.getElementById("page-bar");

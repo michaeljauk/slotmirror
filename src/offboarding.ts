@@ -1,5 +1,6 @@
 import { recordAudit } from "./audit";
 import { accountSync } from "./durable";
+import { deleteEmptyFeeds } from "./feeds";
 
 /**
  * Removing accounts and users, and pausing a user. The blocks go through the removal queue of each
@@ -64,12 +65,17 @@ export async function removeAccounts(
       detail: { rules: rules.length, cleanup: "queued", cleanupFailed: failed },
     });
   }
+  // The accounts' calendars left every feed with them; a feed without calendars goes too.
+  await deleteEmptyFeeds(env, user);
 }
 
 /** Who started a deletion or a change of state; recorded without names. */
 export type Actor = "self" | "admin" | "scim";
 
-/** Delete a user with every account, rule and block. Activity entries stay until retention. */
+/**
+ * Delete a user with every account, rule, feed and block. Activity entries stay until retention.
+ * Feeds go with the user row.
+ */
 export async function deleteUser(
   env: Env,
   user: { id: string; orgId: string },

@@ -34,6 +34,9 @@ import { accountSync } from "./durable";
 import { isValidToken, notifyChange } from "./webhooks";
 import { deleteUser, removeAccounts } from "./offboarding";
 import { scim } from "./routes/scim";
+import { feeds } from "./routes/feeds";
+import { feedResponse, listFeeds } from "./feeds";
+import { userCalendars } from "./calendars";
 
 export { AccountSync } from "./account-sync";
 
@@ -85,6 +88,12 @@ app.post("/webhooks/google", async (c) => {
   return c.body(null, 200);
 });
 
+// Private free/busy feeds for calendar apps. Before the language detector, which sets a cookie,
+// and before the session middleware: the secret in the address is the only credential.
+app.get("/ics/:feedId/:file", (c) =>
+  feedResponse(c.env, c.req.param("feedId"), c.req.param("file"), new URL(c.req.url).origin),
+);
+
 // Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
 app.use(
   "*",
@@ -127,6 +136,7 @@ app.use("*", async (c, next) => {
 app.route("/auth", auth);
 app.route("/rules", rules);
 app.route("/dev", dev);
+app.route("/feeds", feeds);
 
 app.get("/", async (c) => {
   const user = c.get("user");
@@ -141,9 +151,11 @@ app.get("/", async (c) => {
   )
     .bind(user.id)
     .all<AccountRow>();
-  const [outcomes, editor] = await Promise.all([
+  const [outcomes, editor, userFeeds, calendars] = await Promise.all([
     latestRuleOutcomes(c.env.DB, user.id),
     loadEditorState(c.env, user.id),
+    listFeeds(c.env.DB, user.id),
+    userCalendars(c.env.DB, user.id),
   ]);
   return render(
     c,
@@ -153,6 +165,8 @@ app.get("/", async (c) => {
       providers={providers}
       statuses={accountStatuses(outcomes)}
       editor={editor}
+      feeds={userFeeds}
+      calendars={calendars}
     />,
   );
 });

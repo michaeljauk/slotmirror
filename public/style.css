@@ -1916,3 +1916,76 @@ details.source > .source-head .provider-icon,
     width: min(280px, calc(100vw - 78px));
   }
 }
+
+/* Free/busy feeds */
+
+details.feed-new {
+  margin-top: 14px;
+  box-shadow: none;
+  border: 0;
+  background: none;
+}
+
+details.feed-new > summary {
+  list-style: none;
+}
+
+details.feed-new > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.feed-new[open] {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+details.feed-new[open] > summary {
+  margin: 14px 18px 0;
+}
+
+.feed-calendars {
+  display: grid;
+  gap: 6px;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.feed-calendars legend {
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.form .feed-shares {
+  grid-column: 1 / -1;
+  margin: 0;
+  text-align: left;
+}
+
+.feed-url {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.feed-url input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font:
+    12.5px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.center .feed-shares {
+  text-align: left;
+}

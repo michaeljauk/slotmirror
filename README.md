@@ -46,6 +46,8 @@ tokens stay with you and not with a sync service.
   private ones, for example at most "busy" from private to work.
 - **EU data location.** Tokens and the sync itself can stay in the EU.
 - **Audit log.** Sign-ins, changes and sync runs with counts and error codes, never event content.
+- **Free/busy feed.** A secret ICS address per feed that shows your busy times to people
+  outside the deployment, without titles or other content.
 - **English and German.**
 
 ## Quickstart
@@ -198,6 +200,35 @@ Each notification carries a token that only your deployment can compute, an HMAC
 with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `SESSION_SECRET`, the
 existing subscriptions no longer match until they expire and are created again, which can take up
 to 7 days. In the meantime the hourly full sync keeps the blocks current.
+
+## Free/busy feed
+
+Under **Free/busy feed** on the start page, each user can create a secret calendar address for
+people outside the deployment. They subscribe to it by URL in their calendar app, for example with
+"Add calendar from URL" in Google Calendar or "Subscribe from web" in Outlook.
+
+**What it shares.** One event per busy time in the chosen calendars, at most five calendars, from 7
+days ago to up to 180 days ahead (60 by default). Each event has only its start, end, the title
+"Busy" in your language, and the marks private and busy. Titles, places, notes, attendees,
+organizers and the source event IDs stay out. The same events count as for a rule with default
+settings: free and declined events stay out, tentative ones count as busy, and all-day events count
+only if you turn them on. Blocks that slotmirror wrote are left out, so choose every calendar whose
+own events should count. The event IDs in the feed are hashed with a secret per feed, so two feeds
+cannot be linked through them.
+
+**Who can see it.** Anyone with the address. The address holds a random 256-bit token; slotmirror
+stores only its SHA-256 hash and shows the address once, when you create the feed or renew it.
+
+**Renew or delete.** "New address" replaces the token: the old address returns 404 at once, and
+everyone who should still see the feed needs the new one. "Delete" ends the feed. A feed also ends
+when its last calendar goes with a disconnected account, and when its user is deleted. While a user
+is deactivated, their feeds return 404.
+
+**Delay.** A rendered feed is cached for 15 minutes, and calendar apps fetch subscribed calendars
+on their own schedule, from every 15 minutes to once a day. A change can take that long to appear.
+The cache works on a custom domain or a route. Cloudflare's Cache API stores nothing on a
+`workers.dev` address, so there each fetch reads the calendars. If an account needs to be connected
+again, the feed answers 503 and the apps keep their last copy.
 
 ## Limits
 

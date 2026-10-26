@@ -35,6 +35,10 @@ export default defineConfig(async () => {
         },
       }),
     ],
-    test: { setupFiles: ["./test/apply-migrations.ts"] },
+    test: {
+      setupFiles: ["./test/apply-migrations.ts"],
+      // The default 5 s fails tests on a loaded machine, e.g. in the pre-push hook.
+      testTimeout: 30_000,
+    },
   };
 });

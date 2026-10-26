@@ -868,8 +868,12 @@ describe("written IDs", () => {
       });
     });
     await stub.runRule(ruleId);
-    expect(await stub.isOwnEcho(["created-0", "created-1"])).toBe(true);
-    expect(await stub.isOwnEcho(["created-0", "other"])).toBe(false);
+    const written = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<Record<string, number>>("recentWrites"),
+    );
+    expect(written).toEqual(
+      expect.objectContaining({ "created-0": expect.any(Number), "created-1": expect.any(Number) }),
+    );
   });
 });
 

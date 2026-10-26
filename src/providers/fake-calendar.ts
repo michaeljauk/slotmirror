@@ -27,7 +27,16 @@ export class FakeCalendar implements CalendarClient {
 
   async listCalendars(): Promise<CalendarInfo[]> {
     await this.call("listCalendars");
-    return [{ id: "main", name: "Calendar", canEdit: true, isDefault: true, owned: true }];
+    return [
+      {
+        id: "main",
+        name: "Calendar",
+        canEdit: true,
+        isDefault: true,
+        owned: true,
+        dataOwned: true,
+      },
+    ];
   }
 
   async sourceEvents(calendarId: string, window: TimeWindow): Promise<SourceEvent[]> {

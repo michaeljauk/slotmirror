@@ -14,7 +14,7 @@ import { Layout } from "./layout";
 export function FeedSection(props: { feeds: FeedSummary[]; calendars: CalendarRow[] }) {
   const { t, formatDate } = useI18n();
   // Only calendars the accounts own; a calendar shared by someone else is not theirs to publish.
-  const owned = props.calendars.filter((calendar) => calendar.owned);
+  const owned = props.calendars.filter((calendar) => calendar.dataOwned);
   return (
     <section class="section" id="feeds">
       <div class="section-head">

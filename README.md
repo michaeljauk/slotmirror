@@ -216,8 +216,10 @@ ones count as busy, and all-day events count only if you turn them on. Blocks th
 wrote are left out, so choose every calendar whose own events should count. Only calendars that
 your accounts own can go into a feed, not calendars that other people shared with you. For
 Google, these are the primary calendar and calendars whose data owner is the account; the access
-role "owner" alone also covers calendars shared with "make changes and manage sharing". The UID of
-a block is an HMAC of its start and end with a secret per feed, so a moved meeting is a new block,
+role "owner" alone also covers calendars shared with "make changes and manage sharing". This rule
+is for feeds only; which calendars a rule can write into does not change. After the update, a
+secondary Google calendar becomes available for feeds once you refresh the calendar list. The UID
+of a block is an HMAC of its start and end with a secret per feed, so a moved meeting is a new block,
 and two feeds cannot be linked through their UIDs.
 
 **At most 1000 blocks.** Above that, past blocks go first, those that ended earliest first. A

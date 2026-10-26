@@ -98,15 +98,16 @@ export class GoogleCalendar implements CalendarClient {
       items.push(...page.items);
       pageToken = page.nextPageToken;
     } while (pageToken);
-    // Access role "owner" also means "manage sharing" on someone else's calendar. Only the
-    // primary calendar and calendars whose data owner is the account belong to it.
     for (const item of items) {
       calendars.push({
         id: item.id,
         name: item.summaryOverride ?? item.summary,
         canEdit: item.accessRole === "owner" || item.accessRole === "writer",
         isDefault: item.primary ?? false,
-        owned:
+        owned: item.accessRole === "owner",
+        // Access role "owner" also means "manage sharing" on someone else's calendar. Only the
+        // primary calendar and calendars whose data owner is the account hold its data.
+        dataOwned:
           item.primary === true ||
           (ownerAddress !== null && item.dataOwner?.toLowerCase() === ownerAddress),
       });

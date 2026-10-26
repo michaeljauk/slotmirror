@@ -9,8 +9,8 @@ export interface CalendarRow {
   name: string;
   canEdit: boolean;
   isDefault: boolean;
-  /** The account owns the calendar; a calendar shared by someone else is not owned. */
-  owned: boolean;
+  /** The calendar's data belongs to the account; only such calendars may go into a feed. */
+  dataOwned: boolean;
 }
 
 /** Calendars of all accounts of a user, from the registry. */
@@ -19,7 +19,7 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
     .prepare(
       `SELECT c.id, c.account_id AS accountId, a.email AS accountEmail,
               a.tenant_id AS accountTenantId, c.name,
-              c.can_edit AS canEdit, c.is_default AS isDefault, c.owned
+              c.can_edit AS canEdit, c.is_default AS isDefault, c.data_owned AS dataOwned
        FROM calendars c JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ?
        ORDER BY a.email, c.is_default DESC, c.name`,
@@ -33,13 +33,13 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
       name: string;
       canEdit: number;
       isDefault: number;
-      owned: number;
+      dataOwned: number;
     }>();
   return results.map((row) => ({
     ...row,
     canEdit: row.canEdit === 1,
     isDefault: row.isDefault === 1,
-    owned: row.owned === 1,
+    dataOwned: row.dataOwned === 1,
   }));
 }
 
@@ -66,11 +66,11 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
         env.DB.prepare(
           // A new main calendar starts as a source; is_source never changes on an update.
           `INSERT INTO calendars
-             (id, account_id, remote_id, name, can_edit, is_default, is_source, owned)
+             (id, account_id, remote_id, name, can_edit, is_default, is_source, data_owned)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (account_id, remote_id) DO UPDATE SET
              name = excluded.name, can_edit = excluded.can_edit, is_default = excluded.is_default,
-             owned = excluded.owned`,
+             data_owned = excluded.data_owned`,
         ).bind(
           crypto.randomUUID(),
           account.id,
@@ -81,7 +81,7 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
           calendar.canEdit && calendar.owned ? 1 : 0,
           calendar.isDefault ? 1 : 0,
           calendar.isDefault ? 1 : 0,
-          calendar.owned ? 1 : 0,
+          calendar.dataOwned ? 1 : 0,
         ),
       ),
     );

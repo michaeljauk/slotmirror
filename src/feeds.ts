@@ -173,7 +173,7 @@ export type CreateFeedResult =
  * shared with the user is not theirs to publish.
  */
 const OWN_CALENDAR = `calendars c JOIN accounts a ON a.id = c.account_id
-  WHERE a.user_id = ? AND c.owned = 1`;
+  WHERE a.user_id = ? AND c.data_owned = 1`;
 
 /** Create a feed over calendars the user owns. The token is returned only here. */
 export async function createFeed(
@@ -350,7 +350,7 @@ interface FeedCalendar {
   remoteId: string;
   needsReconnect: number;
   /** 0 once the account no longer owns the calendar, e.g. after it was handed over. */
-  owned: number;
+  dataOwned: number;
 }
 
 /** Everything a fetch needs, in one D1 read: feed, user, policy, calendars and the last copy. */
@@ -385,7 +385,7 @@ const FEED_SELECT = `
          (SELECT json_group_array(json_object('id', c.id, 'accountId', c.account_id,
                                               'remoteId', c.remote_id,
                                               'needsReconnect', a.needs_reconnect,
-                                              'owned', c.owned))
+                                              'dataOwned', c.data_owned))
           FROM feed_calendars fc
           JOIN calendars c ON c.id = fc.calendar_id
           JOIN accounts a ON a.id = c.account_id
@@ -506,7 +506,7 @@ export async function feedResponse(
   };
   // A calendar the account no longer owns is not the user's to publish, and a feed without it
   // would be partial.
-  const unowned = calendars.find((calendar) => calendar.owned !== 1);
+  const unowned = calendars.find((calendar) => calendar.dataOwned !== 1);
   if (unowned) return failed(unowned.id);
   if (sameCopy && now.getTime() - (feed.lastRenderedAt ?? 0) < FEED_CACHE_SECONDS * 1000) {
     return forSubscriber(feed.lastBody);

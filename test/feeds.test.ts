@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
+import { refreshUserCalendars } from "../src/calendars";
 import { feedResponse, hashFeedToken, tokenMatches } from "../src/feeds";
 import { deleteUser, removeAccounts, setUserActive } from "../src/offboarding";
 import fixture from "./fixtures/graph/calendar-view.json";
@@ -63,7 +64,7 @@ async function setup(prefix: string, email = `${prefix}@org.example`) {
       "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
     ).bind(accountId, user.id, `${prefix}@example.com`),
     env.DB.prepare(
-      "INSERT INTO calendars (id, account_id, remote_id, name, is_default, owned) VALUES (?, ?, ?, 'Work', 1, 1)",
+      "INSERT INTO calendars (id, account_id, remote_id, name, is_default, data_owned) VALUES (?, ?, ?, 'Work', 1, 1)",
     ).bind(calendarId, accountId, REMOTE),
   ]);
   await env.ACCOUNT_SYNC.getByName(accountId).storeTokens(accountId, {
@@ -296,7 +297,7 @@ describe("feed authorization", () => {
     for (let i = 0; i < 6; i++) {
       ids.push(`limit-cal-${i}`);
       await env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES (?, 'limit-acc', ?, 'C', 1)",
+        "INSERT INTO calendars (id, account_id, remote_id, name, data_owned) VALUES (?, 'limit-acc', ?, 'C', 1)",
       )
         .bind(`limit-cal-${i}`, `remote-${i}`)
         .run();
@@ -360,7 +361,7 @@ describe("feed authorization", () => {
     fakeGraph();
     const { cookie, accountId, user } = await setup("shared");
     await env.DB.prepare(
-      "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES ('shared-colleague', ?, 'remote-colleague', 'Colleague', 0)",
+      "INSERT INTO calendars (id, account_id, remote_id, name, data_owned) VALUES ('shared-colleague', ?, 'remote-colleague', 'Colleague', 0)",
     )
       .bind(accountId)
       .run();
@@ -374,16 +375,77 @@ describe("feed authorization", () => {
     expect(html).not.toContain('value="shared-colleague"');
   });
 
+  it("keeps a Google calendar with the owner role as a rule target, but not as a feed calendar", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (!url.includes("/calendarList")) return new Response("unexpected", { status: 500 });
+      return Response.json({
+        items: [
+          { id: "gowner@example.com", summary: "Me", accessRole: "owner", primary: true },
+          {
+            id: "managed@group.calendar.google.com",
+            summary: "Managed",
+            accessRole: "owner",
+            dataOwner: "colleague@example.com",
+          },
+        ],
+      });
+    });
+    const { user, cookie } = await signIn("gowner@org.example");
+    await env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email) VALUES ('gowner-acc', ?, 'google', ?)",
+    )
+      .bind(user.id, "gowner@example.com")
+      .run();
+    await env.ACCOUNT_SYNC.getByName("gowner-acc").storeTokens(
+      "gowner-acc",
+      { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() + 3_600_000 },
+      "google",
+    );
+    await refreshUserCalendars(env, user.id);
+    const ids = await env.DB.prepare(
+      "SELECT remote_id AS remoteId, id, can_edit AS canEdit, data_owned AS dataOwned FROM calendars WHERE account_id = 'gowner-acc'",
+    ).all<{ remoteId: string; id: string; canEdit: number; dataOwned: number }>();
+    const byRemote = new Map(ids.results.map((row) => [row.remoteId, row]));
+    const primary = byRemote.get("gowner@example.com");
+    const managed = byRemote.get("managed@group.calendar.google.com");
+    expect(managed).toMatchObject({ canEdit: 1, dataOwned: 0 });
+
+    // As on main, the calendar is a valid rule target.
+    const rule = new FormData();
+    rule.set("source", primary?.id ?? "");
+    rule.set("target", managed?.id ?? "");
+    const created = await exports.default.fetch(`${BASE}/rules`, {
+      method: "POST",
+      body: rule,
+      headers: { cookie },
+      redirect: "manual",
+    });
+    expect(created.status).toBe(302);
+    const rules = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM rules WHERE user_id = ? AND target_calendar_id = ?",
+    )
+      .bind(user.id, managed?.id ?? "")
+      .first<{ n: number }>();
+    expect(rules?.n).toBe(1);
+
+    // It cannot go into a feed, and the picker does not offer it.
+    expect((await createFeed(cookie, [managed?.id ?? ""])).status).toBe(404);
+    const html = await (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
+    expect(html).toContain(`value="${primary?.id ?? "-"}"`);
+    expect(html).not.toContain(`value="${managed?.id ?? "-"}"`);
+  });
+
   it("gives no partial feed once a calendar is no longer owned, and names it", async () => {
     const reads = fakeGraph();
     const { cookie, calendarId, accountId } = await setup("unowned");
     await env.DB.prepare(
-      "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES ('unowned-2', ?, 'remote-unowned-2', 'Handed over', 1)",
+      "INSERT INTO calendars (id, account_id, remote_id, name, data_owned) VALUES ('unowned-2', ?, 'remote-unowned-2', 'Handed over', 1)",
     )
       .bind(accountId)
       .run();
     const url = await feedUrlFrom(await createFeed(cookie, [calendarId, "unowned-2"]));
-    await env.DB.prepare("UPDATE calendars SET owned = 0 WHERE id = 'unowned-2'").run();
+    await env.DB.prepare("UPDATE calendars SET data_owned = 0 WHERE id = 'unowned-2'").run();
     const response = await exports.default.fetch(url);
     expect(response.status).toBe(503);
     expect(reads).toHaveLength(0);
@@ -459,7 +521,7 @@ describe("feed cache", () => {
     const reads = fakeGraph();
     const { cookie, calendarId, accountId, user } = await setup("cache-set");
     await env.DB.prepare(
-      "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES ('cache-set-cal-2', ?, 'remote-feed-2', 'Team', 1)",
+      "INSERT INTO calendars (id, account_id, remote_id, name, data_owned) VALUES ('cache-set-cal-2', ?, 'remote-feed-2', 'Team', 1)",
     )
       .bind(accountId)
       .run();
@@ -611,7 +673,7 @@ describe("feed and provider limits", () => {
     );
     const { cookie, calendarId, accountId } = await setup("gone-cal");
     await env.DB.prepare(
-      "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES ('gone-cal-2', ?, 'remote-gone', 'Old project', 1)",
+      "INSERT INTO calendars (id, account_id, remote_id, name, data_owned) VALUES ('gone-cal-2', ?, 'remote-gone', 'Old project', 1)",
     )
       .bind(accountId)
       .run();
@@ -695,7 +757,7 @@ describe("feed lifecycle", () => {
         "INSERT INTO accounts (id, user_id, provider, email) VALUES ('keep-b-acc', ?, 'google', 'keep-b@example.com')",
       ).bind(first.user.id),
       env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES ('keep-b-cal', 'keep-b-acc', 'remote-b', 'B', 1)",
+        "INSERT INTO calendars (id, account_id, remote_id, name, data_owned) VALUES ('keep-b-cal', 'keep-b-acc', 'remote-b', 'B', 1)",
       ),
     ]);
     const url = await feedUrlFrom(await createFeed(first.cookie, [first.calendarId, "keep-b-cal"]));

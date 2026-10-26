@@ -285,7 +285,7 @@ describe("rule across providers", () => {
 });
 
 describe("Google calendar list", () => {
-  it("counts only the primary calendar and calendars whose data owner is the account as owned", async () => {
+  it("keeps the owner role for targets and the data owner for feeds", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json({
         items: [
@@ -306,17 +306,18 @@ describe("Google calendar list", () => {
         ],
       }),
     );
-    const owned = Object.fromEntries(
+    const flags = Object.fromEntries(
       (await new GoogleCalendar("token").listCalendars()).map((calendar) => [
         calendar.name,
-        calendar.owned,
+        [calendar.owned, calendar.dataOwned],
       ]),
     );
-    expect(owned).toEqual({
-      Me: true,
-      "My project": true,
-      "Shared with manage sharing": false,
-      Colleague: false,
+    // [owned: decides mirror targets as on main, dataOwned: decides feeds]
+    expect(flags).toEqual({
+      Me: [true, true],
+      "My project": [true, true],
+      "Shared with manage sharing": [true, false],
+      Colleague: [false, false],
     });
   });
 });

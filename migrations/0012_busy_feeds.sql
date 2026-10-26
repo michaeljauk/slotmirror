@@ -33,8 +33,12 @@ CREATE TABLE feed_calendars (
 
 CREATE INDEX feed_calendars_calendar ON feed_calendars (calendar_id);
 
--- Whether the account owns the calendar. Only owned calendars may go into a feed, so that nobody
--- publishes the busy times of a calendar someone else shared with them. Until the next calendar
--- refresh, a calendar slotmirror may write into counts as owned: it is only writable when owned.
-ALTER TABLE calendars ADD COLUMN owned INTEGER NOT NULL DEFAULT 0 CHECK (owned IN (0, 1));
-UPDATE calendars SET owned = 1 WHERE can_edit = 1;
+-- Whether the calendar's data belongs to the account. Only such calendars may go into a feed, so
+-- that nobody publishes the busy times of a calendar someone else shared with them. can_edit keeps
+-- its own rule for mirror targets. Until the next calendar refresh, this counts: a writable
+-- Microsoft calendar (writable only when the mailbox owns it) and a main calendar. A writable
+-- Google calendar does not count, because the role "owner" also means "manage sharing".
+ALTER TABLE calendars ADD COLUMN data_owned INTEGER NOT NULL DEFAULT 0 CHECK (data_owned IN (0, 1));
+UPDATE calendars SET data_owned = 1
+WHERE is_default = 1
+   OR (can_edit = 1 AND account_id IN (SELECT id FROM accounts WHERE provider = 'microsoft'));

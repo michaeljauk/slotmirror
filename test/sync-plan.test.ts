@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ruleOptionsSchema, type RuleOptions } from "../src/config";
-import { fromGraphEvent, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
+import { googleMarker, LEGACY_GOOGLE_MARKER_KEY } from "../src/sync/google-events";
+import {
+  fromGraphEvent,
+  graphMarkerValue,
+  LEGACY_MARKER_PROPERTY_ID,
+  MARKER_PROPERTY_ID,
+} from "../src/sync/graph-events";
 import { desiredBlocks, planSync } from "../src/sync/plan";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
 import fixture from "./fixtures/graph/calendar-view.json";
@@ -210,5 +216,29 @@ describe("planSync", () => {
     const [a] = await desiredBlocks("rule-a", events, options());
     const [b] = await desiredBlocks("rule-b", events, options());
     expect(a?.marker).not.toBe(b?.marker);
+  });
+});
+
+describe("legacy marker", () => {
+  it("recognises blocks from before the rename, and prefers the current marker", () => {
+    expect(graphMarkerValue([{ id: LEGACY_MARKER_PROPERTY_ID, value: "old" }])).toBe("old");
+    expect(
+      graphMarkerValue([
+        { id: LEGACY_MARKER_PROPERTY_ID, value: "old" },
+        { id: MARKER_PROPERTY_ID, value: "new" },
+      ]),
+    ).toBe("new");
+    expect(graphMarkerValue([])).toBeUndefined();
+
+    const event = (privateProperties: Record<string, string>) => ({
+      id: "e",
+      start: { dateTime: "2026-10-26T10:00:00Z" },
+      end: { dateTime: "2026-10-26T11:00:00Z" },
+      extendedProperties: { private: privateProperties },
+    });
+    const value = "aaaaaaaaaaaa.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef";
+    expect(googleMarker(event({ [LEGACY_GOOGLE_MARKER_KEY]: value }))?.ruleTag).toBe(
+      "aaaaaaaaaaaa",
+    );
   });
 });

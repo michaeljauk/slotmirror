@@ -1,13 +1,30 @@
 import * as z from "zod/mini";
 import type { ShowAs, SourceEvent } from "./types";
 
+const MARKER_PROPERTY_SET = "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10}";
+
 /**
  * Single-value extended property that marks blocks written by slotmirror.
- * Its value is `<ruleTag>.<marker>.<contentHash>`. The name keeps the project's former name,
- * freebusy-sync: existing blocks carry it, and a new name would make the sync miss them.
+ * Its value is `<ruleTag>.<marker>.<contentHash>`.
  */
-export const MARKER_PROPERTY_ID =
-  "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10} Name freebusySyncMarker";
+export const MARKER_PROPERTY_ID = `${MARKER_PROPERTY_SET} Name slotmirrorMarker`;
+
+/**
+ * The marker of blocks written before the project was renamed from freebusy-sync on 2026-10-26.
+ * It is read so that those blocks are still updated and removed, and never written.
+ * TODO: remove once no deployment from before the rename runs, at the latest before the launch.
+ */
+export const LEGACY_MARKER_PROPERTY_ID = `${MARKER_PROPERTY_SET} Name freebusySyncMarker`;
+
+/** The marker value of an event: the current marker wins over the legacy one. */
+export function graphMarkerValue(
+  properties: { id: string; value?: string | null }[] | undefined,
+): string | undefined {
+  const find = (id: string) =>
+    properties?.find((property) => property.id.toLowerCase() === id.toLowerCase())?.value ??
+    undefined;
+  return find(MARKER_PROPERTY_ID) ?? find(LEGACY_MARKER_PROPERTY_ID);
+}
 
 const dateTimeTimeZone = z.object({ dateTime: z.string(), timeZone: z.string() });
 
@@ -96,9 +113,7 @@ export function fromGraphEvent(raw: unknown): SourceEvent | null {
       ? `series:${event.seriesMasterId}:${new Date(event.originalStart).toISOString()}`
       : `event:${event.id}`;
 
-  const isMirror = (event.singleValueExtendedProperties ?? []).some(
-    (property) => property.id.toLowerCase() === MARKER_PROPERTY_ID.toLowerCase(),
-  );
+  const isMirror = graphMarkerValue(event.singleValueExtendedProperties) !== undefined;
 
   return {
     occurrenceKey,

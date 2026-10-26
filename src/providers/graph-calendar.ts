@@ -3,6 +3,8 @@ import {
   fromGraphEvent,
   GRAPH_EVENT_SELECT,
   graphEventSchema,
+  graphMarkerValue,
+  LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
   parseMarkerValue,
 } from "../sync/graph-events";
@@ -124,9 +126,7 @@ export class GraphCalendar implements CalendarClient {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.calendarView(calendarId, window)) {
       const event = graphEventSchema.parse(raw);
-      const value = (event.singleValueExtendedProperties ?? []).find(
-        (property) => property.id.toLowerCase() === MARKER_PROPERTY_ID.toLowerCase(),
-      )?.value;
+      const value = graphMarkerValue(event.singleValueExtendedProperties);
       const source = fromGraphEvent(raw);
       if (!value || !source) continue;
       const parsed = parseMarkerValue(value);
@@ -203,7 +203,7 @@ export class GraphCalendar implements CalendarClient {
       startDateTime: window.start.toISOString(),
       endDateTime: window.end.toISOString(),
       $select: withBody ? `${GRAPH_EVENT_SELECT},body` : GRAPH_EVENT_SELECT,
-      $expand: `singleValueExtendedProperties($filter=id eq '${MARKER_PROPERTY_ID}')`,
+      $expand: `singleValueExtendedProperties($filter=id eq '${MARKER_PROPERTY_ID}' or id eq '${LEGACY_MARKER_PROPERTY_ID}')`,
       $top: String(PAGE_SIZE),
     });
     let url: string | undefined =

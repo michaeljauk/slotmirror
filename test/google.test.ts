@@ -69,7 +69,7 @@ describe("toGoogleBlock", () => {
       start: { dateTime: "2026-10-27T13:00:00.000Z", timeZone: "UTC" },
     });
     expect(body).not.toHaveProperty("attendees");
-    expect(body.extendedProperties.private.freebusySyncMarker).toMatch(
+    expect(body.extendedProperties.private.slotmirrorMarker).toMatch(
       /^tag123456789\.[0-9a-f]{32}\.[0-9a-f]{32}$/,
     );
   });

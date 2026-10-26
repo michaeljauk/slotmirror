@@ -3,7 +3,7 @@
  * Used for the session and for the short-lived OAuth state.
  */
 
-export const SESSION_COOKIE = "fbs_session";
+export const SESSION_COOKIE = "slotmirror_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export interface Session {

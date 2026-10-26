@@ -3,9 +3,18 @@ import { parseMarkerValue } from "./graph-events";
 import type { DesiredBlock, SourceEvent } from "./types";
 
 /** Key in `extendedProperties.private` that marks blocks written by slotmirror. */
-// The key keeps the project's former name, freebusy-sync: existing blocks carry it, and a new key
-// would make the sync miss them and write every block again.
-export const GOOGLE_MARKER_KEY = "freebusySyncMarker";
+export const GOOGLE_MARKER_KEY = "slotmirrorMarker";
+
+/**
+ * The key of blocks written before the project was renamed from freebusy-sync on 2026-10-26.
+ * Read, never written. TODO: remove once no deployment from before the rename runs.
+ */
+export const LEGACY_GOOGLE_MARKER_KEY = "freebusySyncMarker";
+
+/** The marker value of an event: the current key wins over the legacy one. */
+function markerValue(properties: Record<string, string> | undefined): string | undefined {
+  return properties?.[GOOGLE_MARKER_KEY] ?? properties?.[LEGACY_GOOGLE_MARKER_KEY];
+}
 
 const eventTime = z.object({
   date: z.optional(z.string()),
@@ -89,13 +98,13 @@ export function fromGoogleEvent(raw: unknown): SourceEvent | null {
     subject: event.summary ?? "",
     location: event.location ?? "",
     body: event.description ?? "",
-    isMirror: event.extendedProperties?.private?.[GOOGLE_MARKER_KEY] !== undefined,
+    isMirror: markerValue(event.extendedProperties?.private) !== undefined,
   };
 }
 
 /** Marker value of a block, if the event is one of ours. */
 export function googleMarker(raw: unknown) {
-  const value = googleEventSchema.parse(raw).extendedProperties?.private?.[GOOGLE_MARKER_KEY];
+  const value = markerValue(googleEventSchema.parse(raw).extendedProperties?.private);
   return value === undefined ? null : parseMarkerValue(value);
 }
 

@@ -193,7 +193,7 @@ describe("account actions", () => {
       redirect: "manual",
     });
     expect(response.status).toBe(302);
-    expect(response.headers.get("set-cookie")).toMatch(/fbs_session=;.*Max-Age=0/);
+    expect(response.headers.get("set-cookie")).toMatch(/slotmirror_session=;.*Max-Age=0/);
   });
 
   it("sends a doctype, so that browsers render in standards mode", async () => {

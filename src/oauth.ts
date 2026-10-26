@@ -1,7 +1,7 @@
 import { base64url, signPayload, verifyPayload } from "./session";
 import type { Provider } from "./config";
 
-export const OAUTH_COOKIE = "fbs_oauth";
+export const OAUTH_COOKIE = "slotmirror_oauth";
 const OAUTH_TTL_SECONDS = 10 * 60;
 
 /** `sign-in` creates a session; `connect` adds a calendar account for a signed-in owner. */

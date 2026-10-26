@@ -290,7 +290,7 @@ export class AccountSync extends DurableObject<Env> {
    */
   async googleChanged(channelId: string): Promise<void> {
     const accountId = this.accountIdOrNull();
-    if (!accountId) return;
+    if (!accountId || (await this.retiring())) return;
     const calendarId = this.storedWatches().find((watch) => watch.id === channelId)?.calendarId;
     if (!calendarId) {
       await notifyChange(this.env, accountId);
@@ -315,7 +315,7 @@ export class AccountSync extends DurableObject<Env> {
    * its writes only the debounce delay gives that time.
    */
   async graphChanged(eventIds: string[]): Promise<void> {
-    if (!this.accountIdOrNull()) return;
+    if (!this.accountIdOrNull() || (await this.retiring())) return;
     const now = Date.now();
     await this.ctx.blockConcurrencyWhile(async () => {
       const queued =
@@ -341,6 +341,15 @@ export class AccountSync extends DurableObject<Env> {
    * check found only our own writes and so made no subrequest.
    */
   private async runChangeCheck(accountId: string): Promise<boolean> {
+    if (await this.retiring()) {
+      // The account is going: its changes concern no one, so neither read nor report them.
+      await this.ctx.storage.delete([
+        NOTIFIED_EVENTS_KEY,
+        CHANGED_CALENDARS_KEY,
+        SYNC_REQUEST_RETRY_KEY,
+      ]);
+      return false;
+    }
     // Read before the first provider call: a notification during it may set the flag anew.
     const feedOnly = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) !== undefined;
     let delayMs = this.delays().nextRun;
@@ -528,7 +537,7 @@ export class AccountSync extends DurableObject<Env> {
    */
   private async keepRemovalAlarm(): Promise<void> {
     const next = nextRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []);
-    if (!next || (await this.ctx.storage.getAlarm()) !== null) return;
+    if (!next || !this.accountIdOrNull() || (await this.ctx.storage.getAlarm()) !== null) return;
     const at = next.notBefore ?? Date.now();
     const retry = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
     if (retry && retry.at < at) return;
@@ -604,22 +613,37 @@ export class AccountSync extends DurableObject<Env> {
 
   /** Delete tokens and subscriptions, and cancel a pending sync. */
   async forget(): Promise<void> {
-    // Stop the provider's notifications while the tokens still work. Best effort: watches end
-    // on their own within days.
-    try {
-      const client = await this.client();
-      for (const watch of this.storedWatches()) {
-        await client.unwatch(watch).catch((error: unknown) => {
-          console.error("Stopping a watch failed", watch.id, error);
-        });
-      }
-    } catch (error) {
-      console.error("Stopping watches failed", error);
-    }
+    await this.stopWatches();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     // The instance can live on after deleteAll(); give it empty tables again.
     this.migrate();
+  }
+
+  /**
+   * Stop the provider's notifications while the tokens still work. Best effort: watches end on
+   * their own within days. A watch that could not be stopped stays stored for the next try.
+   */
+  private async stopWatches(): Promise<void> {
+    const watches = this.storedWatches();
+    if (watches.length === 0) return;
+    try {
+      const client = await this.client();
+      for (const watch of watches) {
+        try {
+          await client.unwatch(watch);
+          this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
+        } catch (error) {
+          console.error("Stopping a watch failed", watch.id, error);
+        }
+      }
+    } catch (error) {
+      console.error("Stopping watches failed", error);
+    }
+  }
+
+  private async retiring(): Promise<boolean> {
+    return (await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false;
   }
 
   async listCalendars(): Promise<CalendarInfo[]> {
@@ -845,6 +869,8 @@ export class AccountSync extends DurableObject<Env> {
    */
   async retire(): Promise<void> {
     await this.ctx.storage.put(RETIRING_KEY, true);
+    // The removals can take hours if the provider fails; no notifications are needed meanwhile.
+    await this.stopWatches();
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
@@ -860,10 +886,10 @@ export class AccountSync extends DurableObject<Env> {
     // The removal's own alarm runs the job it waits for, even if the clock reads a moment early.
     const ownAlarm = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === REMOVAL_ALARM;
     const job = dueRemoval(queue, Date.now()) ?? (ownAlarm ? nextRemoval(queue) : undefined);
-    if (!job) return (await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false;
+    if (!job) return this.retiring();
     let outcome: "done" | "continue" | "throttled" | "failed" = "done";
     let delayMs = this.delays().nextRun;
-    let backoff = true;
+    let giveUp = false;
     try {
       const result = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
       if (result.throttled) {
@@ -881,20 +907,24 @@ export class AccountSync extends DurableObject<Env> {
         delayMs = throttleDelay;
       } else {
         outcome = "failed";
-        // Refused tokens wait for the user to connect the account again, not for the provider.
-        backoff = !(error instanceof TokenError && RECONNECT_CODES.has(error.code));
+        // Refused tokens wait for a reconnect, but a retiring account has no row to reconnect.
+        giveUp =
+          error instanceof TokenError && RECONNECT_CODES.has(error.code) && (await this.retiring());
       }
     }
     // Throttling is no failed attempt: the job waits for `Retry-After` instead.
-    const attempts = outcome === "failed" ? job.attempts + 1 : job.attempts;
+    const attempts = giveUp
+      ? MAX_REMOVAL_ATTEMPTS
+      : outcome === "failed"
+        ? job.attempts + 1
+        : job.attempts;
     const wait = REMOVAL_BACKOFF_MS[attempts - 1];
+    const waits = outcome === "failed" && wait !== undefined;
     const next: Removal = {
       ruleId: job.ruleId,
       remoteCalendarId: job.remoteCalendarId,
       attempts,
-      ...(outcome === "failed" && backoff && wait !== undefined
-        ? { notBefore: Date.now() + wait }
-        : {}),
+      ...(waits ? { notBefore: Date.now() + wait } : {}),
     };
     // Removals queued during the provider calls are in the stored queue, not in `queue`.
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
@@ -905,8 +935,10 @@ export class AccountSync extends DurableObject<Env> {
       if (outcome === "failed" && attempts < MAX_REMOVAL_ATTEMPTS) return [...others, next];
       return others;
     });
-    // The next alarm runs the rules or a full cycle while this removal waits.
-    await this.setSyncAlarm(Date.now() + delayMs);
+    // After a failed attempt in its own alarm, `keepRemovalAlarm()` sets the next alarm, unless
+    // rules wait. Any other alarm may carry a requested sync, so it goes on to the rules.
+    const rulesWait = ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0;
+    if (!waits || !ownAlarm || rulesWait) await this.setSyncAlarm(Date.now() + delayMs);
     return true;
   }
 
@@ -926,7 +958,17 @@ export class AccountSync extends DurableObject<Env> {
 
   private async runAlarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
-    if (!accountId) return;
+    if (!accountId) {
+      // Without tokens no removal can run, for example after `forget()` or a new jurisdiction.
+      if ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) !== undefined) {
+        console.error(
+          "Dropping queued removals: no tokens",
+          this.ctx.id.name ?? this.ctx.id.toString(),
+        );
+        await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
+      }
+      return;
+    }
     // Change feeds come first, then due removals, one per alarm; the rules follow once none is due.
     if (await this.runChangeCheck(accountId)) return;
     if (await this.runRemoval()) return;

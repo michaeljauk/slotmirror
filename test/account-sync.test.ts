@@ -533,6 +533,11 @@ async function alarmAt(stub: DurableObjectStub): Promise<number | null> {
   return runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
 }
 
+/** The mark of the pending alarm: "removal", "retry", true for change checks, or undefined. */
+async function alarmKind(stub: DurableObjectStub): Promise<unknown> {
+  return runInDurableObject(stub, (_instance, state) => state.storage.get("feedOnlyAlarm"));
+}
+
 describe("alarm queue", () => {
   it("runs one rule per alarm and schedules the next one", async () => {
     const { stub, ruleId } = await setupRule("acc-queue");
@@ -601,16 +606,24 @@ describe("alarm queue", () => {
       const [job] = (await removalsOf(stub)) ?? [];
       expect(job?.attempts).toBe(attempt);
       waits.push((job?.notBefore ?? 0) - Date.now());
-      // The next alarm is for the rules; the alarm for the waiting removal follows it.
-      await runDurableObjectAlarm(stub);
+      // The queueing alarm may carry a requested sync, so the rules follow the first attempt. A
+      // failed attempt in the removal's own alarm starts no sync.
+      if (attempt === 1) {
+        expect(await alarmKind(stub)).toBeUndefined();
+        await runDurableObjectAlarm(stub);
+      }
+      expect(await alarmKind(stub)).toBe("removal");
       expect(await alarmAt(stub)).toBe(job?.notBefore);
     }
     expect(waits.map((wait) => Math.round(wait / 60_000))).toEqual([1, 10, 120, 720]);
     expect(graph.methods).toEqual(["DELETE", "DELETE", "DELETE", "DELETE"]);
 
+    // After the last attempt the job ends, and a full cycle follows as after any removal.
     await runDurableObjectAlarm(stub);
     expect(graph.methods).toHaveLength(5);
     expect(await removalsOf(stub)).toBeUndefined();
+    expect(await alarmKind(stub)).toBeUndefined();
+    expect(await alarmAt(stub)).not.toBeNull();
   });
 
   it("runs the account's rules while a removal waits for its next attempt", async () => {
@@ -634,13 +647,24 @@ describe("alarm queue", () => {
     expect(job?.attempts).toBe(1);
     expect(await alarmAt(stub)).toBe(job?.notBefore);
 
+    // A queued rule runs right after the next failed attempt, before the removal's next alarm.
+    await runInDurableObject(stub, (_instance, state) => state.storage.put("ruleQueue", [ruleId]));
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect(await alarmKind(stub)).toBeUndefined();
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(2);
+    const [waiting] = (await removalsOf(stub)) ?? [];
+    expect(await alarmAt(stub)).toBe(waiting?.notBefore);
+
     // The provider is back: the removal's own alarm removes the block, then a full cycle runs.
     graph.deleteStatus = 204;
     await runDurableObjectAlarm(stub);
-    expect(deletes()).toBe(2);
+    expect(deletes()).toBe(3);
     expect(await removalsOf(stub)).toBeUndefined();
     await runDurableObjectAlarm(stub);
-    expect(await auditOf(ruleId, "sync_run")).toHaveLength(2);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(3);
   });
 
   it("keeps the tokens of a retiring account while a removal waits", async () => {
@@ -683,7 +707,7 @@ describe("alarm queue", () => {
     expect(await alarmAt(stub)).toBe(job?.notBefore);
   });
 
-  it("retries a removal soon, without backoff, when the provider refuses the tokens", async () => {
+  it("backs off a removal whose tokens are refused, so that a reconnect can still finish it", async () => {
     const stub = await bareAccount("acc-removal-token", 0);
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -692,10 +716,144 @@ describe("alarm queue", () => {
 
     await stub.queueRemoval("gone-rule", TARGET_CAL);
     await runDurableObjectAlarm(stub);
-    expect(await removalsOf(stub)).toEqual([
-      { ruleId: "gone-rule", remoteCalendarId: TARGET_CAL, attempts: 1 },
+    const [job] = (await removalsOf(stub)) ?? [];
+    expect(job?.attempts).toBe(1);
+    expect(Math.round(((job?.notBefore ?? 0) - Date.now()) / 60_000)).toBe(1);
+  });
+
+  it("gives up the removals of a retiring account at once when its tokens are refused", async () => {
+    const stub = await bareAccount("acc-retire-token", 0);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ error: "invalid_grant" }, { status: 400 }),
+    );
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await stub.retire();
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toBeUndefined();
+    await runDurableObjectAlarm(stub);
+    expect(await stub.hasTokens()).toBe(false);
+  });
+
+  it("drops queued removals and sets no alarm in an instance without tokens", async () => {
+    const stub = env.ACCOUNT_SYNC.getByName("acc-no-tokens");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await removalsOf(stub)).toBeUndefined();
+    expect(await alarmAt(stub)).toBeNull();
+  });
+
+  it("lets an earlier retry of a sync request take the alarm from a waiting removal", async () => {
+    const stub = await bareAccount("acc-removal-retry-first");
+    await stuckBlockGraph(500);
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    const at = Date.now() + 30_000;
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("syncRequestRetry", { attempts: 1, at }),
+    );
+
+    await runDurableObjectAlarm(stub);
+    expect(await alarmKind(stub)).toBe("retry");
+    expect(await alarmAt(stub)).toBe(at);
+  });
+
+  it("sets the alarm of a waiting removal again after a requested sync replaced it", async () => {
+    const stub = await bareAccount("acc-removal-replaced");
+    await stuckBlockGraph(500);
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    const [job] = (await removalsOf(stub)) ?? [];
+    expect(await alarmKind(stub)).toBe("removal");
+
+    await stub.requestSync();
+    expect(await alarmKind(stub)).toBeUndefined();
+    expect(await alarmAt(stub)).not.toBe(job?.notBefore);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmKind(stub)).toBe("removal");
+    expect(await alarmAt(stub)).toBe(job?.notBefore);
+  });
+
+  it("stops the watches of a retiring account and ignores its notifications", async () => {
+    const stub = await bareAccount("acc-retire-quiet");
+    const tag = await ruleTagFor("gone-rule");
+    const [template] = fixture.value;
+    const calls: string[] = [];
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/subscriptions/sub-ok")) return new Response(null, { status: 204 });
+      if (url.includes("/subscriptions/")) return new Response("down", { status: 500 });
+      if (url.includes("calendarView")) {
+        return Response.json({
+          value: [
+            {
+              ...template,
+              id: "stuck",
+              singleValueExtendedProperties: [
+                {
+                  id: MARKER_PROPERTY_ID,
+                  value: `${tag}.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef`,
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/$batch")) {
+        const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 500 })),
+        });
+      }
+      return Response.json({ value: [] });
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      for (const id of ["sub-ok", "sub-stuck"]) {
+        state.storage.sql.exec(
+          "INSERT INTO subscriptions (remote_id, calendar_id, resource_id, expires_at) VALUES (?, ?, NULL, ?)",
+          id,
+          TARGET_CAL,
+          Date.now() + 86_400_000,
+        );
+      }
+    });
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    // A notification that arrived before the account started to retire.
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("notifiedEvents", { other: Date.now() }),
+    );
+
+    await stub.retire();
+    expect(calls.filter((call) => call.includes("/subscriptions/"))).toHaveLength(2);
+    const watches = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql
+        .exec<{ remote_id: string }>("SELECT remote_id FROM subscriptions")
+        .toArray(),
+    );
+    expect(watches.map((row) => row.remote_id)).toEqual(["sub-stuck"]);
+
+    const before = calls.length;
+    await stub.graphChanged(["later"]);
+    await stub.googleChanged("sub-stuck");
+    const queued = await runInDurableObject(stub, async (_instance, state) => [
+      await state.storage.get("notifiedEvents"),
+      await state.storage.get("changedCalendars"),
     ]);
-    expect(await alarmIn(stub)).toBeGreaterThan(590_000);
+    expect(queued).toEqual([{ other: expect.any(Number) }, undefined]);
+    await runDurableObjectAlarm(stub);
+    expect(calls).toHaveLength(before);
+    expect(
+      await runInDurableObject(stub, (_i, state) => state.storage.get("notifiedEvents")),
+    ).toBeUndefined();
+    expect(await alarmKind(stub)).toBe("removal");
+    expect(await stub.hasTokens()).toBe(true);
   });
 
   it("keeps rules that a tick queues while a rule runs", async () => {

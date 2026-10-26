@@ -109,6 +109,9 @@ const FEED_ONLY_ALARM_KEY = "feedOnlyAlarm";
 
 const RETRY_ALARM = "retry";
 
+/** Mark of an alarm that only waits for a removal's next attempt. */
+const REMOVAL_ALARM = "removal";
+
 /**
  * Durable Object storage key of sync requests that failed after a change: the accounts (all that
  * the change concerns if unknown), the failed attempts, and when to try again.
@@ -161,17 +164,42 @@ const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
 /** Durable Object storage key: forget the tokens once every queued removal ran. */
 const RETIRING_KEY = "retiring";
 
+/** Durable Object storage key: the retiring account tried to stop its watches; `forget()` retries. */
+const WATCHES_TRIED_KEY = "watchesTried";
+
 /** Give up on a removal after this many failed attempts; the blocks then stay. */
 const MAX_REMOVAL_ATTEMPTS = 5;
+
+/**
+ * Wait after the first, second, third and fourth failed attempt of a removal. The rule is gone, so
+ * no later run removes its blocks: the attempts span a provider outage of about 14 hours.
+ */
+const REMOVAL_BACKOFF_MS = [60_000, 10 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_000];
 
 interface Removal {
   ruleId: string;
   remoteCalendarId: string;
   attempts: number;
+  /** After a failed attempt: do not try again before this time. */
+  notBefore?: number;
 }
 
 function sameRemoval(a: Removal, b: Removal): boolean {
   return a.ruleId === b.ruleId && a.remoteCalendarId === b.remoteCalendarId;
+}
+
+/** The first queued removal that may run at `now`. */
+function dueRemoval(queue: Removal[], now: number): Removal | undefined {
+  return queue.find((job) => (job.notBefore ?? 0) <= now);
+}
+
+/** The queued removal that may run first. */
+function nextRemoval(queue: Removal[]): Removal | undefined {
+  let next: Removal | undefined;
+  for (const job of queue) {
+    if (next === undefined || (job.notBefore ?? 0) < (next.notBefore ?? 0)) next = job;
+  }
+  return next;
 }
 
 /** Refresh the access token this long before it expires. */
@@ -287,7 +315,7 @@ export class AccountSync extends DurableObject<Env> {
    */
   async googleChanged(channelId: string): Promise<void> {
     const accountId = this.accountIdOrNull();
-    if (!accountId) return;
+    if (!accountId || (await this.retiring())) return;
     const calendarId = this.storedWatches().find((watch) => watch.id === channelId)?.calendarId;
     if (!calendarId) {
       await notifyChange(this.env, accountId);
@@ -312,7 +340,7 @@ export class AccountSync extends DurableObject<Env> {
    * its writes only the debounce delay gives that time.
    */
   async graphChanged(eventIds: string[]): Promise<void> {
-    if (!this.accountIdOrNull()) return;
+    if (!this.accountIdOrNull() || (await this.retiring())) return;
     const now = Date.now();
     await this.ctx.blockConcurrencyWhile(async () => {
       const queued =
@@ -338,6 +366,15 @@ export class AccountSync extends DurableObject<Env> {
    * check found only our own writes and so made no subrequest.
    */
   private async runChangeCheck(accountId: string): Promise<boolean> {
+    if (await this.retiring()) {
+      // The account is going: its changes concern no one, so neither read nor report them.
+      await this.ctx.storage.delete([
+        NOTIFIED_EVENTS_KEY,
+        CHANGED_CALENDARS_KEY,
+        SYNC_REQUEST_RETRY_KEY,
+      ]);
+      return false;
+    }
     // Read before the first provider call: a notification during it may set the flag anew.
     const feedOnly = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) !== undefined;
     let delayMs = this.delays().nextRun;
@@ -369,7 +406,8 @@ export class AccountSync extends DurableObject<Env> {
     if (otherWork) await this.setSyncAlarm(Date.now() + delayMs);
     else if (left) {
       // The alarm is for the checks now; other work must not take it for the retry's.
-      if ((await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === RETRY_ALARM) {
+      const kind = await this.ctx.storage.get(FEED_ONLY_ALARM_KEY);
+      if (kind === RETRY_ALARM || kind === REMOVAL_ALARM) {
         await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, true);
       }
       await this.ctx.storage.setAlarm(Date.now() + delayMs);
@@ -378,15 +416,17 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * True if sync work waits: a full cycle (the alarm's own, or a requested one), rules, removals,
-   * or the account's retirement.
+   * True if sync work waits: a full cycle (the alarm's own, or a requested one), rules, due
+   * removals, or the account's retirement. A removal that waits after a failed attempt has its own
+   * alarm (`keepRemovalAlarm()`).
    */
   private async hasSyncWork(feedOnly: boolean): Promise<boolean> {
     return (
       !feedOnly ||
       ((await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) ?? false) ||
       ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
-      ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []).length > 0 ||
+      dueRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [], Date.now()) !==
+        undefined ||
       ((await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false)
     );
   }
@@ -508,13 +548,30 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * The pending alarm, or null if it only waits for a retry of a failed sync request. Other work
-   * may then set an earlier alarm; the alarm sets the retry's again when it is done.
+   * The pending alarm, or null if it only waits for a retry of a failed sync request or for a
+   * removal's next attempt. Other work may then set an earlier alarm; the alarm sets the waiting
+   * one again when it is done.
    */
   private async pendingAlarm(): Promise<number | null> {
     const pending = await this.ctx.storage.getAlarm();
     const kind = await this.ctx.storage.get(FEED_ONLY_ALARM_KEY);
-    return kind === RETRY_ALARM ? null : pending;
+    return kind === RETRY_ALARM || kind === REMOVAL_ALARM ? null : pending;
+  }
+
+  /**
+   * Keep an alarm for a removal that waits after a failed attempt once no other alarm is set. An
+   * earlier retry of a failed sync request goes first; this alarm is set after it.
+   */
+  private async keepRemovalAlarm(): Promise<void> {
+    const next = nextRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []);
+    if (!next || !this.accountIdOrNull() || (await this.ctx.storage.getAlarm()) !== null) return;
+    const at = next.notBefore ?? Date.now();
+    const retry = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
+    if (retry && retry.at < at) return;
+    // The mark lets other work replace this alarm (`pendingAlarm()`), and it keeps the alarm from
+    // going on to a full cycle.
+    await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, REMOVAL_ALARM);
+    await this.ctx.storage.setAlarm(at);
   }
 
   /** Keep an alarm for a pending retry of a failed sync request once no other alarm is set. */
@@ -583,22 +640,38 @@ export class AccountSync extends DurableObject<Env> {
 
   /** Delete tokens and subscriptions, and cancel a pending sync. */
   async forget(): Promise<void> {
-    // Stop the provider's notifications while the tokens still work. Best effort: watches end
-    // on their own within days.
-    try {
-      const client = await this.client();
-      for (const watch of this.storedWatches()) {
-        await client.unwatch(watch).catch((error: unknown) => {
-          console.error("Stopping a watch failed", watch.id, error);
-        });
-      }
-    } catch (error) {
-      console.error("Stopping watches failed", error);
-    }
+    await this.stopWatches();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     // The instance can live on after deleteAll(); give it empty tables again.
     this.migrate();
+  }
+
+  /**
+   * Stop the provider's notifications while the tokens still work. Best effort: a watch that could
+   * not be stopped stays stored for the next try, and ends on its own within days. A watch the
+   * provider no longer knows counts as stopped.
+   */
+  private async stopWatches(): Promise<void> {
+    const watches = this.storedWatches();
+    if (watches.length === 0) return;
+    try {
+      const client = await this.client();
+      for (const watch of watches) {
+        try {
+          await client.unwatch(watch);
+          this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
+        } catch (error) {
+          console.error("Stopping a watch failed", watch.id, error);
+        }
+      }
+    } catch (error) {
+      console.error("Stopping watches failed", error);
+    }
+  }
+
+  private async retiring(): Promise<boolean> {
+    return (await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false;
   }
 
   async listCalendars(): Promise<CalendarInfo[]> {
@@ -661,18 +734,21 @@ export class AccountSync extends DurableObject<Env> {
     ) {
       await current.catch(() => undefined);
     }
-    return this.startRun(ruleId);
+    return this.startRun(ruleId, { fromAlarm: true });
   }
 
-  private startRun(ruleId: string): Promise<RunResult> {
-    const run: Promise<RunResult> = this.runRuleOnce(ruleId, {}).finally(() => {
+  private startRun(ruleId: string, options: { fromAlarm?: boolean } = {}): Promise<RunResult> {
+    const run: Promise<RunResult> = this.runRuleOnce(ruleId, options).finally(() => {
       if (this.runningRules.get(ruleId) === run) this.runningRules.delete(ruleId);
     });
     this.runningRules.set(ruleId, run);
     return run;
   }
 
-  private async runRuleOnce(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
+  private async runRuleOnce(
+    ruleId: string,
+    options: { dryRun?: boolean; fromAlarm?: boolean },
+  ): Promise<RunResult> {
     try {
       return await this.executeRule(ruleId, options);
     } catch (error) {
@@ -682,7 +758,10 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  private async executeRule(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
+  private async executeRule(
+    ruleId: string,
+    options: { dryRun?: boolean; fromAlarm?: boolean },
+  ): Promise<RunResult> {
     const startedAt = Date.now();
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
@@ -789,7 +868,10 @@ export class AccountSync extends DurableObject<Env> {
     }
     const remaining = plan.actions.length - applied - failed;
     if (remaining > 0) {
-      // Continue soon; the next run plans again from the calendars, so nothing is lost.
+      // Continue soon; the next run plans again from the calendars, so nothing is lost. The alarm
+      // keeps its own rule queued; a run outside it owes a full cycle, which no failing removal
+      // in the next alarm can drop.
+      if (!options.fromAlarm) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
       await this.setSyncAlarm(Date.now() + (retryAfterMs ?? this.delays().nextRun));
     }
     return audit({
@@ -810,7 +892,7 @@ export class AccountSync extends DurableObject<Env> {
   async removeRuleBlocks(
     ruleId: string,
     remoteCalendarId: string,
-  ): Promise<{ removed: number; remaining: number; throttled: boolean }> {
+  ): Promise<{ removed: number; remaining: number; throttled: boolean; retryAfterMs?: number }> {
     const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
     const blocks = await target.existingBlocks(remoteCalendarId, cleanupWindow(), [ruleTag]);
@@ -820,17 +902,20 @@ export class AccountSync extends DurableObject<Env> {
       marker: block.marker,
     }));
     let removed = 0;
-    let throttled = false;
+    let retryAfterMs: number | undefined;
     for (const batch of chunk(actions, target.batchLimit).slice(0, MAX_BATCHES_PER_RUN)) {
       const result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
       if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
       removed += batch.length - result.failed - result.throttled;
       if (result.throttled > 0) {
-        throttled = true;
+        // Further batches would only extend the penalty.
+        retryAfterMs = clampRetryAfter(result.retryAfterMs);
         break;
       }
     }
-    return { removed, remaining: actions.length - removed, throttled };
+    const remaining = actions.length - removed;
+    if (retryAfterMs === undefined) return { removed, remaining, throttled: false };
+    return { removed, remaining, throttled: true, retryAfterMs };
   }
 
   /**
@@ -848,8 +933,9 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * The account is going: remove the queued blocks first, then stop the watches and forget the
-   * tokens. The removals need the tokens, so the account cannot go at once.
+   * The account is going: its alarms stop the watches, remove the queued blocks, and then forget
+   * the tokens. The removals need the tokens, so the account cannot go at once. This call only
+   * writes storage, so that the request never waits for a provider.
    */
   async retire(): Promise<void> {
     await this.ctx.storage.put(RETIRING_KEY, true);
@@ -858,33 +944,75 @@ export class AccountSync extends DurableObject<Env> {
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
   }
 
-  /** Run one queued removal. Returns false if there was none. */
+  /**
+   * Run one queued removal that is due. Returns false if none is due, so that the account's rules
+   * run while a removal waits after a failed attempt. A retiring account waits for its removals.
+   */
   private async runRemoval(): Promise<boolean> {
     const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
-    const [job] = queue;
-    if (!job) return false;
-    let outcome: "done" | "continue" | "retry" = "done";
+    if (queue.length === 0) return false;
+    // The removal's own alarm runs the job it waits for, even if the clock reads a moment early.
+    const ownAlarm = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === REMOVAL_ALARM;
+    const job = dueRemoval(queue, Date.now()) ?? (ownAlarm ? nextRemoval(queue) : undefined);
+    if (!job) return this.retiring();
+    let outcome: "done" | "continue" | "throttled" | "failed" = "done";
     let delayMs = this.delays().nextRun;
+    let giveUp = false;
     try {
       const result = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
-      // A run without progress and without throttling failed, for example with 403 on every
-      // block. It counts as an attempt, so that the job cannot block the account's syncs forever.
-      if (result.remaining > 0 && (result.removed > 0 || result.throttled)) outcome = "continue";
-      else if (result.remaining > 0 && job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) outcome = "retry";
+      if (result.throttled) {
+        outcome = "continue";
+        delayMs = result.retryAfterMs ?? delayMs;
+      } else if (result.remaining > 0) {
+        // A run without progress failed, for example with 403 on every block.
+        outcome = result.removed > 0 ? "continue" : "failed";
+      }
     } catch (error) {
       console.error("Queued removal failed", job.ruleId, error);
       const throttleDelay = throttleDelayMs(error);
-      if (throttleDelay !== null) delayMs = throttleDelay;
-      if (throttleDelay !== null || job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) outcome = "retry";
+      if (throttleDelay !== null) {
+        outcome = "throttled";
+        delayMs = throttleDelay;
+      } else {
+        outcome = "failed";
+        // Refused tokens wait for a reconnect, but a retiring account has no row to reconnect.
+        giveUp =
+          error instanceof TokenError && RECONNECT_CODES.has(error.code) && (await this.retiring());
+      }
     }
+    // Throttling is no failed attempt: the job waits for `Retry-After` instead.
+    const attempts = giveUp
+      ? MAX_REMOVAL_ATTEMPTS
+      : outcome === "failed"
+        ? job.attempts + 1
+        : job.attempts;
+    const wait = REMOVAL_BACKOFF_MS[attempts - 1];
+    const waits = outcome === "failed" && wait !== undefined;
+    const next: Removal = {
+      ruleId: job.ruleId,
+      remoteCalendarId: job.remoteCalendarId,
+      attempts,
+      ...(waits ? { notBefore: Date.now() + wait } : {}),
+    };
+    const ended = outcome === "done" || (outcome === "failed" && attempts >= MAX_REMOVAL_ATTEMPTS);
+    // The removed blocks may have hidden blocks of other rules. The mark keeps the full cycle owed
+    // even if the next removal fails and only sets its own alarm.
+    if (ended) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
     // Removals queued during the provider calls are in the stored queue, not in `queue`.
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
       const others = current.filter((queued) => !sameRemoval(queued, job));
-      if (outcome === "continue") return [job, ...others];
-      if (outcome === "retry") return [...others, { ...job, attempts: job.attempts + 1 }];
+      if (outcome === "continue") return [next, ...others];
+      if (outcome === "throttled") return [...others, next];
+      // After the last attempt the job is dropped, so that it cannot hold the account forever.
+      if (outcome === "failed" && attempts < MAX_REMOVAL_ATTEMPTS) return [...others, next];
       return others;
     });
-    await this.setSyncAlarm(Date.now() + delayMs);
+    // After a failed attempt, `keepRemovalAlarm()` sets the next alarm, unless rules or a requested
+    // full cycle wait.
+    const syncWaits =
+      ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
+      ((await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) ?? false);
+    if (!waits || syncWaits) await this.setSyncAlarm(Date.now() + delayMs);
     return true;
   }
 
@@ -897,14 +1025,38 @@ export class AccountSync extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     await this.runAlarm();
-    // After the last rule or check no alarm is left; a pending retry still needs one.
+    // After the last rule or check no alarm is left; a waiting removal or retry still needs one.
+    await this.keepRemovalAlarm();
     await this.keepRetryAlarm();
   }
 
   private async runAlarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
-    if (!accountId) return;
-    // Change feeds come first, then removals, one per alarm; the rules follow once none is left.
+    if (!accountId) {
+      // Without tokens no removal can run, for example after `forget()` or a new jurisdiction.
+      if ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) !== undefined) {
+        console.error(
+          "Dropping queued removals: no tokens",
+          this.ctx.id.name ?? this.ctx.id.toString(),
+        );
+        await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
+      }
+      return;
+    }
+    // A retiring account stops its watches in an alarm of their own, so that `retire()` never
+    // waits for a provider. Its removals can take hours; no notifications are needed meanwhile.
+    // One try only, so that a watch that cannot be stopped does not cost every alarm a request.
+    if (
+      (await this.retiring()) &&
+      this.storedWatches().length > 0 &&
+      (await this.ctx.storage.get(WATCHES_TRIED_KEY)) === undefined
+    ) {
+      await this.ctx.storage.put(WATCHES_TRIED_KEY, true);
+      await this.stopWatches();
+      await this.setSyncAlarm(Date.now() + this.delays().nextRun);
+      return;
+    }
+    // Change feeds come first, then due removals, one per alarm; the rules follow once none is due.
     if (await this.runChangeCheck(accountId)) return;
     if (await this.runRemoval()) return;
     if (await this.ctx.storage.get<boolean>(RETIRING_KEY)) {

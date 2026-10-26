@@ -2,7 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
-import { hashFeedToken, tokenMatches } from "../src/feeds";
+import { feedResponse, hashFeedToken, tokenMatches } from "../src/feeds";
 import { deleteUser, removeAccounts, setUserActive } from "../src/offboarding";
 import fixture from "./fixtures/graph/calendar-view.json";
 import { BASE, signIn } from "./helpers";
@@ -374,12 +374,35 @@ describe("feed authorization", () => {
     expect(html).not.toContain('value="shared-colleague"');
   });
 
-  it("leaves out a calendar that is no longer owned when the feed is fetched", async () => {
+  it("gives no partial feed once a calendar is no longer owned, and names it", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("unowned");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, owned) VALUES ('unowned-2', ?, 'remote-unowned-2', 'Handed over', 1)",
+    )
+      .bind(accountId)
+      .run();
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId, "unowned-2"]));
+    await env.DB.prepare("UPDATE calendars SET owned = 0 WHERE id = 'unowned-2'").run();
+    const response = await exports.default.fetch(url);
+    expect(response.status).toBe(503);
+    expect(reads).toHaveLength(0);
+    expect((await feedRow(parts(url).feedId))?.error_calendar_id).toBe("unowned-2");
+    const html = await (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
+    expect(html).toContain("“Handed over” cannot be read any more");
+  });
+
+  it("keeps the feeds and answers 503 while the access settings admit nobody", async () => {
     fakeGraph();
-    const { cookie, calendarId } = await setup("unowned");
+    const { cookie, calendarId } = await setup("empty-policy");
     const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
-    await env.DB.prepare("UPDATE calendars SET owned = 0 WHERE id = ?").bind(calendarId).run();
-    expect((await exports.default.fetch(url)).status).toBe(404);
+    const { feedId, token } = parts(url);
+    // A redeploy with the empty ALLOWED_* values of the shipped wrangler.jsonc.
+    const unset = { ...env, ALLOWED_EMAILS: "", ALLOWED_DOMAINS: "", ADMIN_EMAILS: "" };
+    const response = await feedResponse(unset, feedId, `${token}.ics`, BASE);
+    expect(response.status).toBe(503);
+    expect(await feedRow(feedId)).not.toBeNull();
+    expect((await exports.default.fetch(url)).status).toBe(200);
   });
 
   it("drops a calendar whose account moved to another user", async () => {
@@ -454,6 +477,82 @@ describe("feed cache", () => {
 });
 
 describe("feed and provider limits", () => {
+  it("answers a failing feed from the row for 15 minutes: five fetches, one provider call", async () => {
+    const reads = fakeGraph(() =>
+      Response.json({ error: { code: "ErrorItemNotFound" } }, { status: 404 }),
+    );
+    const { cookie, calendarId, accountId } = await setup("negative");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    noCacheApi();
+    for (let i = 0; i < 5; i++) {
+      await clearSourceCache(accountId);
+      const response = await exports.default.fetch(url);
+      expect(response.status).toBe(503);
+      expect(Number(response.headers.get("retry-after"))).toBeGreaterThan(0);
+    }
+    expect(reads).toHaveLength(1);
+    expect((await feedRow(feedId))?.error_calendar_id).toBe(calendarId);
+  });
+
+  it("also answers other read failures from the row", async () => {
+    const reads = fakeGraph(() => new Response("boom", { status: 500 }));
+    const { cookie, calendarId, accountId } = await setup("negative-500");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    noCacheApi();
+    for (let i = 0; i < 5; i++) {
+      await clearSourceCache(accountId);
+      expect((await exports.default.fetch(url)).status).toBe(503);
+    }
+    expect(reads).toHaveLength(1);
+  });
+
+  it("never shortens a longer penalty with a shorter one", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: { code: "ApplicationThrottled" } }), {
+          status: 429,
+          headers: { "retry-after": "5" },
+        }),
+    );
+    const { accountId } = await setup("shorter");
+    await throttle(accountId, 300_000);
+    const stub = env.ACCOUNT_SYNC.getByName(accountId);
+    // A sync call does not wait for the penalty; its own 429 asks for 5 seconds only.
+    const refused = await stub.listCalendars().then(
+      () => false,
+      () => true,
+    );
+    expect(refused).toBe(true);
+    const until = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<number>("throttledUntil"),
+    );
+    expect((until ?? 0) - Date.now()).toBeGreaterThan(250_000);
+  });
+
+  it("lets only one of two concurrent feed reads reach a throttling provider", async () => {
+    const reads = fakeGraph(() => undefined);
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      reads.push(url);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return new Response(JSON.stringify({ error: { code: "ApplicationThrottled" } }), {
+        status: 429,
+        headers: { "retry-after": "120" },
+      });
+    });
+    const { cookie, calendarId } = await setup("concurrent");
+    const short = await feedUrlFrom(await createFeed(cookie, [calendarId], "30"));
+    const long = await feedUrlFrom(await createFeed(cookie, [calendarId], "60"));
+    noCacheApi();
+    const responses = await Promise.all([
+      exports.default.fetch(short),
+      exports.default.fetch(long),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([503, 503]);
+    expect(reads).toHaveLength(1);
+  });
+
   it("answers 503 with the remaining wait while the account is throttled and no copy exists", async () => {
     const reads = fakeGraph();
     const { cookie, calendarId, accountId } = await setup("penalty");
@@ -531,6 +630,7 @@ describe("feed and provider limits", () => {
     );
     expect(removed.status).toBe(302);
     expect((await feedRow(feedId))?.error_calendar_id).toBeNull();
+    expect((await feedRow(feedId))?.error_until).toBeNull();
     await clearSourceCache(accountId);
     expect((await exports.default.fetch(url)).status).toBe(200);
   });
@@ -662,5 +762,26 @@ describe("feed lifecycle", () => {
     expect(html).toContain("Free/busy feed");
     expect(html).toContain(`/feeds/${parts(url).feedId}/rotate`);
     expect(html).not.toContain(parts(url).token);
+  });
+});
+
+describe("feed calendar removal", () => {
+  it("records the removal of the last calendar as the user's own choice", async () => {
+    fakeGraph();
+    const { cookie, calendarId, user } = await setup("last-cal");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    const response = await exports.default.fetch(
+      `${BASE}/feeds/${feedId}/calendars/${calendarId}/remove`,
+      { method: "POST", headers: { cookie }, redirect: "manual" },
+    );
+    expect(response.status).toBe(302);
+    expect(await feedRow(feedId)).toBeNull();
+    const audit = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'feed_deleted'",
+    )
+      .bind(user.id)
+      .first<{ detail: string }>();
+    expect(JSON.parse(audit?.detail ?? "{}")).toMatchObject({ feedId, by: "calendar_removed" });
   });
 });

@@ -1,6 +1,7 @@
 import { errorCode, recordAudit } from "./audit";
 import type { FeedRead } from "./account-sync";
-import { ruleOptionsSchema } from "./config";
+import { accessPolicySchema, DEFAULT_ORG_ID, policyAdmitsAnyone } from "./access";
+import { ruleOptionsSchema, setupStatus } from "./config";
 import { accountSync } from "./durable";
 import { i18nFor, isLocale, LOCALES, type Locale } from "./i18n";
 import { renderBusyCalendar, type BusyEvent } from "./ics";
@@ -268,21 +269,27 @@ export async function removeFeedCalendar(
     .bind(feedId, calendarId, user.id)
     .run();
   if (removed.meta.changes === 0) return false;
+  // The next fetch reads again instead of answering from the stored failure.
   await env.DB.prepare(
-    `UPDATE feeds SET error_calendar_id = NULL
+    `UPDATE feeds SET error_calendar_id = NULL, error_until = NULL
      WHERE id = ? AND user_id = ? AND error_calendar_id = ?`,
   )
     .bind(feedId, user.id, calendarId)
     .run();
-  await deleteEmptyFeeds(env, user);
+  await deleteEmptyFeeds(env, user, "calendar_removed");
   return true;
 }
 
 /**
- * Why a feed went: its user deleted it, its last calendar left, or its user was deactivated or is
- * no longer admitted by the access policy.
+ * Why a feed went: its user deleted it, its last calendar left with an account or by the user's
+ * choice, or its user was deactivated or is no longer admitted by the access policy.
  */
-type FeedDeletedBy = "self" | "account_removed" | "user_deactivated" | "user_not_admitted";
+type FeedDeletedBy =
+  | "self"
+  | "account_removed"
+  | "calendar_removed"
+  | "user_deactivated"
+  | "user_not_admitted";
 
 /** Delete a feed of the user. Returns false if the user has no such feed. */
 export async function deleteFeed(
@@ -326,6 +333,7 @@ export async function revokeFeeds(
 export async function deleteEmptyFeeds(
   env: Env,
   user: { id: string; orgId: string },
+  by: "account_removed" | "calendar_removed" = "account_removed",
 ): Promise<void> {
   const { results } = await env.DB.prepare(
     `SELECT f.id FROM feeds f
@@ -333,7 +341,7 @@ export async function deleteEmptyFeeds(
   )
     .bind(user.id)
     .all<{ id: string }>();
-  for (const { id } of results) await deleteFeed(env, user, id, "account_removed");
+  for (const { id } of results) await deleteFeed(env, user, id, by);
 }
 
 interface FeedCalendar {
@@ -341,6 +349,8 @@ interface FeedCalendar {
   accountId: string;
   remoteId: string;
   needsReconnect: number;
+  /** 0 once the account no longer owns the calendar, e.g. after it was handed over. */
+  owned: number;
 }
 
 /** Everything a fetch needs, in one D1 read: feed, user, policy, calendars and the last copy. */
@@ -355,12 +365,14 @@ interface FeedRow {
   lastBody: string | null;
   lastRenderedAt: number | null;
   lastKey: string | null;
+  errorCalendarId: string | null;
+  errorUntil: number | null;
   orgId: string;
   email: string;
   tenantId: string | null;
   active: number;
   policy: string;
-  /** JSON array of FeedCalendar: the chosen calendars the user still owns. */
+  /** JSON array of FeedCalendar: the chosen calendars of the user's accounts. */
   calendars: string;
 }
 
@@ -368,14 +380,16 @@ const FEED_SELECT = `
   SELECT f.id, f.user_id AS userId, f.token_hash AS tokenHash, f.uid_salt AS uidSalt,
          f.days_ahead AS daysAhead, f.include_all_day AS includeAllDay, f.locale,
          f.last_body AS lastBody, f.last_rendered_at AS lastRenderedAt, f.last_key AS lastKey,
+         f.error_calendar_id AS errorCalendarId, f.error_until AS errorUntil,
          u.org_id AS orgId, u.email, u.tenant_id AS tenantId, u.active, o.policy,
          (SELECT json_group_array(json_object('id', c.id, 'accountId', c.account_id,
                                               'remoteId', c.remote_id,
-                                              'needsReconnect', a.needs_reconnect))
+                                              'needsReconnect', a.needs_reconnect,
+                                              'owned', c.owned))
           FROM feed_calendars fc
           JOIN calendars c ON c.id = fc.calendar_id
           JOIN accounts a ON a.id = c.account_id
-          WHERE fc.feed_id = f.id AND a.user_id = f.user_id AND c.owned = 1) AS calendars
+          WHERE fc.feed_id = f.id AND a.user_id = f.user_id) AS calendars
   FROM feeds f JOIN users u ON u.id = f.user_id JOIN orgs o ON o.id = u.org_id
   WHERE f.id = ?`;
 
@@ -415,16 +429,18 @@ function forSubscriber(body: BodyInit | null): Response {
 /**
  * Answer a fetch of `/ics/<feedId>/<token>.ics`.
  *
- * 1. One D1 read loads the feed, its user and policy, the calendars the user still owns, and the
- *    last rendered copy. Unknown feeds and wrong tokens both get a plain 404 after the same hash
- *    and comparison.
- * 2. If the user is inactive or no longer admitted, their feeds are deleted: 404.
- * 3. A copy younger than 15 minutes from the same calendars and settings answers at once. Then the
+ * 1. One D1 read loads the feed, its user and policy, the calendars of the user's accounts, the
+ *    last rendered copy and the last failure. Unknown feeds and wrong tokens both get a plain 404
+ *    after the same hash and comparison.
+ * 2. If the user is inactive or no longer admitted, their feeds are deleted: 404. If the access
+ *    settings admit nobody, the setup is broken: 503, and the feeds stay.
+ * 3. A failure in the last 15 minutes answers 503 again, without a read.
+ * 4. A calendar the account no longer owns, or no longer can read, gives 503 and a notice on the
+ *    start page: subscribers never get a partial feed.
+ * 5. A copy younger than 15 minutes from the same calendars and settings answers at once. Then the
  *    Cache API, keyed by feed, token hash and calendar set.
- * 4. Otherwise each calendar is read through its account's Durable Object. While an account is
- *    throttled, the last copy answers, however old; without one, 503 with the remaining wait. A
- *    calendar the account can no longer read gives 503 and a notice on the start page: subscribers
- *    never get a partial feed.
+ * 6. Otherwise each calendar is read through its account's Durable Object. While an account is
+ *    throttled, the last copy answers, however old; without one, 503 with the remaining wait.
  */
 export async function feedResponse(
   env: Env,
@@ -450,6 +466,9 @@ export async function feedResponse(
       policy: feed.policy,
     });
   if (!admitted) {
+    // A policy that admits nobody is a broken setup, e.g. a redeploy with empty ALLOWED_* values.
+    // It must not delete every feed; the feeds wait until the setup is whole again.
+    if (feed.active === 1 && !policyAdmitsSomeone(env, feed)) return unavailable();
     await revokeFeeds(
       env,
       { id: feed.userId, orgId: feed.orgId },
@@ -471,6 +490,24 @@ export async function feedResponse(
     locale,
   ].join("|");
   const sameCopy = feed.lastBody !== null && feed.lastKey === renderKey;
+  // A failed read answers from the row for 15 minutes, so that failures cost no reads either.
+  if ((feed.errorUntil ?? 0) > now.getTime()) {
+    return unavailable((feed.errorUntil ?? 0) - now.getTime());
+  }
+  /** Store a failure; `calendarId` names a calendar for the start page. Then answer 503. */
+  const failed = async (calendarId: string | null) => {
+    const until = now.getTime() + FEED_CACHE_SECONDS * 1000;
+    await env.DB.prepare(
+      "UPDATE feeds SET error_until = ?, error_calendar_id = COALESCE(?, error_calendar_id) WHERE id = ?",
+    )
+      .bind(until, calendarId, feed.id)
+      .run();
+    return unavailable(until - now.getTime());
+  };
+  // A calendar the account no longer owns is not the user's to publish, and a feed without it
+  // would be partial.
+  const unowned = calendars.find((calendar) => calendar.owned !== 1);
+  if (unowned) return failed(unowned.id);
   if (sameCopy && now.getTime() - (feed.lastRenderedAt ?? 0) < FEED_CACHE_SECONDS * 1000) {
     return forSubscriber(feed.lastBody);
   }
@@ -494,7 +531,7 @@ export async function feedResponse(
       read = await accountSync(env, calendar.accountId).readFeedEvents(calendar.remoteId, window);
     } catch (error) {
       console.error("Reading a feed calendar failed", feed.id, calendar.id, errorCode(error));
-      return unavailable();
+      return failed(null);
     }
     if (read.kind === "throttled") {
       // Stale is better than nothing, and no further call may extend the penalty.
@@ -502,10 +539,7 @@ export async function feedResponse(
     }
     if (read.kind === "unavailable") {
       console.error("A feed calendar can no longer be read", feed.id, calendar.id, read.code);
-      await env.DB.prepare("UPDATE feeds SET error_calendar_id = ? WHERE id = ?")
-        .bind(calendar.id, feed.id)
-        .run();
-      return unavailable();
+      return failed(calendar.id);
     }
     reads.push({ calendarId: calendar.id, events: read.events });
   }
@@ -526,7 +560,7 @@ export async function feedResponse(
   });
   await env.DB.prepare(
     `UPDATE feeds SET last_body = ?, last_rendered_at = ?, last_key = ?, cut_at = ?,
-            error_calendar_id = NULL
+            error_calendar_id = NULL, error_until = NULL
      WHERE id = ?`,
   )
     .bind(body, now.getTime(), renderKey, blocks.cutAt, feed.id)
@@ -545,6 +579,20 @@ export async function feedResponse(
     console.error("Caching a feed failed", feed.id, errorCode(error));
   }
   return forSubscriber(body);
+}
+
+/**
+ * True if the access settings of the feed user's org admit anyone. If not, the setup is broken,
+ * not the user removed.
+ */
+function policyAdmitsSomeone(env: Env, feed: { orgId: string; policy: string }): boolean {
+  if (!setupStatus(env).ready) return false;
+  if (feed.orgId === DEFAULT_ORG_ID) return true;
+  try {
+    return policyAdmitsAnyone(accessPolicySchema.parse(JSON.parse(feed.policy)));
+  } catch {
+    return false;
+  }
 }
 
 interface Block {
@@ -571,8 +619,9 @@ function merge(sorted: Block[]): Block[] {
  * block's kind, start and end with the feed's salt: stable while the block stays, different in
  * every feed, and with no link to the events inside it. A moved meeting is a new block.
  *
- * Above MAX_FEED_EVENTS blocks, the oldest past blocks go first, then the latest ones. `cutAt` is
- * then the start of the first block left out at the end, or null if the end is complete.
+ * Above MAX_FEED_EVENTS blocks, past blocks go first, those that ended earliest first; a block
+ * that runs into today is not past. Then the latest blocks go. `cutAt` is then the start of the
+ * first block left out at the end, or null if the end is complete.
  */
 export async function busyEvents(
   reads: { calendarId: string; events: SourceEvent[] }[],
@@ -598,9 +647,17 @@ export async function busyEvents(
   let cutAt: string | null = null;
   const overflow = blocks.length - MAX_FEED_EVENTS;
   if (overflow > 0) {
+    // Past blocks go first, those that ended earliest first. A block that runs into today, such
+    // as a multi-day absence, is not past.
     const today = feed.today.getTime();
-    const past = blocks.filter((block) => block.end <= today).length;
-    blocks = blocks.slice(Math.min(overflow, past));
+    const dropped = new Set(
+      blocks
+        .filter((block) => block.end <= today)
+        .sort((a, b) => a.end - b.end)
+        .slice(0, overflow),
+    );
+    blocks = blocks.filter((block) => !dropped.has(block));
+    // Then the end of the window, at a block boundary.
     if (blocks.length > MAX_FEED_EVENTS) {
       const first = blocks[MAX_FEED_EVENTS];
       if (first) cutAt = new Date(first.start).toISOString();

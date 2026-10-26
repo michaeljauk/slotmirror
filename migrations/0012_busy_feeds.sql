@@ -19,7 +19,8 @@ CREATE TABLE feeds (
   last_rendered_at INTEGER, -- Unix ms
   last_key TEXT, -- calendars and settings the last body was rendered from
   cut_at TEXT, -- set if the last body ends early because of the event cap
-  error_calendar_id TEXT -- a calendar the provider no longer lets the account read
+  error_calendar_id TEXT, -- a calendar the provider no longer lets the account read
+  error_until INTEGER -- Unix ms: until then, a failed read answers again without a new read
 );
 
 CREATE INDEX feeds_user ON feeds (user_id);

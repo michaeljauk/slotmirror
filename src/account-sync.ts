@@ -163,6 +163,13 @@ const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
  */
 const THROTTLED_UNTIL_KEY = "throttledUntil";
 
+/** A feed read reached the provider queue during a penalty; it made no provider call. */
+class PenaltyActive extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("Provider penalty active");
+  }
+}
+
 /** Outcome of a feed read. A throttled or unreadable calendar is an answer, not an error. */
 export type FeedRead =
   | { kind: "events"; events: SourceEvent[] }
@@ -602,11 +609,13 @@ export class AccountSync extends DurableObject<Env> {
     remoteCalendarId: string,
     window: { start: Date; end: Date },
     withBody: boolean,
+    options: { respectPenalty?: boolean } = {},
   ): Promise<SourceEvent[]> {
-    const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}`;
+    // A read that respects the penalty fails differently, so it shares no cache entry with others.
+    const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}|${options.respectPenalty === true}`;
     const cached = this.sourceCache.get(key);
     if (cached && Date.now() - cached.at < SOURCE_CACHE_MS) return cached.events;
-    const events = this.client().then((client) =>
+    const events = this.client(options).then((client) =>
       client.sourceEvents(remoteCalendarId, window, { withBody }),
     );
     this.sourceCache.set(key, { at: Date.now(), events });
@@ -624,21 +633,23 @@ export class AccountSync extends DurableObject<Env> {
     remoteCalendarId: string,
     window: { start: Date; end: Date },
   ): Promise<FeedRead> {
-    const until = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
-    const now = Date.now();
-    if (until > now) return { kind: "throttled", retryAfterMs: until - now };
+    // A quick answer before queueing; the queued call checks again, see `client()`.
+    const left = await this.penaltyLeft();
+    if (left > 0) return { kind: "throttled", retryAfterMs: left };
     try {
       return {
         kind: "events",
-        events: await this.readSourceEvents(remoteCalendarId, window, false),
+        events: await this.readSourceEvents(remoteCalendarId, window, false, {
+          respectPenalty: true,
+        }),
       };
     } catch (error) {
-      const delay = throttleDelayMs(error);
-      if (delay !== null) {
-        // Also noted by `client()`; here before the answer leaves, so that the next read sees it.
-        await this.notePenalty(delay);
-        return { kind: "throttled", retryAfterMs: delay };
+      if (error instanceof PenaltyActive) {
+        return { kind: "throttled", retryAfterMs: error.retryAfterMs };
       }
+      // `client()` has stored the penalty before the error reached this point.
+      const delay = throttleDelayMs(error);
+      if (delay !== null) return { kind: "throttled", retryAfterMs: delay };
       const { status } = error as { status?: unknown };
       if (status === 403 || status === 404 || status === 410) {
         return { kind: "unavailable", code: errorCode(error) };
@@ -647,12 +658,27 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  /** Remember a provider penalty, so that feed reads wait for it. A shorter one never shortens it. */
+  /** Milliseconds left of the current provider penalty, or 0. */
+  private async penaltyLeft(): Promise<number> {
+    const until = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
+    return Math.max(0, until - Date.now());
+  }
+
+  /**
+   * Remember a provider penalty, so that feed reads wait for it. A shorter penalty never shortens
+   * a longer one. Only queued provider calls write the key, one at a time, so the read and the
+   * write cannot interleave with another write. A failure is logged: the sync waits through its
+   * alarm either way.
+   */
   private async notePenalty(delayMs: number | null): Promise<void> {
     if (delayMs === null) return;
-    const until = Date.now() + delayMs;
-    const current = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
-    if (until > current) await this.ctx.storage.put(THROTTLED_UNTIL_KEY, until);
+    try {
+      const until = Date.now() + delayMs;
+      const current = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
+      if (until > current) await this.ctx.storage.put(THROTTLED_UNTIL_KEY, until);
+    } catch (error) {
+      console.error("Recording a provider penalty failed", errorCode(error));
+    }
   }
 
   /** Local load tests only: replace this account's simulated events. */
@@ -1135,7 +1161,7 @@ export class AccountSync extends DurableObject<Env> {
    * waits on the network, the instance accepts other requests, so the queue keeps a read from
    * running next to a write batch.
    */
-  private async client(): Promise<CalendarClient> {
+  private async client(options: { respectPenalty?: boolean } = {}): Promise<CalendarClient> {
     const token = await this.accessToken();
     // Local load tests replace the provider; never active without DEV_FAKE_CALENDARS=1.
     const provider =
@@ -1143,13 +1169,24 @@ export class AccountSync extends DurableObject<Env> {
         ? new FakeCalendar(this.ctx.storage.sql, Number(this.env.DEV_FAKE_LATENCY_MS ?? 0))
         : calendarClient(this.providerOrDefault(), token);
     return oneCallAtATime(provider, (call) => {
-      const result = this.providerQueue.then(call);
+      const result = this.providerQueue.then(async () => {
+        // Checked again here: a feed read queued behind a throttled call must not run after it.
+        if (options.respectPenalty) {
+          const left = await this.penaltyLeft();
+          if (left > 0) throw new PenaltyActive(left);
+        }
+        // Every throttled answer, read or write, starts a penalty that feed reads respect. It is
+        // stored before the next queued call starts.
+        try {
+          const value = await call();
+          await this.notePenalty(batchPenalty(value));
+          return value;
+        } catch (error) {
+          await this.notePenalty(throttleDelayMs(error));
+          throw error;
+        }
+      });
       this.providerQueue = result.catch(() => undefined);
-      // Every throttled answer, read or write, starts a penalty that feed reads respect.
-      void result.then(
-        (value) => this.notePenalty(batchPenalty(value)),
-        (error: unknown) => this.notePenalty(throttleDelayMs(error)),
-      );
       return result;
     });
   }

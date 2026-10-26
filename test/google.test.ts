@@ -283,3 +283,40 @@ describe("rule across providers", () => {
     expect(urls.some((url) => url.includes("singleEvents=true"))).toBe(true);
   });
 });
+
+describe("Google calendar list", () => {
+  it("counts only the primary calendar and calendars whose data owner is the account as owned", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        items: [
+          { id: "me@example.com", summary: "Me", accessRole: "owner", primary: true },
+          {
+            id: "own-project@group.calendar.google.com",
+            summary: "My project",
+            accessRole: "owner",
+            dataOwner: "me@example.com",
+          },
+          {
+            id: "managed@group.calendar.google.com",
+            summary: "Shared with manage sharing",
+            accessRole: "owner",
+            dataOwner: "colleague@example.com",
+          },
+          { id: "colleague@example.com", summary: "Colleague", accessRole: "writer" },
+        ],
+      }),
+    );
+    const owned = Object.fromEntries(
+      (await new GoogleCalendar("token").listCalendars()).map((calendar) => [
+        calendar.name,
+        calendar.owned,
+      ]),
+    );
+    expect(owned).toEqual({
+      Me: true,
+      "My project": true,
+      "Shared with manage sharing": false,
+      Colleague: false,
+    });
+  });
+});

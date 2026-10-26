@@ -214,12 +214,15 @@ attendees, organizers, source event IDs and the number of events in a block stay
 events count as for a rule with default settings: free and declined events stay out, tentative
 ones count as busy, and all-day events count only if you turn them on. Blocks that slotmirror
 wrote are left out, so choose every calendar whose own events should count. Only calendars that
-your accounts own can go into a feed, not calendars that other people shared with you. The UID of
+your accounts own can go into a feed, not calendars that other people shared with you. For
+Google, these are the primary calendar and calendars whose data owner is the account; the access
+role "owner" alone also covers calendars shared with "make changes and manage sharing". The UID of
 a block is an HMAC of its start and end with a secret per feed, so a moved meeting is a new block,
 and two feeds cannot be linked through their UIDs.
 
-**At most 1000 blocks.** Above that, the oldest past blocks go first. If the feed is still too
-long, it ends early, and the start page says before which date. Choose fewer days or calendars.
+**At most 1000 blocks.** Above that, past blocks go first, those that ended earliest first. A
+block that runs into today, such as an ongoing absence, stays. If the feed is still too long, it
+ends early, and the start page says before which date. Choose fewer days or calendars.
 
 **Who can see it.** Anyone with the address. The address holds a random 256-bit token;
 slotmirror stores only its SHA-256 hash and shows the address once, when you create the feed or
@@ -230,7 +233,8 @@ renew it. The token is in the URL path, so it reaches every log that records req
 everyone who should still see the feed needs the new one. "Delete" ends the feed. A feed also ends
 when its last calendar goes with a disconnected account, when its user is deleted or deactivated,
 and at its next fetch once the access settings no longer admit its user. A reactivated user
-creates new feeds.
+creates new feeds. If the access settings admit nobody at all, for example after a deploy with
+empty `ALLOWED_*` values, the feeds stay and answer 503 until the settings are back.
 
 **Delay.** A rendered feed is reused for 15 minutes. The last copy stays in D1 with the feed, so
 a repeated fetch costs one D1 read and no calendar read; the Cache API also keeps it, but
@@ -243,10 +247,13 @@ to appear.
 - While Microsoft or Google throttles the account, the feed serves its last copy, however old, and
   makes no provider call. Without a copy, it answers 503 with the remaining `Retry-After`.
 - If an account needs to be connected again, the feed answers 503.
-- If the provider no longer finds a calendar or refuses access to it, the feed answers 503, and the
-  start page names the calendar with a button to remove it from the feed.
+- If the provider no longer finds a calendar or refuses access to it, or the account no longer
+  owns it, the feed answers 503, and the start page names the calendar with a button to remove it
+  from the feed.
+- Any other failed read also answers 503.
 
-Apps keep their last copy while the feed answers 503.
+A failure is stored with the feed: for 15 minutes, fetches answer 503 from that one D1 read and
+make no new read. Apps keep their last copy while the feed answers 503.
 
 ### Logs and the feed token
 

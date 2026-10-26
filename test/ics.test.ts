@@ -334,6 +334,51 @@ describe("busy events", () => {
     expect(result.events.every((event) => event.start < firstLeftOut)).toBe(true);
   });
 
+  it("keeps an ongoing all-day block when it drops past blocks", async () => {
+    const day = 86_400_000;
+    const vacation = sourceEvent({
+      occurrenceKey: "vacation",
+      allDay: true,
+      start: new Date(TODAY.getTime() - 5 * day).toISOString().slice(0, 10),
+      end: new Date(TODAY.getTime() + 3 * day).toISOString().slice(0, 10),
+    });
+    const past = separate(30, TODAY.getTime() - 4 * day, "p");
+    const future = separate(MAX_FEED_EVENTS - 10, TODAY.getTime(), "f");
+    const result = await busyEvents(
+      [{ calendarId: "c1", events: [vacation, ...past, ...future] }],
+      { includeAllDay: true, uidSalt: SALT, today: TODAY },
+    );
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBeNull();
+    expect(result.events.filter((event) => event.allDay)).toEqual([
+      expect.objectContaining({ start: vacation.start, end: vacation.end }),
+    ]);
+    // 21 of the 30 past blocks went, the oldest first.
+    const kept = result.events.filter((event) => !event.allDay && event.end <= TODAY.toISOString());
+    expect(kept).toHaveLength(9);
+  });
+
+  it("cuts the window end rather than drop an ongoing all-day block", async () => {
+    const day = 86_400_000;
+    const vacation = sourceEvent({
+      occurrenceKey: "vacation",
+      allDay: true,
+      start: new Date(TODAY.getTime() - 5 * day).toISOString().slice(0, 10),
+      end: new Date(TODAY.getTime() + 3 * day).toISOString().slice(0, 10),
+    });
+    const past = separate(5, TODAY.getTime() - 4 * day, "p");
+    const future = separate(MAX_FEED_EVENTS, TODAY.getTime(), "f");
+    const result = await busyEvents(
+      [{ calendarId: "c1", events: [vacation, ...past, ...future] }],
+      { includeAllDay: true, uidSalt: SALT, today: TODAY },
+    );
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.events[0]).toMatchObject({ allDay: true, start: vacation.start });
+    expect(result.cutAt).toBe(
+      new Date(TODAY.getTime() + (MAX_FEED_EVENTS - 1) * 3_600_000).toISOString(),
+    );
+  });
+
   it("reports no cut below the cap", async () => {
     const result = await busyEvents(
       [{ calendarId: "c1", events: separate(10, TODAY.getTime(), "f") }],

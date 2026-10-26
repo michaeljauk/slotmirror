@@ -279,17 +279,25 @@ function WorkingHours(props: {
       </span>
       <span class="work-time">
         <input
-          type="time"
+          type="text"
           name="workStart"
           value={direction.options?.workStart ?? ""}
+          placeholder="08:00"
+          pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+          maxlength={5}
+          inputmode="numeric"
           aria-label={t.editor.workStart}
           title={t.editor.workStart}
         />
         {"–"}
         <input
-          type="time"
+          type="text"
           name="workEnd"
           value={direction.options?.workEnd ?? ""}
+          placeholder="18:00"
+          pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00"
+          maxlength={5}
+          inputmode="numeric"
           aria-label={t.editor.workEnd}
           title={t.editor.workEnd}
         />

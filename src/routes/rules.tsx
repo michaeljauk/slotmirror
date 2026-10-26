@@ -5,6 +5,7 @@ import { refreshUserCalendars, userCalendars } from "../calendars";
 import { ruleOptionsSchema, setupStatus } from "../config";
 import { i18nFromContext, useI18n as i18nForStatus } from "../i18n";
 import {
+  blockColorFor,
   CHOICES,
   deleteRuleWithBlocks,
   loadEditorState,
@@ -18,8 +19,10 @@ import {
   type SyncSettings,
   type Choice,
   type WorkingHours,
+  NO_WORKING_HOURS,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
+import { workingHoursProblem, type WorkingHoursProblem } from "../sync/working-hours";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
@@ -184,54 +187,62 @@ rules.post("/direction", async (c) => {
   return backTo(c, from);
 });
 
-// All unsaved choices of the page, sent by the editor script: fields "choice.<from>.<to>".
+// All unsaved changes of the page, sent by the editor script: fields "choice.<from>.<to>" and
+// others. Every field is checked before the first write, so that a save is all or nothing.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const form = await c.req.formData();
-  // Source calendars first, so that the choices below also reach newly chosen calendars.
-  for (const [name, value] of form.entries()) {
-    const [prefix, calendarId, ...rest] = name.split(".");
-    if (prefix !== "calendar" || !calendarId || rest.length > 0) continue;
-    await setSourceCalendar(c.env, user, calendarId, value === "1");
-  }
+  const state = await loadEditorState(c.env, user.id);
+  const directionOf = (from: string, to: string) =>
+    state.directions.find((d) => d.from === from && d.to === to);
+
+  const calendars: { calendarId: string; isSource: boolean }[] = [];
   const changes: { from: string; to: string; choice: Choice }[] = [];
+  const colors: { from: string; to: string; value: string }[] = [];
+  const hours = new Map<string, { from: string; to: string; hours: Required<WorkingHours> }>();
   for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "choice" || !from || !to || rest.length > 0) continue;
-    if (typeof value !== "string" || !(CHOICES as readonly string[]).includes(value)) {
-      return c.text("Bad choice", 400);
+    const [prefix, first, second, ...rest] = name.split(".");
+    if (prefix === "calendar" && first && !second) {
+      calendars.push({ calendarId: first, isSource: value === "1" });
+      continue;
     }
-    changes.push({ from, to, choice: value as Choice });
+    // Fields "<prefix>.<from>.<to>"; other names are not the editor's and stay ignored.
+    if (!first || !second || rest.length > 0 || typeof value !== "string") continue;
+    const [from, to] = [first, second];
+    if (prefix === "choice") {
+      if (!(CHOICES as readonly string[]).includes(value)) return c.text("Bad choice", 400);
+      changes.push({ from, to, choice: value as Choice });
+    } else if (prefix === "blockColor") {
+      const target = state.accounts.find((account) => account.id === to);
+      if (!target || !directionOf(from, to) || blockColorFor(target.provider, value) === null) {
+        return c.text("Bad block colour", 400);
+      }
+      colors.push({ from, to, value });
+    } else if (isWorkingHoursField(prefix)) {
+      // Fields of one direction's hours that are missing get the defaults.
+      const entry = hours.get(`${from}>${to}`) ?? { from, to, hours: { ...NO_WORKING_HOURS } };
+      if (prefix === "workDays") entry.hours.workDays = weekdays(value.split(","));
+      else entry.hours[prefix] = value.trim();
+      hours.set(`${from}>${to}`, entry);
+    }
+  }
+  for (const entry of hours.values()) {
+    if (!directionOf(entry.from, entry.to)) return c.text("Bad working hours", 400);
+    const problem = workingHoursProblem(entry.hours);
+    if (problem) return hoursRefused(c, problem);
+  }
+
+  // Source calendars first, so that the choices below also reach newly chosen calendars.
+  for (const { calendarId, isSource } of calendars) {
+    await setSourceCalendar(c.env, user, calendarId, isSource);
   }
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
-  // Working hours per direction: fields "workDays.<from>.<to>" (comma-separated ISO weekdays),
-  // "workStart.<from>.<to>", "workEnd.<from>.<to>" and "workTimeZone.<from>.<to>".
-  const hours = new Map<string, { from: string; to: string; hours: WorkingHours }>();
-  for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (!isWorkingHoursField(prefix)) continue;
-    if (!from || !to || rest.length > 0 || typeof value !== "string") {
-      return c.text("Bad working hours", 400);
-    }
-    const entry = hours.get(`${from}>${to}`) ?? { from, to, hours: {} };
-    if (prefix === "workDays") entry.hours.workDays = weekdays(value.split(","));
-    else entry.hours[prefix] = value;
-    hours.set(`${from}>${to}`, entry);
-  }
+  // Colours and hours after the choices, so that a direction turned on in this save has rules.
+  for (const { from, to, value } of colors) await setBlockColor(c.env, user, from, to, value);
   for (const entry of hours.values()) {
-    if (!(await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours))) {
-      return c.text("Bad working hours", 400);
-    }
-  }
-  // Block colours after the choices, so that a direction turned on in the same save has its rules.
-  for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "blockColor" || !from || !to || rest.length > 0) continue;
-    if (typeof value !== "string" || !(await setBlockColor(c.env, user, from, to, value))) {
-      return c.text("Bad block colour", 400);
-    }
+    await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours);
   }
   if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
@@ -253,15 +264,28 @@ function isWorkingHoursField(
   return (WORKING_HOURS_FIELDS as readonly (string | undefined)[]).includes(name);
 }
 
+/**
+ * Refuse invalid working hours with a message for the field: as JSON for the editor script, which
+ * shows it in its bar, and as the page with an error notice for the form without the script.
+ */
+async function hoursRefused(c: Context<AppEnv>, problem: WorkingHoursProblem) {
+  const text = i18nFromContext(c).t.editor.workHoursErrors[problem];
+  if (wantsFragment(c)) return c.json({ error: text }, 400);
+  return renderPage(c, { kind: "error", text }, 400);
+}
+
 rules.post("/direction/hours", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
-  const ok = await setWorkingHours(c.env, currentUser(c), from, formText(form, "to"), {
+  const hours = {
     workDays: weekdays(form.getAll("workDays")),
-    workStart: formText(form, "workStart"),
-    workEnd: formText(form, "workEnd"),
-    workTimeZone: formText(form, "workTimeZone"),
-  });
+    workStart: formText(form, "workStart").trim(),
+    workEnd: formText(form, "workEnd").trim(),
+    workTimeZone: formText(form, "workTimeZone").trim(),
+  };
+  const problem = workingHoursProblem(hours);
+  if (problem) return hoursRefused(c, problem);
+  const ok = await setWorkingHours(c.env, currentUser(c), from, formText(form, "to"), hours);
   if (!ok) return c.text("Bad working hours", 400);
   return backTo(c, from);
 });

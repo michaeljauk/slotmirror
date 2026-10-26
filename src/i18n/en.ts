@@ -179,7 +179,13 @@ export const en = {
     workEnd: "Until",
     workTimeZone: "Time zone",
     workHoursHint:
-      "Only events that touch these days and times are copied, with their full times. Without times: the whole day. The end must be after the start.",
+      "Only events that touch these days and times are copied, with their full times. Times as HH:MM; without times: the whole day. 24:00 is the end of the day.",
+    workHoursErrors: {
+      days: "Working hours: choose at least one weekday.",
+      time: "Working hours: enter a start and an end as HH:MM, for example 08:00 and 18:00, or leave both empty.",
+      order: "Working hours: the end must be after the start. For the end of the day, enter 24:00.",
+      zone: "Working hours: unknown time zone. Enter a name such as Europe/Vienna.",
+    },
     googleColor: (id: string) => `Google colour ${id}`,
     blockColorLabel: "Colour there:",
     blockColorNone: "No colour",

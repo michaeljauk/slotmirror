@@ -1915,6 +1915,11 @@ details.source > .source-head .provider-icon,
   font-size: 13px;
 }
 
+.work-time input {
+  width: 64px;
+  text-align: center;
+}
+
 .working-hours .work-zone {
   width: 140px;
 }

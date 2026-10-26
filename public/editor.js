@@ -219,7 +219,11 @@
         body,
         headers: { "x-fragment": "1" },
       });
-      if (!response.ok) throw new Error(String(response.status));
+      if (!response.ok) {
+        // Refused working hours come with a message that says which field to fix.
+        const refused = await response.json().catch(() => null);
+        throw Object.assign(new Error(String(response.status)), { shown: refused?.error });
+      }
       // Reload once, with the changed cards open, so that every label comes from the server.
       const open = [
         ...new Set(
@@ -230,9 +234,9 @@
       ];
       pending.clear();
       location.assign(`/rules?open=${open.map(encodeURIComponent).join(",")}`);
-    } catch {
+    } catch (error) {
       bar.classList.remove("saving");
-      refreshBar(bar.dataset.failed);
+      refreshBar(error?.shown ?? bar.dataset.failed);
     }
   });
 

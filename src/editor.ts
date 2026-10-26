@@ -403,7 +403,7 @@ export async function setWorkingHours(
   }
   const hoursOf = (o: RuleOptions) =>
     JSON.stringify([o.workDays, o.workStart, o.workEnd, o.workTimeZone]);
-  const updates: { ruleId: string; options: RuleOptions }[] = [];
+  const updates: { ruleId: string; options: RuleOptions; origin: "group" | "custom" }[] = [];
   for (const rule of rules) {
     const parsed = ruleOptionsSchema.safeParse({ ...rule.options, ...input });
     if (!parsed.success) return false;
@@ -411,11 +411,15 @@ export async function setWorkingHours(
     if (!hasWorkingHours(options)) options.workTimeZone = "";
     else if (options.workTimeZone === "") options.workTimeZone = displayTimeZone(env.TIME_ZONE);
     else options.workTimeZone = canonicalTimeZone(options.workTimeZone);
-    if (hoursOf(options) !== hoursOf(rule.options)) updates.push({ ruleId: rule.id, options });
+    if (hoursOf(options) === hoursOf(rule.options)) continue;
+    // Hours on a group rule make it an exception, so that the page offers the reset and leaving
+    // the group keeps them. Clearing the hours leaves the origin; the reset returns to the group.
+    const origin = hasWorkingHours(options) ? "custom" : rule.origin;
+    updates.push({ ruleId: rule.id, options, origin });
   }
-  for (const { ruleId, options } of updates) {
-    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND user_id = ?")
-      .bind(JSON.stringify(options), ruleId, user.id)
+  for (const { ruleId, options, origin } of updates) {
+    await env.DB.prepare("UPDATE rules SET options = ?, origin = ? WHERE id = ? AND user_id = ?")
+      .bind(JSON.stringify(options), origin, ruleId, user.id)
       .run();
     await audit(env, user, toId, ruleId, "rule_updated", {
       workDays: options.workDays.join(","),
@@ -583,7 +587,9 @@ export async function setDirection(
       ...(rule?.options ?? direction.options ?? newRuleOptions(state.settings, choice)),
       detailLevel: choice,
     };
-    const origin = bothInGroup && choice === "busy" ? "group" : "custom";
+    // Working hours make an exception from the group, like any choice but busy.
+    const origin =
+      bothInGroup && choice === "busy" && !hasWorkingHours(options) ? "group" : "custom";
     if (rule) {
       await env.DB.prepare(
         "UPDATE rules SET options = ?, enabled = 1, origin = ? WHERE id = ? AND user_id = ?",
@@ -673,9 +679,10 @@ export async function resetDirection(
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to) return;
-  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
-  // The group mirrors at all times, so the working hours go as well.
+  // Working hours make a direction an exception, so they go first. Then the direction can rejoin
+  // the group, which mirrors at all times; outside the group the rules go anyway.
   await setWorkingHours(env, user, fromId, toId, NO_WORKING_HOURS);
+  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
   await setBlockColor(env, user, fromId, toId, "");
 }
 

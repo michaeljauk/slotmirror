@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseRuleOptions, ruleOptionsSchema, type RuleOptions } from "../src/config";
 import { fromGraphEvent } from "../src/sync/graph-events";
-import { desiredBlocks, isIncluded } from "../src/sync/plan";
-import type { SourceEvent } from "../src/sync/types";
+import { desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
+import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
+import { canonicalTimeZone, isTimeZone, workingHoursProblem } from "../src/sync/working-hours";
 import fixture from "./fixtures/graph/calendar-view.json";
+import mainBlocks from "./fixtures/plan/main-blocks.json";
 
 const RULE = "rule-1";
 
@@ -194,6 +196,18 @@ describe("working hours: daylight saving time in Vienna", () => {
     );
   });
 
+  it("knows the exact minute of the change", () => {
+    // 02:59 CEST, at 00:59 UTC, is the last minute before clocks go back at 01:00 UTC. A range
+    // that ends then is over before the repeated hour.
+    const night = { ...everyDay, workStart: "00:00", workEnd: "02:59" };
+    expect(mirrored(event("2026-10-25T01:30:00.000Z", "2026-10-25T01:40:00.000Z"), night)).toBe(
+      false,
+    );
+    expect(mirrored(event("2026-10-25T00:58:00.000Z", "2026-10-25T00:59:00.000Z"), night)).toBe(
+      true,
+    );
+  });
+
   it("checks each day of an event that crosses the change", () => {
     // Saturday 28 Mar 20:00 CET to Monday 30 Mar 07:30 CEST: Monday ends before 08:00.
     const weekend = event("2026-03-28T19:00:00.000Z", "2026-03-30T05:30:00.000Z");
@@ -258,28 +272,17 @@ describe("working hours: defaults", () => {
     });
   });
 
-  it("keep the blocks of existing rules exactly as before", async () => {
-    const before = await desiredBlocks(RULE, events, options({ skipAllDay: false }));
-    expect(before.length).toBeGreaterThan(0);
-    // A rule stored before working hours existed has none of the keys.
-    const stored = parseRuleOptions('{"skipAllDay": false}');
-    expect(await desiredBlocks(RULE, events, stored)).toEqual(before);
+  it("keep the blocks of existing rules exactly as main wrote them", async () => {
+    // The fixture holds the blocks that main (before working hours) plans for the Graph fixture.
+    const scope = { scope: "user" };
+    expect(await desiredBlocks(RULE, events, parseRuleOptions("{}"), scope)).toEqual(
+      mainBlocks.defaults,
+    );
+    const withAllDay = parseRuleOptions('{"skipAllDay": false}');
+    expect(await desiredBlocks(RULE, events, withAllDay, scope)).toEqual(mainBlocks.withAllDay);
     // Every weekday with a time zone but no time range is still off.
     const zoneOnly = options({ skipAllDay: false, workTimeZone: "Pacific/Kiritimati" });
-    expect(await desiredBlocks(RULE, events, zoneOnly)).toEqual(before);
-    // Hash and dedup key as computed before working hours existed.
-    const [block] = await desiredBlocks(
-      RULE,
-      [
-        event("2026-10-27T10:00:00.000Z", "2026-10-27T11:00:00.000Z", {
-          occurrenceKey: "event:buffer",
-        }),
-      ],
-      options(),
-      { scope: "user" },
-    );
-    expect(block?.contentHash).toBe("e2017962879850ddec59cee5aabb4f7e");
-    expect(block?.dedupKey).toBe("74cbc6995f91445218fc104bd5fb7fbb");
+    expect(await desiredBlocks(RULE, events, zoneOnly, scope)).toEqual(mainBlocks.withAllDay);
   });
 
   it("mirror events at any time on any day", () => {
@@ -312,16 +315,182 @@ describe("working hours: validation", () => {
     for (const time of ["8:00", "24:00", "12:60", "12:00:00", "noon", " 08:00"]) {
       expect(parses({ workStart: time, workEnd: "23:59" })).toBe(false);
     }
+    for (const time of ["24:01", "25:00", "8:00"]) {
+      expect(parses({ workStart: "08:00", workEnd: time })).toBe(false);
+    }
+  });
+
+  it("accepts 24:00 as the end of the day, but not as a start", () => {
+    expect(parses({ workStart: "18:00", workEnd: "24:00" })).toBe(true);
+    expect(parses({ workStart: "00:00", workEnd: "24:00" })).toBe(true);
+  });
+
+  it("names the field that is wrong, with the same rules as the schema", () => {
+    const hours = (overrides: object) => ({
+      workDays: [1, 2, 3, 4, 5],
+      workStart: "08:00",
+      workEnd: "18:00",
+      workTimeZone: "Europe/Vienna",
+      ...overrides,
+    });
+    expect(workingHoursProblem(hours({}))).toBeNull();
+    expect(workingHoursProblem(hours({ workEnd: "24:00" }))).toBeNull();
+    expect(workingHoursProblem(hours({ workStart: "", workEnd: "" }))).toBeNull();
+    expect(workingHoursProblem(hours({ workDays: [] }))).toBe("days");
+    expect(workingHoursProblem(hours({ workDays: [Number.NaN] }))).toBe("days");
+    expect(workingHoursProblem(hours({ workDays: [2, 2] }))).toBe("days");
+    expect(workingHoursProblem(hours({ workEnd: "" }))).toBe("time");
+    expect(workingHoursProblem(hours({ workStart: "8:00" }))).toBe("time");
+    expect(workingHoursProblem(hours({ workStart: "24:00", workEnd: "24:00" }))).toBe("time");
+    expect(workingHoursProblem(hours({ workEnd: "08:00" }))).toBe("order");
+    expect(workingHoursProblem(hours({ workTimeZone: "Mars/Olympus" }))).toBe("zone");
+    for (const overrides of [{ workDays: [] }, { workEnd: "" }, { workEnd: "07:00" }]) {
+      expect(parses(hours(overrides))).toBe(false);
+    }
   });
 
   it("refuses an unknown time zone", () => {
     expect(parses({ workTimeZone: "Mars/Olympus" })).toBe(false);
     expect(parses({ workTimeZone: "Europe/Vienna" })).toBe(true);
+    expect(isTimeZone(" Europe/Vienna")).toBe(false);
+    expect(isTimeZone(`Europe/${"x".repeat(64)}`)).toBe(false);
+  });
+
+  it("knows the canonical name of a zone", () => {
+    expect(canonicalTimeZone("europe/vienna")).toBe("Europe/Vienna");
+    expect(canonicalTimeZone("US/Eastern")).toBe("America/New_York");
+    expect(canonicalTimeZone("utc")).toBe("UTC");
+  });
+
+  it("reads a stored zone that became unknown as UTC, instead of failing", () => {
+    const stored =
+      '{"workDays": [1], "workStart": "08:00", "workEnd": "18:00", "workTimeZone": "Mars/Olympus"}';
+    expect(parseRuleOptions(stored)).toMatchObject({ workDays: [1], workTimeZone: "UTC" });
+    // Input is still checked strictly.
+    expect(ruleOptionsSchema.safeParse(JSON.parse(stored)).success).toBe(false);
   });
 
   it("refuses no weekday, unknown weekdays and repeated weekdays", () => {
     for (const workDays of [[], [0], [8], [1.5], [1, 1]]) {
       expect(parses({ workDays })).toBe(false);
     }
+  });
+});
+
+describe("working hours: 24:00 is the end of the day", () => {
+  // Tuesday 27 Oct 2026 in Vienna (UTC+1); only Tuesdays are chosen.
+  const evening = (end: string) => ({ ...OFFICE, workDays: [2], workStart: "18:00", workEnd: end });
+
+  it("reaches midnight with 24:00, but not with 23:59", () => {
+    // Tuesday 23:59 to Wednesday 00:30.
+    const late = event("2026-10-27T22:59:00.000Z", "2026-10-27T23:30:00.000Z");
+    expect(mirrored(late, evening("24:00"))).toBe(true);
+    expect(mirrored(late, evening("23:59"))).toBe(false);
+  });
+
+  it("does not reach into the next day", () => {
+    // Wednesday 00:00 to 00:30.
+    const wednesday = event("2026-10-27T23:00:00.000Z", "2026-10-27T23:30:00.000Z");
+    expect(mirrored(wednesday, evening("24:00"))).toBe(false);
+  });
+
+  it("ends at the real midnight on the day clocks go back", () => {
+    // Sunday 25 Oct 2026 has 25 hours; midnight after it is 23:00 UTC.
+    const sunday = { ...OFFICE, workDays: [7], workStart: "23:00", workEnd: "24:00" };
+    expect(mirrored(event("2026-10-25T22:30:00.000Z", "2026-10-25T22:40:00.000Z"), sunday)).toBe(
+      true,
+    );
+    expect(mirrored(event("2026-10-25T23:00:00.000Z", "2026-10-25T23:10:00.000Z"), sunday)).toBe(
+      false,
+    );
+  });
+});
+
+describe("working hours: southern hemisphere and far offsets", () => {
+  const everyDay = (zone: string) => ({
+    ...OFFICE,
+    workDays: [1, 2, 3, 4, 5, 6, 7],
+    workTimeZone: zone,
+  });
+  const at = (start: string, end: string, zone: string) =>
+    mirrored(event(start, end), everyDay(zone));
+
+  it("follows Auckland when summer time ends (5 Apr 2026, UTC+13 to UTC+12)", () => {
+    // 08:00 to 18:00 NZST is 20:00 UTC on 4 Apr to 06:00 UTC on 5 Apr.
+    expect(at("2026-04-04T19:30:00.000Z", "2026-04-04T19:45:00.000Z", "Pacific/Auckland")).toBe(
+      false,
+    ); // 07:30 NZST
+    expect(at("2026-04-05T05:30:00.000Z", "2026-04-05T05:45:00.000Z", "Pacific/Auckland")).toBe(
+      true,
+    ); // 17:30 NZST
+  });
+
+  it("follows Auckland when summer time starts (27 Sep 2026, UTC+12 to UTC+13)", () => {
+    // 08:00 to 18:00 NZDT is 19:00 UTC on 26 Sep to 05:00 UTC on 27 Sep.
+    expect(at("2026-09-26T19:30:00.000Z", "2026-09-26T19:45:00.000Z", "Pacific/Auckland")).toBe(
+      true,
+    ); // 08:30 NZDT
+    expect(at("2026-09-27T05:30:00.000Z", "2026-09-27T05:45:00.000Z", "Pacific/Auckland")).toBe(
+      false,
+    ); // 18:30 NZDT
+  });
+
+  it("follows Chatham with its 45-minute offset when summer time ends", () => {
+    // 08:00 to 18:00 at UTC+12:45 is 19:15 UTC on 4 Apr to 05:15 UTC on 5 Apr.
+    expect(at("2026-04-04T19:20:00.000Z", "2026-04-04T19:25:00.000Z", "Pacific/Chatham")).toBe(
+      true,
+    );
+    expect(at("2026-04-04T19:05:00.000Z", "2026-04-04T19:10:00.000Z", "Pacific/Chatham")).toBe(
+      false,
+    );
+  });
+
+  it("takes the weekday 14 hours ahead and 11 hours behind UTC", () => {
+    const monday = { ...OFFICE, workDays: [1] };
+    // Sunday 19:00 UTC is Monday 09:00 in Kiritimati.
+    const sundayUtc = event("2026-11-01T19:00:00.000Z", "2026-11-01T20:00:00.000Z");
+    expect(mirrored(sundayUtc, { ...monday, workTimeZone: "Pacific/Kiritimati" })).toBe(true);
+    expect(mirrored(sundayUtc, { ...monday, workTimeZone: "UTC" })).toBe(false);
+    // Tuesday 04:00 UTC is Monday 17:00 in Pago Pago.
+    const tuesdayUtc = event("2026-11-03T04:00:00.000Z", "2026-11-03T05:00:00.000Z");
+    expect(mirrored(tuesdayUtc, { ...monday, workTimeZone: "Pacific/Pago_Pago" })).toBe(true);
+    expect(mirrored(tuesdayUtc, { ...monday, workTimeZone: "UTC" })).toBe(false);
+  });
+});
+
+describe("working hours: turning the filter on", () => {
+  const events = fixture.value.map(fromGraphEvent).filter((e): e is SourceEvent => e !== null);
+  const asExisting = (blocks: DesiredBlock[]): ExistingBlock[] =>
+    blocks.map((block, index) => ({ ...block, ruleTag: "tag", targetId: `target-${index}` }));
+
+  it("deletes the blocks outside the hours, and the next run changes nothing", async () => {
+    const before = await desiredBlocks(RULE, events, options());
+    const existing = asExisting(before);
+    const after = await desiredBlocks(RULE, events, options(OFFICE));
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.length).toBeLessThan(before.length);
+
+    const plan = planSync(after, existing);
+    const kept = new Set(after.map((block) => block.marker));
+    expect(plan.stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: before.length - after.length,
+      unchanged: after.length,
+    });
+    for (const action of plan.actions) {
+      expect(action.kind).toBe("delete");
+      if (action.kind === "delete") expect(kept.has(action.marker)).toBe(false);
+    }
+
+    const deleted = new Set(
+      plan.actions.map((action) => (action.kind === "delete" ? action.targetId : "")),
+    );
+    const remaining = existing.filter((block) => !deleted.has(block.targetId));
+    const again = await desiredBlocks(RULE, events, options(OFFICE));
+    expect(planSync(again, remaining)).toEqual({
+      actions: [],
+      stats: { create: 0, update: 0, delete: 0, unchanged: after.length },
+    });
   });
 });

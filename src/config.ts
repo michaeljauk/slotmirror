@@ -1,6 +1,6 @@
 import * as z from "zod/mini";
 import { policyAdmitsAnyone, policyFromEnv } from "./access";
-import { ALL_WEEKDAYS, isTimeZone, TIME_OF_DAY } from "./sync/working-hours";
+import { ALL_WEEKDAYS, END_OF_DAY, isTimeZone, TIME_OF_DAY } from "./sync/working-hours";
 
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */
 const ruleOptionsFields = z.object({
@@ -30,7 +30,8 @@ const ruleOptionsFields = z.object({
   /**
    * Working hours: mirror only events that overlap `workStart` to `workEnd` on one of `workDays`
    * (ISO weekdays, Monday 1), read in `workTimeZone`. Blocks keep the event's times. All seven
-   * days and no times: no filter. An empty zone means UTC; the editor stores the deployment's.
+   * days and no times: no filter. `workEnd` "24:00" is the end of the day. An empty zone means
+   * UTC; the editor stores the deployment's.
    */
   workDays: z._default(
     z.array(z.int().check(z.minimum(1), z.maximum(7))).check(
@@ -44,7 +45,7 @@ const ruleOptionsFields = z.object({
     "",
   ),
   workEnd: z._default(
-    z.string().check(z.refine((time) => time === "" || TIME_OF_DAY.test(time))),
+    z.string().check(z.refine((time) => time === "" || END_OF_DAY.test(time))),
     "",
   ),
   workTimeZone: z._default(
@@ -80,7 +81,20 @@ export const ruleOptionsSchema = ruleOptionsFields.check(
 export type RuleOptions = z.infer<typeof ruleOptionsSchema>;
 
 export function parseRuleOptions(json: string): RuleOptions {
-  return ruleOptionsSchema.parse(JSON.parse(json));
+  const stored: unknown = JSON.parse(json);
+  // A stored zone can become unknown after a runtime update. The rule then reads its hours in
+  // UTC, so that the page and the sync keep working; new input is still checked strictly.
+  if (
+    typeof stored === "object" &&
+    stored !== null &&
+    "workTimeZone" in stored &&
+    typeof stored.workTimeZone === "string" &&
+    stored.workTimeZone !== "" &&
+    !isTimeZone(stored.workTimeZone)
+  ) {
+    return ruleOptionsSchema.parse({ ...stored, workTimeZone: "UTC" });
+  }
+  return ruleOptionsSchema.parse(stored);
 }
 
 export type Provider = "microsoft" | "google";

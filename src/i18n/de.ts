@@ -181,7 +181,13 @@ export const de: Messages = {
     workEnd: "Bis",
     workTimeZone: "Zeitzone",
     workHoursHint:
-      "Nur Termine, die diese Tage und Zeiten berühren, werden kopiert, mit ihren vollen Zeiten. Ohne Zeiten: der ganze Tag. Das Ende muss nach dem Beginn liegen.",
+      "Nur Termine, die diese Tage und Zeiten berühren, werden kopiert, mit ihren vollen Zeiten. Zeiten als HH:MM; ohne Zeiten: der ganze Tag. 24:00 ist das Tagesende.",
+    workHoursErrors: {
+      days: "Arbeitszeit: Wähle mindestens einen Wochentag.",
+      time: "Arbeitszeit: Gib Beginn und Ende als HH:MM an, zum Beispiel 08:00 und 18:00, oder lass beide leer.",
+      order: "Arbeitszeit: Das Ende muss nach dem Beginn liegen. Für das Tagesende gib 24:00 ein.",
+      zone: "Arbeitszeit: Unbekannte Zeitzone. Gib einen Namen wie Europe/Vienna ein.",
+    },
     googleColor: (id: string) => `Google-Farbe ${id}`,
     blockColorLabel: "Farbe dort:",
     blockColorNone: "Keine Farbe",

@@ -466,6 +466,73 @@ describe("sync status in the UI", () => {
   });
 });
 
+/** An account with tokens and no rules. */
+async function bareAccount(accountId: string, accessExpiresAt = Date.now() + 3_600_000) {
+  const { user } = await signIn("owner@example.com");
+  await env.DB.prepare(
+    "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
+  )
+    .bind(accountId, user.id, `${accountId}@example.com`)
+    .run();
+  const stub = env.ACCOUNT_SYNC.getByName(accountId);
+  await stub.storeTokens(accountId, { refreshToken: "r", accessToken: "a", accessExpiresAt });
+  return stub;
+}
+
+/**
+ * Fake Graph with one block of the deleted rule `gone-rule` in the target calendar. Deletes answer
+ * `deleteStatus`, creates 201. Records the method of every batch request.
+ */
+async function stuckBlockGraph(deleteStatus: number) {
+  const [template] = fixture.value;
+  const tag = await ruleTagFor("gone-rule");
+  const graph = { deleteStatus, methods: [] as string[] };
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes(`/calendars/${SOURCE_CAL}`)) return Response.json({ value: fixture.value });
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
+      return Response.json({
+        value: [
+          {
+            ...template,
+            id: "stuck",
+            singleValueExtendedProperties: [
+              {
+                id: MARKER_PROPERTY_ID,
+                value: `${tag}.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef`,
+              },
+            ],
+          },
+        ],
+      });
+    }
+    if (url.endsWith("/$batch")) {
+      const body = JSON.parse(init?.body as string) as {
+        requests: { id: string; method: string }[];
+      };
+      graph.methods.push(...body.requests.map((request) => request.method));
+      return Response.json({
+        responses: body.requests.map((request) => ({
+          id: request.id,
+          status: request.method === "DELETE" ? graph.deleteStatus : 201,
+        })),
+      });
+    }
+    return Response.json({ value: [] });
+  });
+  return graph;
+}
+
+const removalsOf = (stub: DurableObjectStub) =>
+  runInDurableObject(stub, (_instance, state) =>
+    state.storage.get<{ ruleId: string; attempts: number; notBefore?: number }[]>("removalQueue"),
+  );
+
+async function alarmAt(stub: DurableObjectStub): Promise<number | null> {
+  return runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+}
+
 describe("alarm queue", () => {
   it("runs one rule per alarm and schedules the next one", async () => {
     const { stub, ruleId } = await setupRule("acc-queue");
@@ -523,52 +590,112 @@ describe("alarm queue", () => {
     expect(queue?.map((job) => job.ruleId)).toEqual(["late-rule"]);
   });
 
-  it("gives up a removal whose deletes keep failing, so that the syncs go on", async () => {
-    const { stub } = await setupRule("acc-removal-403");
-    await stub.storeTokens("acc-removal-403", {
+  it("backs off a removal whose deletes keep failing, and gives up after the last attempt", async () => {
+    const stub = await bareAccount("acc-removal-403");
+    const graph = await stuckBlockGraph(403);
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    const waits: number[] = [];
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await runDurableObjectAlarm(stub);
+      const [job] = (await removalsOf(stub)) ?? [];
+      expect(job?.attempts).toBe(attempt);
+      waits.push((job?.notBefore ?? 0) - Date.now());
+      // The next alarm is for the rules; the alarm for the waiting removal follows it.
+      await runDurableObjectAlarm(stub);
+      expect(await alarmAt(stub)).toBe(job?.notBefore);
+    }
+    expect(waits.map((wait) => Math.round(wait / 60_000))).toEqual([1, 10, 120, 720]);
+    expect(graph.methods).toEqual(["DELETE", "DELETE", "DELETE", "DELETE"]);
+
+    await runDurableObjectAlarm(stub);
+    expect(graph.methods).toHaveLength(5);
+    expect(await removalsOf(stub)).toBeUndefined();
+  });
+
+  it("runs the account's rules while a removal waits for its next attempt", async () => {
+    const { stub, ruleId } = await setupRule("acc-removal-wait");
+    await stub.storeTokens("acc-removal-wait", {
       refreshToken: "r",
       accessToken: "a",
       accessExpiresAt: Date.now() + 3_600_000,
     });
-    const [template] = fixture.value;
-    const tag = await ruleTagFor("gone-rule");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = input instanceof Request ? input.url : String(input);
-      if (url.includes("calendarView")) {
-        return Response.json({
-          value: [
-            {
-              ...template,
-              id: "stuck",
-              singleValueExtendedProperties: [
-                {
-                  id: MARKER_PROPERTY_ID,
-                  value: `${tag}.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef`,
-                },
-              ],
-            },
-          ],
-        });
-      }
-      if (url.endsWith("/$batch")) {
-        const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
-        return Response.json({
-          responses: body.requests.map((request) => ({ id: request.id, status: 403 })),
-        });
-      }
-      return Response.json({ value: [] });
-    });
-    const removals = () =>
-      runInDurableObject(stub, (_instance, state) => state.storage.get<unknown[]>("removalQueue"));
+    const graph = await stuckBlockGraph(500);
+    const deletes = () => graph.methods.filter((method) => method === "DELETE").length;
 
     await stub.queueRemoval("gone-rule", TARGET_CAL);
-    for (let attempt = 1; attempt < 5; attempt++) {
-      await runDurableObjectAlarm(stub);
-      expect(await removals()).toHaveLength(1);
-    }
     await runDurableObjectAlarm(stub);
-    expect(await removals()).toBeUndefined();
+    expect(deletes()).toBe(1);
+
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(1);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
+    const [job] = (await removalsOf(stub)) ?? [];
+    expect(job?.attempts).toBe(1);
+    expect(await alarmAt(stub)).toBe(job?.notBefore);
+
+    // The provider is back: the removal's own alarm removes the block, then a full cycle runs.
+    graph.deleteStatus = 204;
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect(await removalsOf(stub)).toBeUndefined();
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(2);
+  });
+
+  it("keeps the tokens of a retiring account while a removal waits", async () => {
+    const stub = await bareAccount("acc-removal-retire");
+    const graph = await stuckBlockGraph(500);
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await stub.retire();
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect(graph.methods).toEqual(["DELETE"]);
+    expect(await stub.hasTokens()).toBe(true);
+
+    graph.deleteStatus = 204;
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toBeUndefined();
+    await runDurableObjectAlarm(stub);
+    expect(await stub.hasTokens()).toBe(false);
+  });
+
+  it("does not start a full cycle for a check of its own writes while a removal waits", async () => {
+    const stub = await bareAccount("acc-removal-echo");
+    await stuckBlockGraph(500);
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    const [job] = (await removalsOf(stub)) ?? [];
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("fullCycleAt", 1);
+      await state.storage.put("recentWrites", { own: Date.now() });
+    });
+
+    await stub.graphChanged(["own"]);
+    await runDurableObjectAlarm(stub);
+
+    const fullCycleAt = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get("fullCycleAt"),
+    );
+    expect(fullCycleAt).toBe(1);
+    expect(await alarmAt(stub)).toBe(job?.notBefore);
+  });
+
+  it("retries a removal soon, without backoff, when the provider refuses the tokens", async () => {
+    const stub = await bareAccount("acc-removal-token", 0);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ error: "invalid_grant" }, { status: 400 }),
+    );
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toEqual([
+      { ruleId: "gone-rule", remoteCalendarId: TARGET_CAL, attempts: 1 },
+    ]);
+    expect(await alarmIn(stub)).toBeGreaterThan(590_000);
   });
 
   it("keeps rules that a tick queues while a rule runs", async () => {
@@ -723,6 +850,55 @@ describe("throttling", () => {
     const wait = await alarmIn(stub);
     expect(wait).toBeGreaterThan(4_000);
     expect(wait).toBeLessThanOrEqual(7_000);
+  });
+
+  it("waits for Retry-After when the provider throttles a removal", async () => {
+    const stub = await bareAccount("acc-removal-throttle");
+    const tag = await ruleTagFor("gone-rule");
+    const [template] = fixture.value;
+    let batches = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("calendarView")) {
+        return Response.json({
+          value: [
+            {
+              ...template,
+              id: "blk",
+              singleValueExtendedProperties: [
+                {
+                  id: MARKER_PROPERTY_ID,
+                  value: `${tag}.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef`,
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/$batch")) {
+        batches++;
+        const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+        return Response.json({
+          responses: body.requests.map((request) => ({
+            id: request.id,
+            status: 429,
+            headers: { "Retry-After": "60" },
+          })),
+        });
+      }
+      return Response.json({ value: [] });
+    });
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect(batches).toBe(1);
+    // A throttled run is no failed attempt.
+    expect(await removalsOf(stub)).toEqual([
+      { ruleId: "gone-rule", remoteCalendarId: TARGET_CAL, attempts: 0 },
+    ]);
+    const wait = await alarmIn(stub);
+    expect(wait).toBeGreaterThan(55_000);
+    expect(wait).toBeLessThanOrEqual(60_000);
   });
 });
 

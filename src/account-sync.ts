@@ -102,6 +102,9 @@ const FEED_ONLY_ALARM_KEY = "feedOnlyAlarm";
 
 const RETRY_ALARM = "retry";
 
+/** Mark of an alarm that only waits for a removal's next attempt. */
+const REMOVAL_ALARM = "removal";
+
 /**
  * Durable Object storage key of sync requests that failed after a change: the accounts (all that
  * the change concerns if unknown), the failed attempts, and when to try again.
@@ -157,14 +160,36 @@ const RETIRING_KEY = "retiring";
 /** Give up on a removal after this many failed attempts; the blocks then stay. */
 const MAX_REMOVAL_ATTEMPTS = 5;
 
+/**
+ * Wait after the first, second, third and fourth failed attempt of a removal. The rule is gone, so
+ * no later run removes its blocks: the attempts span a provider outage of about 14 hours.
+ */
+const REMOVAL_BACKOFF_MS = [60_000, 10 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_000];
+
 interface Removal {
   ruleId: string;
   remoteCalendarId: string;
   attempts: number;
+  /** After a failed attempt: do not try again before this time. */
+  notBefore?: number;
 }
 
 function sameRemoval(a: Removal, b: Removal): boolean {
   return a.ruleId === b.ruleId && a.remoteCalendarId === b.remoteCalendarId;
+}
+
+/** The first queued removal that may run at `now`. */
+function dueRemoval(queue: Removal[], now: number): Removal | undefined {
+  return queue.find((job) => (job.notBefore ?? 0) <= now);
+}
+
+/** The queued removal that may run first. */
+function nextRemoval(queue: Removal[]): Removal | undefined {
+  let next: Removal | undefined;
+  for (const job of queue) {
+    if (next === undefined || (job.notBefore ?? 0) < (next.notBefore ?? 0)) next = job;
+  }
+  return next;
 }
 
 /** Refresh the access token this long before it expires. */
@@ -347,7 +372,8 @@ export class AccountSync extends DurableObject<Env> {
     if (otherWork) await this.setSyncAlarm(Date.now() + delayMs);
     else if (left) {
       // The alarm is for the checks now; other work must not take it for the retry's.
-      if ((await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === RETRY_ALARM) {
+      const kind = await this.ctx.storage.get(FEED_ONLY_ALARM_KEY);
+      if (kind === RETRY_ALARM || kind === REMOVAL_ALARM) {
         await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, true);
       }
       await this.ctx.storage.setAlarm(Date.now() + delayMs);
@@ -355,12 +381,16 @@ export class AccountSync extends DurableObject<Env> {
     return true;
   }
 
-  /** True if sync work waits: a full cycle, rules, removals, or the account's retirement. */
+  /**
+   * True if sync work waits: a full cycle, rules, due removals, or the account's retirement. A
+   * removal that waits after a failed attempt has its own alarm (`keepRemovalAlarm()`).
+   */
   private async hasSyncWork(feedOnly: boolean): Promise<boolean> {
     return (
       !feedOnly ||
       ((await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? []).length > 0 ||
-      ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []).length > 0 ||
+      dueRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [], Date.now()) !==
+        undefined ||
       ((await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false)
     );
   }
@@ -482,13 +512,30 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * The pending alarm, or null if it only waits for a retry of a failed sync request. Other work
-   * may then set an earlier alarm; the alarm sets the retry's again when it is done.
+   * The pending alarm, or null if it only waits for a retry of a failed sync request or for a
+   * removal's next attempt. Other work may then set an earlier alarm; the alarm sets the waiting
+   * one again when it is done.
    */
   private async pendingAlarm(): Promise<number | null> {
     const pending = await this.ctx.storage.getAlarm();
     const kind = await this.ctx.storage.get(FEED_ONLY_ALARM_KEY);
-    return kind === RETRY_ALARM ? null : pending;
+    return kind === RETRY_ALARM || kind === REMOVAL_ALARM ? null : pending;
+  }
+
+  /**
+   * Keep an alarm for a removal that waits after a failed attempt once no other alarm is set. An
+   * earlier retry of a failed sync request goes first; this alarm is set after it.
+   */
+  private async keepRemovalAlarm(): Promise<void> {
+    const next = nextRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []);
+    if (!next || (await this.ctx.storage.getAlarm()) !== null) return;
+    const at = next.notBefore ?? Date.now();
+    const retry = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
+    if (retry && retry.at < at) return;
+    // The mark lets other work replace this alarm (`pendingAlarm()`), and it keeps the alarm from
+    // going on to a full cycle.
+    await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, REMOVAL_ALARM);
+    await this.ctx.storage.setAlarm(at);
   }
 
   /** Keep an alarm for a pending retry of a failed sync request once no other alarm is set. */
@@ -752,7 +799,7 @@ export class AccountSync extends DurableObject<Env> {
   async removeRuleBlocks(
     ruleId: string,
     remoteCalendarId: string,
-  ): Promise<{ removed: number; remaining: number; throttled: boolean }> {
+  ): Promise<{ removed: number; remaining: number; throttled: boolean; retryAfterMs?: number }> {
     const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
     const blocks = await target.existingBlocks(remoteCalendarId, cleanupWindow(), [ruleTag]);
@@ -762,17 +809,20 @@ export class AccountSync extends DurableObject<Env> {
       marker: block.marker,
     }));
     let removed = 0;
-    let throttled = false;
+    let retryAfterMs: number | undefined;
     for (const batch of chunk(actions, target.batchLimit).slice(0, MAX_BATCHES_PER_RUN)) {
       const result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
       if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
       removed += batch.length - result.failed - result.throttled;
       if (result.throttled > 0) {
-        throttled = true;
+        // Further batches would only extend the penalty.
+        retryAfterMs = clampRetryAfter(result.retryAfterMs);
         break;
       }
     }
-    return { removed, remaining: actions.length - removed, throttled };
+    const remaining = actions.length - removed;
+    if (retryAfterMs === undefined) return { removed, remaining, throttled: false };
+    return { removed, remaining, throttled: true, retryAfterMs };
   }
 
   /**
@@ -800,32 +850,62 @@ export class AccountSync extends DurableObject<Env> {
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
   }
 
-  /** Run one queued removal. Returns false if there was none. */
+  /**
+   * Run one queued removal that is due. Returns false if none is due, so that the account's rules
+   * run while a removal waits after a failed attempt. A retiring account waits for its removals.
+   */
   private async runRemoval(): Promise<boolean> {
     const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
-    const [job] = queue;
-    if (!job) return false;
-    let outcome: "done" | "continue" | "retry" = "done";
+    if (queue.length === 0) return false;
+    // The removal's own alarm runs the job it waits for, even if the clock reads a moment early.
+    const ownAlarm = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === REMOVAL_ALARM;
+    const job = dueRemoval(queue, Date.now()) ?? (ownAlarm ? nextRemoval(queue) : undefined);
+    if (!job) return (await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false;
+    let outcome: "done" | "continue" | "throttled" | "failed" = "done";
     let delayMs = this.delays().nextRun;
+    let backoff = true;
     try {
       const result = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
-      // A run without progress and without throttling failed, for example with 403 on every
-      // block. It counts as an attempt, so that the job cannot block the account's syncs forever.
-      if (result.remaining > 0 && (result.removed > 0 || result.throttled)) outcome = "continue";
-      else if (result.remaining > 0 && job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) outcome = "retry";
+      if (result.throttled) {
+        outcome = "continue";
+        delayMs = result.retryAfterMs ?? delayMs;
+      } else if (result.remaining > 0) {
+        // A run without progress failed, for example with 403 on every block.
+        outcome = result.removed > 0 ? "continue" : "failed";
+      }
     } catch (error) {
       console.error("Queued removal failed", job.ruleId, error);
       const throttleDelay = throttleDelayMs(error);
-      if (throttleDelay !== null) delayMs = throttleDelay;
-      if (throttleDelay !== null || job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) outcome = "retry";
+      if (throttleDelay !== null) {
+        outcome = "throttled";
+        delayMs = throttleDelay;
+      } else {
+        outcome = "failed";
+        // Refused tokens wait for the user to connect the account again, not for the provider.
+        backoff = !(error instanceof TokenError && RECONNECT_CODES.has(error.code));
+      }
     }
+    // Throttling is no failed attempt: the job waits for `Retry-After` instead.
+    const attempts = outcome === "failed" ? job.attempts + 1 : job.attempts;
+    const wait = REMOVAL_BACKOFF_MS[attempts - 1];
+    const next: Removal = {
+      ruleId: job.ruleId,
+      remoteCalendarId: job.remoteCalendarId,
+      attempts,
+      ...(outcome === "failed" && backoff && wait !== undefined
+        ? { notBefore: Date.now() + wait }
+        : {}),
+    };
     // Removals queued during the provider calls are in the stored queue, not in `queue`.
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
       const others = current.filter((queued) => !sameRemoval(queued, job));
-      if (outcome === "continue") return [job, ...others];
-      if (outcome === "retry") return [...others, { ...job, attempts: job.attempts + 1 }];
+      if (outcome === "continue") return [next, ...others];
+      if (outcome === "throttled") return [...others, next];
+      // After the last attempt the job is dropped, so that it cannot hold the account forever.
+      if (outcome === "failed" && attempts < MAX_REMOVAL_ATTEMPTS) return [...others, next];
       return others;
     });
+    // The next alarm runs the rules or a full cycle while this removal waits.
     await this.setSyncAlarm(Date.now() + delayMs);
     return true;
   }
@@ -839,14 +919,15 @@ export class AccountSync extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     await this.runAlarm();
-    // After the last rule or check no alarm is left; a pending retry still needs one.
+    // After the last rule or check no alarm is left; a waiting removal or retry still needs one.
+    await this.keepRemovalAlarm();
     await this.keepRetryAlarm();
   }
 
   private async runAlarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
-    // Change feeds come first, then removals, one per alarm; the rules follow once none is left.
+    // Change feeds come first, then due removals, one per alarm; the rules follow once none is due.
     if (await this.runChangeCheck(accountId)) return;
     if (await this.runRemoval()) return;
     if (await this.ctx.storage.get<boolean>(RETIRING_KEY)) {

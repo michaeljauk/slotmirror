@@ -5,6 +5,7 @@ import * as z from "zod/mini";
 import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
+  errorCode,
   latestRuleOutcomes,
   orgActivity,
   purgeAuditEvents,
@@ -342,7 +343,12 @@ app.get("/admin", async (c) => {
 async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
   const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();
   for (const { id } of results) {
-    await accountSync(env, id).tick();
+    // One failing account must not stop the ticks of the others.
+    try {
+      await accountSync(env, id).tick();
+    } catch (error) {
+      console.error("Cron tick failed", id, errorCode(error));
+    }
   }
   await purgeAuditEvents(env.DB);
 }

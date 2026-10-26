@@ -48,6 +48,13 @@ export interface RunResult {
   retryAfterMs?: number;
 }
 
+export interface RunOptions {
+  /** Plan only and write nothing. */
+  dryRun?: boolean;
+  /** The alarm runs the rule: skip it if its source account needs reconnecting. */
+  fromAlarm?: boolean;
+}
+
 /** Pause between two alarm runs of one queue when nothing is throttled. */
 const NEXT_RUN_MS = 1_000;
 
@@ -207,7 +214,7 @@ export class AccountSync extends DurableObject<Env> {
   async tick(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
-    const pause = await this.pause();
+    const pause = (await this.pause()) ?? (await this.pauseForStaleFlag(accountId));
     if (pause) {
       await this.whilePaused(accountId, pause);
       return;
@@ -539,7 +546,36 @@ export class AccountSync extends DurableObject<Env> {
     if (started) await this.finishPause(accountId, since);
   }
 
-  /** Set the D1 flag and send the alert of a pause, each once. */
+  /**
+   * D1 shows the account as needing a reconnect, but this instance has no pause. Older versions
+   * set only the flag, and a late flag write can outlive a reconnect. Pause and probe at once:
+   * if the token works, the probe ends the pause and clears the flag. No alert; the flag was set
+   * before.
+   */
+  private async pauseForStaleFlag(accountId: string): Promise<Pause | null> {
+    const row = await this.env.DB.prepare(
+      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
+    )
+      .bind(accountId)
+      .first<{ flag: number }>();
+    if (row?.flag !== 1) return null;
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const current = await this.pause();
+      if (current) return current;
+      const now = Date.now();
+      const pause: Pause = {
+        code: "needs_reconnect",
+        since: now,
+        flagPending: false,
+        alertPending: false,
+        probeAt: now,
+      };
+      await this.ctx.storage.put(PAUSE_KEY, pause);
+      return pause;
+    });
+  }
+
+  /** Set the D1 flag and send the alert of a pause, each at most once. */
   private async finishPause(accountId: string, since: number): Promise<void> {
     let pause = await this.pause();
     if (pause?.since !== since) return;
@@ -558,16 +594,19 @@ export class AccountSync extends DurableObject<Env> {
         return;
       }
     }
-    if (pause.alertPending) {
-      await sendReconnectAlert(this.env, this.providerOrDefault());
-      await this.updatePause(since, (current) => ({ ...current, alertPending: false }));
-    }
+    // Claimed before the request, so that the alert goes out at most once. A failed post is lost.
+    let claimed = false;
+    await this.updatePause(since, (current) => {
+      claimed = current.alertPending;
+      return { ...current, alertPending: false };
+    });
+    if (claimed) await sendReconnectAlert(this.env, this.providerOrDefault());
   }
 
   /** The alarm's and the tick's work while paused: finish the pause, and probe once a day. */
   private async whilePaused(accountId: string, pause: Pause): Promise<void> {
     await this.finishPause(accountId, pause.since);
-    if (Date.now() >= pause.probeAt) await this.probe(pause.since);
+    await this.probe(pause.since);
   }
 
   /**
@@ -575,9 +614,15 @@ export class AccountSync extends DurableObject<Env> {
    * for a while. If the provider accepts it, the pause ends and a sync starts.
    */
   private async probe(since: number): Promise<void> {
-    // The next probe waits a day, also if this one fails or the instance goes away during it.
-    const next = Date.now() + PROBE_EVERY_MS;
-    if (!(await this.updatePause(since, (current) => ({ ...current, probeAt: next })))) return;
+    // Claimed in one step: an overlapping tick or alarm finds the next probe a day away. The next
+    // probe also waits a day if this one fails or the instance goes away during it.
+    let due = false;
+    await this.updatePause(since, (current) => {
+      const now = Date.now();
+      due = now >= current.probeAt;
+      return due ? { ...current, probeAt: now + PROBE_EVERY_MS } : current;
+    });
+    if (!due) return;
     const stored = await this.readTokens();
     try {
       await this.refresh(stored.accountId, stored.provider, stored.tokens.refreshToken);
@@ -651,7 +696,7 @@ export class AccountSync extends DurableObject<Env> {
    * Run one rule whose target calendar belongs to this account. With `dryRun`, plan only and
    * write nothing.
    */
-  async runRule(ruleId: string, options: { dryRun?: boolean } = {}): Promise<RunResult> {
+  async runRule(ruleId: string, options: RunOptions = {}): Promise<RunResult> {
     try {
       return await this.executeRule(ruleId, options);
     } catch (error) {
@@ -661,12 +706,24 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  private async executeRule(ruleId: string, options: { dryRun?: boolean }): Promise<RunResult> {
+  private async executeRule(ruleId: string, options: RunOptions): Promise<RunResult> {
     const startedAt = Date.now();
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
     if (rule.target.accountId !== this.accountId()) {
       throw new Error("A rule runs in the instance of its target account");
+    }
+    // The rule was queued before its source account needed reconnecting. Its read would only
+    // fail; it runs again in the full cycle after the reconnect. No audit entry.
+    if (options.fromAlarm && rule.source.needsReconnect) {
+      return {
+        ruleId,
+        dryRun: false,
+        stats: { create: 0, update: 0, delete: 0, unchanged: 0 },
+        applied: 0,
+        failed: 0,
+        remaining: 0,
+      };
     }
 
     const window = syncWindow(rule.options);
@@ -912,7 +969,7 @@ export class AccountSync extends DurableObject<Env> {
     let removedBlocks = false;
     let delayMs = this.delays().nextRun;
     try {
-      const result = await this.runRule(ruleId);
+      const result = await this.runRule(ruleId, { fromAlarm: true });
       unfinished = result.remaining > 0;
       removedBlocks = result.stats.delete > 0;
       delayMs = result.retryAfterMs ?? this.delays().nextRun;
@@ -1169,13 +1226,6 @@ export class AccountSync extends DurableObject<Env> {
       },
       provider,
     );
-    // The provider accepted the token, so a flag from an older refusal is stale. No row changes
-    // in the normal case.
-    await this.env.DB.prepare(
-      "UPDATE accounts SET needs_reconnect = 0 WHERE id = ? AND needs_reconnect = 1",
-    )
-      .bind(accountId)
-      .run();
     return response.access_token;
   }
 

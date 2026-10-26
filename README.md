@@ -216,10 +216,12 @@ marks the account and stops its work until the user connects it again:
 - Once a day, slotmirror tries the refused token again. Some refusals end by themselves, for
   example when an admin enables a disabled user again. If the provider accepts the token, the
   mark goes and a full sync starts. A refused try adds one more "Token refresh failed" entry.
+- An account that an older version marked tries its token at the next cron tick, without an
+  alert.
 - When the user connects the same account again, the mark goes and a full sync starts.
 
 **Alerts.** If you set the secret `ALERT_WEBHOOK_URL`, slotmirror posts `{"text": "..."}` to it
-each time an account changes to "needs reconnecting". The text names the provider and
+at most once each time an account changes to "needs reconnecting". The text names the provider and
 `PUBLIC_URL`, never the account, the user or any event. This is the format of Slack incoming
 webhooks; Google Chat and Mattermost accept it too. Microsoft Teams needs its own card format, so
 use a Teams workflow that takes the `text` field. The URL must start with `https://`. A failed

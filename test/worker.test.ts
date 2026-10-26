@@ -4,7 +4,7 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { SESSION_COOKIE, signSession } from "../src/session";
 import { addAccount, BASE, signIn } from "./helpers";
@@ -53,6 +53,42 @@ describe("worker", () => {
     expect(
       await runInDurableObject(idle, (_instance, state) => state.storage.getAlarm()),
     ).toBeNull();
+  });
+
+  it("ticks every account on cron, also after the tick of one account failed", async () => {
+    const { user } = await signIn("owner@example.com");
+    // Inserted first, so that the cron ticks it first.
+    await addAccount(user.id, "acc-cron-broken", "cron-broken@example.com");
+    await addAccount(user.id, "acc-cron-fine", "cron-fine@example.com");
+    const tokens = { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 };
+    const broken = env.ACCOUNT_SYNC.getByName("acc-cron-broken");
+    await broken.storeTokens("acc-cron-broken", tokens);
+    // Tokens that no longer decrypt, e.g. after a key change: its tick probes and throws.
+    await runInDurableObject(broken, (_instance, state) => {
+      state.storage.sql.exec("UPDATE tokens SET ciphertext = x'00'");
+    });
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-cron-broken'",
+    ).run();
+    const fine = env.ACCOUNT_SYNC.getByName("acc-cron-fine");
+    await fine.storeTokens("acc-cron-fine", {
+      ...tokens,
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await worker.scheduled(createScheduledController(), env);
+
+    expect(
+      await runInDurableObject(fine, (_instance, state) => state.storage.getAlarm()),
+    ).not.toBeNull();
+    const logged = JSON.stringify(errors.mock.calls);
+    expect(logged).toContain("acc-cron-broken");
+    expect(logged).not.toContain("cron-broken@example.com");
+    // Later tests in this file share the database.
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 0 WHERE id = 'acc-cron-broken'",
+    ).run();
   });
 
   it("creates the account tables in the Durable Object", async () => {

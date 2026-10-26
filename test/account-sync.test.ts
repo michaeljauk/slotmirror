@@ -1219,19 +1219,175 @@ describe("accounts that need reconnecting", () => {
     expect(await auditCount("acc-probe-no", "token_refresh_failed")).toBe(2);
   });
 
-  it("clears a stale flag in D1 after a successful refresh", async () => {
+  it("probes at the next tick if D1 has the flag but the instance has no pause", async () => {
+    // As main left it: the flag from a refusal, but no pause in the Durable Object.
     const { stub } = await setupRule("acc-stale-flag");
-    await env.DB.prepare(
-      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-stale-flag'",
-    ).run();
     await stub.storeTokens("acc-stale-flag", {
       refreshToken: "r",
       accessToken: "a",
       accessExpiresAt: 0,
     });
-    fakeGraph();
-    await stub.listCalendars().catch(() => undefined);
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-stale-flag'",
+    ).run();
+    const calls = fakeGraph();
+    await stub.tick();
+    expect(calls.filter((call) => call.url.includes("/oauth2/v2.0/token"))).toHaveLength(1);
     expect(await d1Flag("acc-stale-flag")).toBe(0);
+    expect(await storedPause(stub)).toBeUndefined();
+    expect(await pendingAlarm(stub)).not.toBeNull();
+  });
+
+  it("pauses without an alert if the probe of a stale flag is refused", async () => {
+    const { stub } = await setupRule("acc-stale-refused");
+    await stub.storeTokens("acc-stale-refused", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-stale-refused'",
+    ).run();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const calls = refusingTokenEndpoint();
+    await stub.tick();
+    await stub.tick();
+    expect(calls.token).toBe(1);
+    expect(calls.alerts).toHaveLength(0);
+    expect(await storedPause(stub)).toBeDefined();
+    expect(await d1Flag("acc-stale-refused")).toBe(1);
+  });
+
+  it("writes nothing to D1 about the flag after a normal refresh", async () => {
+    const { stub } = await setupRule("acc-no-write");
+    await stub.storeTokens("acc-no-write", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    const statements: string[] = [];
+    await runInDurableObject(stub, (instance: AccountSync) => {
+      const target = instance as unknown as { env: Env };
+      const real = target.env.DB;
+      target.env = {
+        ...target.env,
+        DB: new Proxy(real, {
+          get(object, key) {
+            if (key === "prepare") {
+              return (sql: string) => {
+                statements.push(sql);
+                return object.prepare(sql);
+              };
+            }
+            const value: unknown = Reflect.get(object, key);
+            return typeof value === "function" ? value.bind(object) : value;
+          },
+        }),
+      };
+    });
+    const calls = fakeGraph();
+    await stub.listCalendars().catch(() => undefined);
+    expect(calls.filter((call) => call.url.includes("/oauth2/v2.0/token"))).toHaveLength(1);
+    expect(statements.filter((sql) => sql.includes("needs_reconnect"))).toEqual([]);
+  });
+
+  /**
+   * Delay the D1 write of the flag, so that a second tick reads the pause while the first one
+   * still waits on that write.
+   */
+  async function slowFlagWrite(stub: DurableObjectStub<AccountSync>): Promise<void> {
+    await runInDurableObject(stub, (instance: AccountSync) => {
+      const target = instance as unknown as { env: Env };
+      const real = target.env.DB;
+      target.env = {
+        ...target.env,
+        DB: new Proxy(real, {
+          get(object, key) {
+            if (key === "prepare") {
+              return (sql: string) => {
+                const statement = object.prepare(sql);
+                if (!sql.includes("SET needs_reconnect = 1")) return statement;
+                return {
+                  bind: (...values: unknown[]) => ({
+                    run: async () => {
+                      await new Promise((resolve) => setTimeout(resolve, 50));
+                      return statement.bind(...values).run();
+                    },
+                  }),
+                };
+              };
+            }
+            const value: unknown = Reflect.get(object, key);
+            return typeof value === "function" ? value.bind(object) : value;
+          },
+        }),
+      };
+    });
+  }
+
+  it("sends the alert at most once when two ticks overlap", async () => {
+    const { stub } = await setupRule("acc-overlap-alert");
+    await stub.storeTokens("acc-overlap-alert", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    const alerts: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === env.ALERT_WEBHOOK_URL) {
+        alerts.push(url);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return new Response("ok");
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("needsReconnect", {
+        code: "invalid_grant",
+        since: 1,
+        flagPending: true,
+        alertPending: true,
+        probeAt: Date.now() + 86_400_000,
+      }),
+    );
+    await slowFlagWrite(stub);
+    await Promise.all([stub.tick(), stub.tick()]);
+    expect(alerts).toHaveLength(1);
+    expect((await storedPause(stub))?.alertPending).toBe(false);
+  });
+
+  it("probes at most once when two ticks overlap", async () => {
+    const { stub } = await setupRule("acc-overlap-probe");
+    await stub.storeTokens("acc-overlap-probe", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let tokenCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/oauth2/v2.0/token")) {
+        tokenCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      return new Response("ok");
+    });
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("needsReconnect", {
+        code: "invalid_grant",
+        since: 1,
+        // The D1 write lets the second tick in before the first one probes.
+        flagPending: true,
+        alertPending: false,
+        probeAt: 0,
+      }),
+    );
+    await slowFlagWrite(stub);
+    await Promise.all([stub.tick(), stub.tick()]);
+    expect(tokenCalls).toBe(1);
   });
 
   it("neither pauses nor alerts for an account whose row is already gone", async () => {
@@ -1245,40 +1401,65 @@ describe("accounts that need reconnecting", () => {
     expect(calls.alerts).toHaveLength(0);
   });
 
-  it("does not run rules whose source account needs reconnecting", async () => {
+  /**
+   * A healthy target account with a rule from a source account that D1 marks as needing a
+   * reconnect. The source has working tokens, so a run of the rule would reach Graph.
+   */
+  async function ruleFromFlaggedSource(prefix: string) {
     const { user } = await signIn("owner@example.com");
+    const source = `${prefix}-src`;
+    const target = `${prefix}-dst`;
+    const ruleId = `${prefix}-rule`;
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO accounts (id, user_id, provider, email, needs_reconnect) VALUES ('acc-paused-src', ?, 'microsoft', 'paused-src@example.com', 1)",
-      ).bind(user.id),
+        "INSERT INTO accounts (id, user_id, provider, email, needs_reconnect) VALUES (?, ?, 'microsoft', ?, 1)",
+      ).bind(source, user.id, `${source}@example.com`),
       env.DB.prepare(
-        "INSERT INTO accounts (id, user_id, provider, email) VALUES ('acc-healthy-dst', ?, 'microsoft', 'healthy-dst@example.com')",
-      ).bind(user.id),
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
+      ).bind(target, user.id, `${target}@example.com`),
       env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('paused-src-cal', 'acc-paused-src', ?, 'Work')",
-      ).bind(SOURCE_CAL),
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Work')",
+      ).bind(`${source}-cal`, source, SOURCE_CAL),
       env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('healthy-dst-cal', 'acc-healthy-dst', ?, 'Test')",
-      ).bind(TARGET_CAL),
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Test')",
+      ).bind(`${target}-cal`, target, TARGET_CAL),
       env.DB.prepare(
-        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES ('rule-from-paused', ?, 'paused-src-cal', 'healthy-dst-cal')",
-      ).bind(user.id),
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, ?, ?)",
+      ).bind(ruleId, user.id, `${source}-cal`, `${target}-cal`),
     ]);
-    const stub = env.ACCOUNT_SYNC.getByName("acc-healthy-dst");
-    await stub.storeTokens("acc-healthy-dst", {
-      refreshToken: "r",
-      accessToken: "a",
-      accessExpiresAt: Date.now() + 3_600_000,
-    });
+    const tokens = { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() + 3_600_000 };
+    await env.ACCOUNT_SYNC.getByName(source).storeTokens(source, tokens);
+    const stub = env.ACCOUNT_SYNC.getByName(target);
+    await stub.storeTokens(target, tokens);
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const calls = fakeGraph();
+    return { stub, ruleId, calls: fakeGraph() };
+  }
 
+  it("does not run rules whose source account needs reconnecting", async () => {
+    const { stub, ruleId, calls } = await ruleFromFlaggedSource("flagged-a");
     await stub.requestSync();
     await runDurableObjectAlarm(stub);
-    expect(await auditOf("rule-from-paused")).toHaveLength(0);
+    expect(await auditOf(ruleId)).toHaveLength(0);
     expect(calls.some((call) => call.url.includes(`/calendars/${SOURCE_CAL}`))).toBe(false);
     // The cron finds no rule to poll either, although no calendar is watched.
     await stub.tick();
     expect(await pendingAlarm(stub)).toBeNull();
+  });
+
+  it("skips a queued rule whose source account needs reconnecting, without an audit entry", async () => {
+    const { stub, ruleId, calls } = await ruleFromFlaggedSource("flagged-b");
+    // Queued before the flag was set, or added as a follower of another rule.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [ruleId]);
+      await state.storage.put("fullCycleAt", Date.now());
+    });
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(ruleId)).toHaveLength(0);
+    expect(calls.some((call) => call.url.includes(`/calendars/${SOURCE_CAL}`))).toBe(false);
+    const queue = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get<string[]>("ruleQueue"),
+    );
+    expect(queue ?? []).toEqual([]);
   });
 });

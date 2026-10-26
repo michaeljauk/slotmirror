@@ -18,6 +18,8 @@ interface RuleEnd {
   /** Address and Entra tenant of the account; they decide whether it belongs to the org. */
   email: string;
   tenantId: string | null;
+  /** The provider refused the account's refresh token; see `accounts.needs_reconnect`. */
+  needsReconnect: boolean;
 }
 
 interface RuleRow {
@@ -31,19 +33,23 @@ interface RuleRow {
   sourceRemoteId: string;
   sourceEmail: string;
   sourceTenantId: string | null;
+  sourceNeedsReconnect: number;
   targetAccountId: string;
   targetProvider: string;
   targetRemoteId: string;
   targetEmail: string;
   targetTenantId: string | null;
+  targetNeedsReconnect: number;
 }
 
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
          sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+         sa.needs_reconnect AS sourceNeedsReconnect,
          ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
-         ta.email AS targetEmail, ta.tenant_id AS targetTenantId
+         ta.email AS targetEmail, ta.tenant_id AS targetTenantId,
+         ta.needs_reconnect AS targetNeedsReconnect
   FROM rules r
   JOIN users u ON u.id = r.user_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
@@ -64,6 +70,7 @@ function toContext(row: RuleRow): RuleContext {
       remoteCalendarId: row.sourceRemoteId,
       email: row.sourceEmail,
       tenantId: row.sourceTenantId,
+      needsReconnect: row.sourceNeedsReconnect === 1,
     },
     target: {
       accountId: row.targetAccountId,
@@ -71,6 +78,7 @@ function toContext(row: RuleRow): RuleContext {
       remoteCalendarId: row.targetRemoteId,
       email: row.targetEmail,
       tenantId: row.targetTenantId,
+      needsReconnect: row.targetNeedsReconnect === 1,
     },
   };
 }

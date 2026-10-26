@@ -15,7 +15,7 @@ import {
   type BatchResult,
 } from "../sync/throttle";
 import type { ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
-import type { CalendarClient, CalendarInfo, TimeWindow } from "./calendar-client";
+import type { CalendarClient, CalendarInfo, TimeWindow, Watch } from "./calendar-client";
 
 const API = "https://www.googleapis.com/calendar/v3";
 const BATCH_URL = "https://www.googleapis.com/batch/calendar/v3";
@@ -31,6 +31,13 @@ const calendarListSchema = z.object({
     }),
   ),
   nextPageToken: z.optional(z.string()),
+});
+
+const channelSchema = z.object({
+  id: z.string(),
+  resourceId: z.string(),
+  /** Unix milliseconds as a string. */
+  expiration: z.string(),
 });
 
 const eventsPageSchema = z.object({
@@ -152,6 +159,43 @@ export class GoogleCalendar implements CalendarClient {
       response.headers.get("content-type") ?? "",
     );
     return summarizeBatch(actions, (index) => statuses.get(index) ?? { status: undefined });
+  }
+
+  async watch(calendarId: string, url: string, token: string, expiresAt: number): Promise<Watch> {
+    const response = await fetch(
+      `${API}/calendars/${encodeURIComponent(calendarId)}/events/watch`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: crypto.randomUUID(),
+          type: "web_hook",
+          address: url,
+          token,
+          expiration: expiresAt,
+        }),
+      },
+    );
+    if (!response.ok) throw await googleError(response, "watch");
+    const body = channelSchema.parse(await response.json());
+    return { id: body.id, resourceId: body.resourceId, expiresAt: Number(body.expiration) };
+  }
+
+  /** Google channels cannot be extended. */
+  renew(): Promise<Watch | null> {
+    return Promise.resolve(null);
+  }
+
+  async unwatch(watch: Watch): Promise<void> {
+    const response = await fetch(`${API}/channels/stop`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: watch.id, resourceId: watch.resourceId }),
+    });
+    if (!response.ok && response.status !== 404) throw await googleError(response, "stop");
   }
 
   private async listEvents(

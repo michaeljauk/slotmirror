@@ -16,6 +16,8 @@ import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
 import { accountSync } from "./durable";
+import type { Watch } from "./providers/calendar-client";
+import { webhookToken, webhookUrl } from "./webhooks";
 
 export interface StoredTokens {
   refreshToken: string;
@@ -48,6 +50,12 @@ const RULE_QUEUE_KEY = "ruleQueue";
 
 /** Durable Object storage key of block removals for deleted or switched-off rules. */
 const REMOVAL_QUEUE_KEY = "removalQueue";
+
+/** How long a new watch lasts. Graph allows under 7 days for events. */
+const WATCH_LIFETIME_MS = 6 * 24 * 60 * 60 * 1000;
+
+/** Renew a watch when less than this is left. The cron runs every 10 minutes, so this is plenty. */
+const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
 
 /** Give up on a removal after this many failed attempts; the blocks then stay. */
 const MAX_REMOVAL_ATTEMPTS = 5;
@@ -126,6 +134,18 @@ export class AccountSync extends DurableObject<Env> {
 
   /** Delete tokens and subscriptions, and cancel a pending sync. */
   async forget(): Promise<void> {
+    // Stop the provider's notifications while the tokens still work. Best effort: watches end
+    // on their own within days.
+    try {
+      const client = await this.client();
+      for (const watch of this.storedWatches()) {
+        await client.unwatch(watch).catch((error: unknown) => {
+          console.error("Stopping a watch failed", watch.id, error);
+        });
+      }
+    } catch (error) {
+      console.error("Stopping watches failed", error);
+    }
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     // The instance can live on after deleteAll(); give it empty tables again.
@@ -341,7 +361,10 @@ export class AccountSync extends DurableObject<Env> {
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) queue = await rulesTargetingAccount(this.env.DB, accountId);
     const [ruleId, ...rest] = queue;
-    if (!ruleId) return;
+    if (!ruleId) {
+      await this.ensureWatchesSafely();
+      return;
+    }
 
     let unfinished = false;
     let delayMs = NEXT_RUN_MS;
@@ -366,7 +389,98 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + delayMs);
     } else {
       await this.ctx.storage.delete(RULE_QUEUE_KEY);
+      // The cycle is done: check the watches once per cycle, with the rest of the budget.
+      await this.ensureWatchesSafely();
     }
+  }
+
+  /**
+   * Keep one watch per calendar that a rule reads or writes: create missing ones, renew those that
+   * expire within a day, and stop those no rule needs. Without PUBLIC_URL all watches stop, and only
+   * the cron syncs. A failure leaves the cron as the fallback for that calendar.
+   */
+  async ensureWatches(): Promise<void> {
+    const accountId = this.accountIdOrNull();
+    if (!accountId) return;
+    const url = webhookUrl(this.env, this.providerOrDefault(), accountId);
+    const stored = this.storedWatches();
+    const { results } = await this.env.DB.prepare(
+      `SELECT DISTINCT c.remote_id AS remoteId FROM calendars c
+       JOIN rules r ON (r.source_calendar_id = c.id OR r.target_calendar_id = c.id)
+       WHERE c.account_id = ? AND r.enabled = 1`,
+    )
+      .bind(accountId)
+      .all<{ remoteId: string }>();
+    const needed = url ? new Set(results.map((row) => row.remoteId)) : new Set<string>();
+    if (needed.size === 0 && stored.length === 0) return;
+
+    const client = await this.client();
+    const now = Date.now();
+    for (const watch of stored) {
+      if (needed.has(watch.calendarId)) continue;
+      await client.unwatch(watch).catch((error: unknown) => {
+        console.error("Stopping a watch failed", watch.id, error);
+      });
+      this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
+    }
+    if (!url) return;
+    const token = await webhookToken(this.env, accountId);
+    for (const calendarId of needed) {
+      const current = stored.find((watch) => watch.calendarId === calendarId);
+      if (current && current.expiresAt - now > RENEW_BEFORE_MS) continue;
+      try {
+        const renewed = current ? await client.renew(current, now + WATCH_LIFETIME_MS) : null;
+        if (renewed) {
+          this.storeWatch(calendarId, renewed, current?.id);
+          continue;
+        }
+        const fresh = await client.watch(calendarId, url, token, now + WATCH_LIFETIME_MS);
+        this.storeWatch(calendarId, fresh, current?.id);
+        // Google channels cannot be extended: the old one overlaps briefly, then stops.
+        if (current) await client.unwatch(current).catch(() => undefined);
+      } catch (error) {
+        console.error("Watching a calendar failed", calendarId, error);
+      }
+    }
+  }
+
+  /** Watches are an optimisation; a failure, such as a revoked token, must not break the alarm. */
+  private async ensureWatchesSafely(): Promise<void> {
+    try {
+      await this.ensureWatches();
+    } catch (error) {
+      console.error("Keeping watches failed", error);
+    }
+  }
+
+  private storedWatches(): (Watch & { calendarId: string })[] {
+    return this.ctx.storage.sql
+      .exec<{
+        remote_id: string;
+        calendar_id: string;
+        resource_id: string | null;
+        expires_at: number;
+      }>(`SELECT remote_id, calendar_id, resource_id, expires_at FROM subscriptions`)
+      .toArray()
+      .map((row) => ({
+        id: row.remote_id,
+        calendarId: row.calendar_id,
+        resourceId: row.resource_id,
+        expiresAt: row.expires_at,
+      }));
+  }
+
+  private storeWatch(calendarId: string, watch: Watch, replaces: string | undefined): void {
+    if (replaces)
+      this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, replaces);
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO subscriptions (remote_id, calendar_id, resource_id, expires_at)
+       VALUES (?, ?, ?, ?)`,
+      watch.id,
+      calendarId,
+      watch.resourceId,
+      watch.expiresAt,
+    );
   }
 
   /** A valid access token; refreshes and stores the rotated refresh token when needed. */
@@ -536,4 +650,6 @@ const MIGRATIONS: readonly string[] = [
      expires_at INTEGER NOT NULL
    );`,
   `ALTER TABLE tokens ADD COLUMN provider TEXT NOT NULL DEFAULT 'microsoft'`,
+  // Google needs the resource ID to stop a channel.
+  `ALTER TABLE subscriptions ADD COLUMN resource_id TEXT`,
 ];

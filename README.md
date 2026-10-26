@@ -68,6 +68,7 @@ and sets their own rules. Nobody sees another user's calendars.
 | `TIME_ZONE`                       | variable | IANA time zone for dates in the dashboard, e.g. `Europe/Vienna`. Default `UTC`.            |
 | `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
 | `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in; connecting accounts stays open.   |
+| `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.               |
 | `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set before the first account connects. |
 | `MAX_DETAIL_TO_EXTERNAL`          | variable | Optional cap from org accounts to other accounts: `busy`, `title`, `title_location`.       |
 | `MAX_DETAIL_FROM_EXTERNAL`        | variable | Optional cap from other accounts to org accounts. Same values.                             |
@@ -103,6 +104,19 @@ _To be written._ It needs a web redirect URI on your Worker domain and the deleg
 
 _To be written._ Set the OAuth consent screen to **In production**. In **Testing**, Google
 expires refresh tokens after 7 days.
+
+## Push notifications
+
+With `PUBLIC_URL` set, slotmirror asks Microsoft and Google to notify it when a calendar that a
+rule reads or writes changes. A change then syncs within seconds. Microsoft subscriptions last up
+to 7 days and Google channels until Google ends them; the cron renews both a day before they
+expire. The cron also keeps syncing every 10 minutes, so a missed notification costs at most
+that delay.
+
+Each notification carries a token that only your deployment can compute, an HMAC of the account
+with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `SESSION_SECRET`, the
+existing subscriptions no longer match until they expire and are created again, which can take up
+to 7 days. The cron keeps syncing every 10 minutes in the meantime.
 
 ## Free plan limits
 

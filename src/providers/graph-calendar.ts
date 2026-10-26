@@ -17,7 +17,7 @@ import {
   type BatchResult,
 } from "../sync/throttle";
 import type { DesiredBlock, ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
-import type { CalendarClient, CalendarInfo, TimeWindow } from "./calendar-client";
+import type { CalendarClient, CalendarInfo, TimeWindow, Watch } from "./calendar-client";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -48,6 +48,8 @@ const pageSchema = z.object({
   value: z.array(z.unknown()),
   "@odata.nextLink": z.optional(z.string()),
 });
+
+const subscriptionSchema = z.object({ id: z.string(), expirationDateTime: z.string() });
 
 const batchResponseSchema = z.object({
   responses: z.array(
@@ -192,6 +194,44 @@ export class GraphCalendar implements CalendarClient {
         retryAfterMs: parseRetryAfter(retryAfterHeader(item?.headers)),
       };
     });
+  }
+
+  async watch(calendarId: string, url: string, token: string, expiresAt: number): Promise<Watch> {
+    const response = await fetch(`${GRAPH}/subscriptions`, {
+      method: "POST",
+      headers: { ...this.headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        changeType: "created,updated,deleted",
+        notificationUrl: url,
+        resource: `me/calendars/${calendarId}/events`,
+        expirationDateTime: new Date(expiresAt).toISOString(),
+        clientState: token,
+      }),
+    });
+    if (!response.ok) throw await graphError(response, "subscribe");
+    const body = subscriptionSchema.parse(await response.json());
+    return { id: body.id, resourceId: null, expiresAt: Date.parse(body.expirationDateTime) };
+  }
+
+  async renew(watch: Watch, expiresAt: number): Promise<Watch | null> {
+    const response = await fetch(`${GRAPH}/subscriptions/${encodeURIComponent(watch.id)}`, {
+      method: "PATCH",
+      headers: { ...this.headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({ expirationDateTime: new Date(expiresAt).toISOString() }),
+    });
+    // A subscription Graph already removed cannot be extended; the caller subscribes again.
+    if (response.status === 404) return null;
+    if (!response.ok) throw await graphError(response, "renew");
+    const body = subscriptionSchema.parse(await response.json());
+    return { ...watch, expiresAt: Date.parse(body.expirationDateTime) };
+  }
+
+  async unwatch(watch: Watch): Promise<void> {
+    const response = await fetch(`${GRAPH}/subscriptions/${encodeURIComponent(watch.id)}`, {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+    if (!response.ok && response.status !== 404) throw await graphError(response, "unsubscribe");
   }
 
   private async calendarView(

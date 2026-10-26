@@ -17,6 +17,7 @@ export default defineConfig(async () => {
             ALLOWED_TENANT_IDS: "",
             ADMIN_EMAILS: "admin@example.com",
             SIGN_IN_PROVIDERS: "",
+            PUBLIC_URL: "https://slotmirror.example.workers.dev",
             DATA_JURISDICTION: "",
             MAX_DETAIL_TO_EXTERNAL: "title",
             MAX_DETAIL_FROM_EXTERNAL: "busy",

@@ -27,6 +27,9 @@
     "ADMIN_EMAILS": "",
     "PRIVACY_CONTACT": "",
     "SIGN_IN_PROVIDERS": "",
+    // Public https address of this deployment, e.g. "https://sync.example.com". With it, changes
+    // arrive by push notification within seconds; without it, the cron syncs every 10 minutes.
+    "PUBLIC_URL": "",
     "DATA_JURISDICTION": "",
     "MAX_DETAIL_TO_EXTERNAL": "",
     "MAX_DETAIL_FROM_EXTERNAL": "",

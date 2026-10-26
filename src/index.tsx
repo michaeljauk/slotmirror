@@ -28,6 +28,7 @@ import { loadUser } from "./users";
 import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
+import { isValidToken, notifyChange } from "./webhooks";
 
 export { AccountSync } from "./account-sync";
 
@@ -42,13 +43,32 @@ app.post("/webhooks/microsoft", async (c) => {
   if (validationToken !== undefined) {
     return c.text(validationToken, 200, { "Content-Type": "text/plain" });
   }
-  // Not implemented yet: validate clientState, then requestSync() on the account's instance.
-  // Graph counts a notification as delivered only on a 2xx within 3 seconds.
+  // Graph counts a notification as delivered only on a 2xx within 3 seconds. Every answer is 202,
+  // so that a forged request learns nothing.
+  const accountId = c.req.query("account") ?? "";
+  const body = (await c.req.json().catch(() => null)) as {
+    value?: { clientState?: string }[];
+  } | null;
+  const states = (body?.value ?? []).map((item) => item.clientState);
+  let valid = false;
+  for (const state of states) valid ||= await isValidToken(c.env, accountId, state);
+  if (valid) await notifyChange(c.env, accountId);
   return c.body(null, 202);
 });
 
 // Google Calendar push notifications carry no body; the headers identify the channel.
-app.post("/webhooks/google", (c) => c.body(null, 202));
+app.post("/webhooks/google", async (c) => {
+  const accountId = c.req.query("account") ?? "";
+  // "sync" only confirms a new channel; "exists" and "not_exists" report a change.
+  const state = c.req.header("x-goog-resource-state");
+  if (
+    state !== "sync" &&
+    (await isValidToken(c.env, accountId, c.req.header("x-goog-channel-token")))
+  ) {
+    await notifyChange(c.env, accountId);
+  }
+  return c.body(null, 200);
+});
 
 // Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
 app.use(

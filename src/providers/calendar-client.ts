@@ -16,6 +16,15 @@ export interface CalendarInfo {
   owned: boolean;
 }
 
+/** A change subscription at the provider: a Graph subscription or a Google channel. */
+export interface Watch {
+  id: string;
+  /** Google's resource ID, needed to stop a channel; null for Graph. */
+  resourceId: string | null;
+  /** Unix milliseconds. */
+  expiresAt: number;
+}
+
 export interface TimeWindow {
   start: Date;
   end: Date;
@@ -37,6 +46,15 @@ export interface CalendarClient {
   ): Promise<SourceEvent[]>;
   /** Blocks in the window that carry the given rule tag. */
   existingBlocks(calendarId: string, window: TimeWindow, ruleTag: string): Promise<ExistingBlock[]>;
+  /**
+   * Ask the provider to call `url` when events of the calendar change. `token` comes back with
+   * every notification, so that the Worker can tell real ones from forged ones.
+   */
+  watch(calendarId: string, url: string, token: string, expiresAt: number): Promise<Watch>;
+  /** Extend a watch. Null if the provider cannot extend one; then watch again and stop the old one. */
+  renew(watch: Watch, expiresAt: number): Promise<Watch | null>;
+  /** Stop a watch. A watch that is already gone counts as stopped. */
+  unwatch(watch: Watch): Promise<void>;
   /** Apply up to `batchLimit` actions; already deleted blocks count as success. */
   applyBatch(calendarId: string, ruleTag: string, actions: SyncAction[]): Promise<BatchResult>;
 }
@@ -54,6 +72,9 @@ export function oneCallAtATime(
     sourceEvents: (...args) => run(() => client.sourceEvents(...args)),
     existingBlocks: (...args) => run(() => client.existingBlocks(...args)),
     applyBatch: (...args) => run(() => client.applyBatch(...args)),
+    watch: (...args) => run(() => client.watch(...args)),
+    renew: (...args) => run(() => client.renew(...args)),
+    unwatch: (...args) => run(() => client.unwatch(...args)),
   };
 }
 

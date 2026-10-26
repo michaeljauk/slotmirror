@@ -17,6 +17,7 @@ import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
 import { accountSync } from "./durable";
 import type { Watch } from "./providers/calendar-client";
+import { FakeCalendar, fakeCallCounts, seedFakeEvents } from "./providers/fake-calendar";
 import { webhookToken, webhookUrl } from "./webhooks";
 
 export interface StoredTokens {
@@ -56,6 +57,13 @@ const REMOVAL_QUEUE_KEY = "removalQueue";
  * mode ends tokens after 7 days), or new consent needed.
  */
 const RECONNECT_CODES = new Set(["invalid_grant", "interaction_required", "consent_required"]);
+
+/**
+ * How long a source calendar's events are reused. Within one sync cycle, every rule from that
+ * calendar reads it; with ten accounts that is nine reads of the same data. A new cycle (cron or a
+ * change notification) clears the cache, so a change is never missed.
+ */
+const SOURCE_CACHE_MS = 60_000;
 
 /** How long a new watch lasts. Graph allows under 7 days for events. */
 const WATCH_LIFETIME_MS = 6 * 24 * 60 * 60 * 1000;
@@ -97,6 +105,8 @@ const MAX_BATCHES_PER_RUN = 25;
  */
 export class AccountSync extends DurableObject<Env> {
   private refreshing: Promise<string> | null = null;
+  /** Source events per calendar and window, for the rules of one cycle. See SOURCE_CACHE_MS. */
+  private sourceCache = new Map<string, { at: number; events: Promise<SourceEvent[]> }>();
   /** The last queued provider call. See `client()`. */
   private providerQueue: Promise<unknown> = Promise.resolve();
 
@@ -107,6 +117,8 @@ export class AccountSync extends DurableObject<Env> {
 
   /** Ask for a sync soon. Repeated calls before the alarm fires do not move it. */
   async requestSync(): Promise<void> {
+    // A new cycle starts from the provider's current data.
+    this.sourceCache.clear();
     const pending = await this.ctx.storage.getAlarm();
     if (pending === null) {
       await this.ctx.storage.setAlarm(Date.now() + DEBOUNCE_MS);
@@ -171,9 +183,29 @@ export class AccountSync extends DurableObject<Env> {
     window: { start: Date; end: Date },
     withBody: boolean,
   ): Promise<SourceEvent[]> {
-    return (await this.client()).sourceEvents(remoteCalendarId, window, {
-      withBody,
-    });
+    const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}`;
+    const cached = this.sourceCache.get(key);
+    if (cached && Date.now() - cached.at < SOURCE_CACHE_MS) return cached.events;
+    const events = this.client().then((client) =>
+      client.sourceEvents(remoteCalendarId, window, { withBody }),
+    );
+    this.sourceCache.set(key, { at: Date.now(), events });
+    // A failed read is not cached.
+    events.catch(() => this.sourceCache.delete(key));
+    return events;
+  }
+
+  /** Local load tests only: replace this account's simulated events. */
+  async seedFake(seed: number, count: number): Promise<void> {
+    if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
+    seedFakeEvents(this.ctx.storage.sql, seed, count);
+    this.sourceCache.clear();
+  }
+
+  /** Local load tests only: simulated provider calls since the last seed. */
+  async fakeStats(): Promise<Record<string, number>> {
+    if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
+    return fakeCallCounts(this.ctx.storage.sql);
   }
 
   /**
@@ -537,7 +569,12 @@ export class AccountSync extends DurableObject<Env> {
    */
   private async client(): Promise<CalendarClient> {
     const token = await this.accessToken();
-    return oneCallAtATime(calendarClient(this.providerOrDefault(), token), (call) => {
+    // Local load tests replace the provider; never active without DEV_FAKE_CALENDARS=1.
+    const provider =
+      this.env.DEV_FAKE_CALENDARS === "1" && token === "fake"
+        ? new FakeCalendar(this.ctx.storage.sql, Number(this.env.DEV_FAKE_LATENCY_MS ?? 0))
+        : calendarClient(this.providerOrDefault(), token);
+    return oneCallAtATime(provider, (call) => {
       const result = this.providerQueue.then(call);
       this.providerQueue = result.catch(() => undefined);
       return result;

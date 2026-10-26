@@ -335,28 +335,53 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
 /** One pill per target: "Gmail: all". Exceptions are tinted. Also used on the home page. */
 export function SourcePills(props: { state: EditorState; source: EditorAccount }) {
   const { t } = useI18n();
+  const items = props.state.accounts
+    .filter((account) => account.id !== props.source.id && account.calendar)
+    .flatMap((target) => {
+      const direction = directionOf(props.state, props.source.id, target.id);
+      if (!direction) return [];
+      const exception = direction.origin === "custom" && props.source.inGroup && target.inGroup;
+      return [{ target, choice: direction.effective, exception }];
+    });
+  // With many targets, plain choices shared by three or more targets collapse into one pill.
+  // Exceptions always stay visible. The editor script expands the pills once a choice changes.
+  const counts = new Map<Choice, number>();
+  for (const item of items) {
+    if (!item.exception) counts.set(item.choice, (counts.get(item.choice) ?? 0) + 1);
+  }
+  const collapse = items.length > 4;
+  const grouped = new Set(
+    [...counts].filter(([, count]) => collapse && count >= 3).map(([choice]) => choice),
+  );
   return (
-    <span class="pills">
-      {props.state.accounts
-        .filter((account) => account.id !== props.source.id && account.calendar)
-        .map((target) => {
-          const direction = directionOf(props.state, props.source.id, target.id);
-          if (!direction) return null;
-          const exception = direction.origin === "custom" && props.source.inGroup && target.inGroup;
-          return (
-            <span
-              class={exception ? "pill exception" : "pill"}
-              data-key={`${props.source.id}>${target.id}`}
-            >
-              <span class="pill-arrow" aria-label={t.editor.to}>
-                →
-              </span>
-              <AccountName account={target} />
-              {": "}
-              <b>{t.editor.short[direction.effective]}</b>
-            </span>
-          );
-        })}
+    <span class={grouped.size > 0 ? "pills collapsed" : "pills"}>
+      {items.map((item) => (
+        <span
+          class={[
+            "pill",
+            item.exception ? "exception" : "",
+            !item.exception && grouped.has(item.choice) ? "grouped" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          data-key={`${props.source.id}>${item.target.id}`}
+        >
+          <span class="pill-arrow" aria-label={t.editor.to}>
+            →
+          </span>
+          <AccountName account={item.target} />
+          {": "}
+          <b>{t.editor.short[item.choice]}</b>
+        </span>
+      ))}
+      {[...grouped].map((choice) => (
+        <span class="pill summary">
+          <span class="pill-arrow">→</span>
+          {t.editor.manyTargets(counts.get(choice) ?? 0)}
+          {": "}
+          <b>{t.editor.short[choice]}</b>
+        </span>
+      ))}
     </span>
   );
 }
@@ -365,49 +390,75 @@ export function SourcePills(props: { state: EditorState; source: EditorAccount }
 export function Overview(props: { state: EditorState }) {
   const { t } = useI18n();
   const accounts = props.state.accounts.filter((account) => account.calendar);
+  // With more than four accounts the cells show colour only; the text moves into the tooltip.
+  const compact = accounts.length > 4;
   return (
     <aside class="card overview" id="overview">
       <h2 class="overview-title">{t.editor.viewMatrix}</h2>
-      <table class="matrix">
-        <thead>
-          <tr>
-            <th>{t.editor.matrixCorner}</th>
-            {accounts.map((account) => (
-              <th class="col">
-                <AccountName account={account} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {accounts.map((from) => (
+      <div class="matrix-scroll">
+        <table class={compact ? "matrix compact" : "matrix"}>
+          <thead>
             <tr>
-              <th>
-                <AccountName account={from} />
-              </th>
-              {accounts.map((to) => {
-                if (from.id === to.id) return <td class="cell self" />;
-                const direction = directionOf(props.state, from.id, to.id);
-                const choice = direction?.effective ?? "off";
-                const label =
-                  direction?.origin === "group"
-                    ? t.editor.cellGroup
-                    : direction?.origin === "custom" && from.inGroup && to.inGroup
-                      ? t.editor.cellException
-                      : "";
-                return (
-                  <td class={`cell level-${choice}`} data-key={`${from.id}>${to.id}`}>
-                    <a href={`/rules?open=${from.id}#src-${from.id}`} data-open={from.id}>
-                      {t.editor.short[choice]}
-                      <small>{label}</small>
-                    </a>
-                  </td>
-                );
-              })}
+              <th>{t.editor.matrixCorner}</th>
+              {accounts.map((account) => (
+                <th class="col">
+                  <AccountName account={account} />
+                </th>
+              ))}
             </tr>
+          </thead>
+          <tbody>
+            {accounts.map((from) => (
+              <tr>
+                <th>
+                  <AccountName account={from} />
+                </th>
+                {accounts.map((to) => {
+                  if (from.id === to.id) return <td class="cell self" />;
+                  const direction = directionOf(props.state, from.id, to.id);
+                  const choice = direction?.effective ?? "off";
+                  const label =
+                    direction?.origin === "group"
+                      ? t.editor.cellGroup
+                      : direction?.origin === "custom" && from.inGroup && to.inGroup
+                        ? t.editor.cellException
+                        : "";
+                  const exception = direction?.origin === "custom" && from.inGroup && to.inGroup;
+                  return (
+                    <td
+                      class={`cell level-${choice}${exception ? " exception" : ""}`}
+                      data-key={`${from.id}>${to.id}`}
+                    >
+                      <a
+                        href={`/rules?open=${from.id}#src-${from.id}`}
+                        data-open={from.id}
+                        title={`${from.name} → ${to.name}: ${t.editor.choices[choice]}${label ? ` (${label})` : ""}`}
+                      >
+                        {t.editor.short[choice]}
+                        <small>{label}</small>
+                      </a>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {compact ? (
+        <p class="matrix-legend">
+          {CHOICES.map((choice) => (
+            <span>
+              <i class={`level-${choice}`} />
+              {t.editor.choices[choice]}
+            </span>
           ))}
-        </tbody>
-      </table>
+          <span>
+            <i class="legend-exception" />
+            {t.editor.cellException}
+          </span>
+        </p>
+      ) : null}
       <p class="matrix-hint">{t.editor.matrixHint}</p>
     </aside>
   );

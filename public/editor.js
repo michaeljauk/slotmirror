@@ -35,6 +35,12 @@
       }
     }
     const changed = choice !== original.get(key);
+    // Collapsed pills cannot show a single change; show them one by one from now on.
+    for (const pills of document.querySelectorAll(
+      `.pills.collapsed:has(.pill[data-key="${key}"])`,
+    )) {
+      pills.classList.remove("collapsed");
+    }
     for (const pill of document.querySelectorAll(`.pill[data-key="${key}"]`)) {
       pill.querySelector("b").textContent = short[choice];
       pill.classList.toggle("pending", changed);

@@ -237,6 +237,13 @@ pnpm dev
 | `pnpm check`      | all of the above                                                       |
 | `pnpm cf-typegen` | regenerate `worker-configuration.d.ts` after changing `wrangler.jsonc` |
 
+### Load tests with simulated calendars
+
+`wrangler dev --var DEV_FAKE_CALENDARS:1 --var DEV_FAKE_LATENCY_MS:80` replaces Graph and Google
+with simulated calendars inside the Durable Objects. Signed in as an admin, `POST /dev/seed?accounts=10&events=200`
+creates ten accounts in the block group, `POST /dev/cycle` starts a sync cycle, and `GET /dev/stats`
+counts runs, writes and provider calls. Without the variable the `/dev` routes do not exist.
+
 ### Architecture
 
 ```mermaid

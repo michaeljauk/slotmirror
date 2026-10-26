@@ -11,6 +11,10 @@ interface WorkerSecrets {
   GOOGLE_CLIENT_SECRET: string;
   /** Optional. Bearer token for SCIM provisioning from Entra; without it /scim/v2 does not exist. */
   SCIM_TOKEN?: string;
+  /** Local load tests only, set with `wrangler dev --var`: "1" turns on simulated calendars. */
+  DEV_FAKE_CALENDARS?: string;
+  /** Local load tests only: simulated network time per provider call, in milliseconds. */
+  DEV_FAKE_LATENCY_MS?: string;
 }
 
 interface Env extends WorkerSecrets {}

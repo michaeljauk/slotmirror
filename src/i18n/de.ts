@@ -137,6 +137,7 @@ export const de: Messages = {
     matrixHint: "Klick auf ein Feld öffnet den Kalender links.",
     cellGroup: "Gruppe",
     cellException: "Ausnahme",
+    manyTargets: (count: number) => `${count} Kalender`,
     needTwo: "Verbinde mindestens zwei Konten. Dann legst du hier fest, wohin ihre Termine gehen.",
     firstStepsTitle: "In drei Schritten loslegen",
     stepConnectFirst: "Verbinde dein erstes Kalenderkonto.",

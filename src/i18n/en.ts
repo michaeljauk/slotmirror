@@ -135,6 +135,7 @@ export const en = {
     matrixHint: "Click a cell to open that calendar on the left.",
     cellGroup: "group",
     cellException: "exception",
+    manyTargets: (count: number) => `${count} calendars`,
     needTwo: "Connect at least two accounts. Then choose here where their events go.",
     firstStepsTitle: "Get started in three steps",
     stepConnectFirst: "Connect your first calendar account.",

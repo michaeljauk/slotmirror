@@ -164,7 +164,7 @@ describe("editor page", () => {
     const matrix = await (
       await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
     ).text();
-    expect(matrix).toContain('class="cell level-full"');
+    expect(matrix).toContain('class="cell level-full exception"');
   });
 
   it("saves a choice from the form and returns to the open card", async () => {
@@ -386,5 +386,29 @@ describe("onboarding", () => {
     ).text();
     expect(page).toContain("Get started in three steps");
     expect(page).toContain('href="/auth/microsoft/connect"');
+  });
+});
+
+describe("many accounts", () => {
+  it("collapses equal choices into one pill and shows a compact overview", async () => {
+    const { user, cookie } = await signIn("many@org.example");
+    for (let i = 1; i <= 6; i++) {
+      const id = `many-${i}`;
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO accounts (id, user_id, provider, email, in_block_group) VALUES (?, ?, 'microsoft', ?, 1)",
+        ).bind(id, user.id, `${id}@many${i}.example`),
+        env.DB.prepare(
+          "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Main', 1, 1, 1)",
+        ).bind(`${id}-cal`, id, `${id}-remote`),
+      ]);
+    }
+    await setDirection(env, user, "many-1", "many-2", "busy");
+    const page = await (
+      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain('class="matrix compact"');
+    expect(page).toContain('class="pill summary"');
+    expect(page).toContain('class="pills collapsed"');
   });
 });

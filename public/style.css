@@ -1006,15 +1006,15 @@ details.more summary {
 }
 
 .level-busy {
-  background: #e9eef9;
+  background: #d3def6;
 }
 
 .level-title {
-  background: #cfdcf4;
+  background: #a9bfed;
 }
 
 .level-full {
-  background: #a9bfea;
+  background: #7b9ce0;
 }
 
 .matrix-hint {
@@ -1659,4 +1659,96 @@ a.status.error {
 
 .quick-start .group-text {
   margin-top: 4px;
+}
+
+/* Many accounts */
+
+.pills.collapsed .pill.grouped {
+  display: none;
+}
+
+.pills:not(.collapsed) .pill.summary {
+  display: none;
+}
+
+.matrix-scroll {
+  overflow-x: auto;
+}
+
+.matrix.compact {
+  border-spacing: 3px;
+}
+
+.matrix.compact .cell {
+  position: relative;
+  width: 24px;
+  height: 24px;
+}
+
+.matrix.compact .cell a {
+  height: 24px;
+  padding: 0;
+  font-size: 0;
+}
+
+.matrix.compact .cell small {
+  display: none;
+}
+
+.matrix.compact th.col {
+  height: 92px;
+  padding: 2px 0;
+  vertical-align: bottom;
+}
+
+.matrix.compact th.col .account-name {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.matrix.compact th:not(.col) .account-name {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.matrix.compact .cell.exception::after,
+.legend-exception::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.matrix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.matrix-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.matrix-legend i {
+  position: relative;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.legend-exception {
+  background: #d3def6;
 }

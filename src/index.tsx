@@ -21,6 +21,7 @@ import { PrivacyPage } from "./pages/privacy";
 import { SetupPage } from "./pages/setup";
 import { render } from "./render";
 import { auth } from "./routes/auth";
+import { dev } from "./routes/dev";
 import { rules } from "./routes/rules";
 import { loadEditorState, renameAccount } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
@@ -113,6 +114,7 @@ app.use("*", async (c, next) => {
 
 app.route("/auth", auth);
 app.route("/rules", rules);
+app.route("/dev", dev);
 
 app.get("/", async (c) => {
   const user = c.get("user");

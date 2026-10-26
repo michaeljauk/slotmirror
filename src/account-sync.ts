@@ -1052,8 +1052,10 @@ export class AccountSync extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     await this.runAlarm();
-    // After the last rule or check no alarm is left; a pending retry still needs one.
-    await this.keepRetryAlarm();
+    // After the last rule or check no alarm is left; a pending retry still needs one. While
+    // paused, the alarm does not run the retry, so an alarm for it would fire again and again; the
+    // retry waits in storage until new tokens start the next alarm.
+    if (!(await this.pause())) await this.keepRetryAlarm();
   }
 
   private async runAlarm(): Promise<void> {

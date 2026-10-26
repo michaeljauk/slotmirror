@@ -1394,6 +1394,37 @@ describe("accounts that need reconnecting", () => {
     expect(tokenCalls).toBe(1);
   });
 
+  it("keeps a due sync-request retry without an alarm while paused, and runs it after reconnect", async () => {
+    const { stub, calls } = await pauseByRefusal("acc-paused-retry");
+    // A change before the refusal: the sync request failed and waits for its retry.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("syncRequestRetry", { attempts: 1, at: Date.now() - 1_000 });
+      await state.storage.put("feedOnlyAlarm", "retry");
+      await state.storage.setAlarm(Date.now() - 1_000);
+    });
+    await runDurableObjectAlarm(stub);
+    // No alarm loop: the retry cannot run while paused, so no alarm waits for it.
+    expect(await pendingAlarm(stub)).toBeNull();
+    const kept = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get("syncRequestRetry"),
+    );
+    expect(kept).toBeDefined();
+    expect(calls.token).toBe(1);
+
+    vi.restoreAllMocks();
+    fakeGraph();
+    await stub.storeTokens("acc-paused-retry", {
+      refreshToken: "r2",
+      accessToken: "a2",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    await runDurableObjectAlarm(stub);
+    const left = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get("syncRequestRetry"),
+    );
+    expect(left).toBeUndefined();
+  });
+
   it("neither pauses nor alerts for an account whose row is already gone", async () => {
     const stub = env.ACCOUNT_SYNC.getByName("acc-gone");
     await stub.storeTokens("acc-gone", { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 });

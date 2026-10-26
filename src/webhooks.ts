@@ -51,6 +51,16 @@ export async function isValidToken(
   return difference === 0;
 }
 
+/** Some accounts did not take a sync request. */
+export class SyncRequestError extends Error {
+  constructor(
+    readonly accountIds: string[],
+    options: ErrorOptions,
+  ) {
+    super(`Requesting a sync failed in ${accountIds.length} account(s)`, options);
+  }
+}
+
 /**
  * A calendar of the account changed. Its own rules run again (a block there may have been moved or
  * deleted), and so do the rules that read from it, in their target accounts.
@@ -64,6 +74,23 @@ export async function notifyChange(env: Env, accountId: string): Promise<void> {
   )
     .bind(accountId)
     .all<{ accountId: string }>();
-  const accounts = new Set([accountId, ...results.map((row) => row.accountId)]);
-  for (const id of accounts) await accountSync(env, id).requestSync();
+  await requestSyncs(env, [...new Set([accountId, ...results.map((row) => row.accountId)])]);
+}
+
+/**
+ * Ask each account for a sync. A failed account does not skip the others; the error afterwards
+ * names every account that failed.
+ */
+export async function requestSyncs(env: Env, accountIds: string[]): Promise<void> {
+  const failed: string[] = [];
+  let cause: unknown;
+  for (const id of accountIds) {
+    try {
+      await accountSync(env, id).requestSync();
+    } catch (error) {
+      failed.push(id);
+      cause ??= error;
+    }
+  }
+  if (failed.length > 0) throw new SyncRequestError(failed, { cause });
 }

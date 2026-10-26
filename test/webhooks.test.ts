@@ -1,8 +1,8 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AccountSync } from "../src/account-sync";
-import { webhookToken, webhookUrl } from "../src/webhooks";
+import { AccountSync } from "../src/account-sync";
+import { notifyChange, webhookToken, webhookUrl } from "../src/webhooks";
 import fixture from "./fixtures/graph/calendar-view.json";
 import { BASE, signIn } from "./helpers";
 
@@ -42,6 +42,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * Make `requestSync` throw in the given accounts, at most `times` times. Returns the accounts in
+ * the order of their failed calls.
+ */
+function failSyncRequests(accounts: string[], times = Infinity): string[] {
+  const original = Object.getOwnPropertyDescriptor(AccountSync.prototype, "requestSync")!.value as (
+    this: AccountSync,
+  ) => Promise<void>;
+  const failed: string[] = [];
+  vi.spyOn(AccountSync.prototype, "requestSync").mockImplementation(async function (
+    this: AccountSync,
+  ) {
+    const name = (this as unknown as { ctx: DurableObjectState }).ctx.id.name ?? "";
+    if (accounts.includes(name) && failed.length < times) {
+      failed.push(name);
+      throw new Error("unavailable");
+    }
+    return original.call(this);
+  });
+  return failed;
+}
+
+/** Move the clock forward; alarms set from now on count from there. */
+function advanceClock(ms: number): void {
+  const now = Date.now() + ms;
+  vi.spyOn(Date, "now").mockReturnValue(now);
+}
+
 describe("webhook address", () => {
   it("needs an https PUBLIC_URL", () => {
     expect(webhookUrl({ ...env, PUBLIC_URL: "" }, "google", "x")).toBeNull();
@@ -61,6 +89,15 @@ describe("notifications", () => {
     });
     expect(response.status).toBe(202);
     expect(await alarmOf(a)).not.toBeNull();
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("requests the sync in the other accounts if one of them fails", async () => {
+    const { a, b } = await setup("hook-fail");
+    // The changed account comes first; its failure must not skip the target of its rule.
+    const failed = failSyncRequests([a]);
+    await expect(notifyChange(env, a)).rejects.toThrow();
+    expect(failed).toEqual([a]);
     expect(await alarmOf(b)).not.toBeNull();
   });
 
@@ -400,9 +437,9 @@ describe("echo filter", () => {
     await Promise.all([notify(), notify(), notify()]);
     expect(
       await runInDurableObject(stub, (_instance, state) =>
-        state.storage.get<string[]>("changedCalendars"),
+        state.storage.get<{ calendarId: string }[]>("changedCalendars"),
       ),
-    ).toEqual(["gburst-a-remote"]);
+    ).toEqual([expect.objectContaining({ calendarId: "gburst-a-remote" })]);
     await runDurableObjectAlarm(stub);
     expect(urls).toHaveLength(1);
   });
@@ -425,7 +462,9 @@ describe("echo filter", () => {
         return feed(["block-1"], "token-2")();
       });
       await instance.alarm();
-      expect(await state.storage.get("changedCalendars")).toEqual([`${a}-remote`]);
+      expect(await state.storage.get("changedCalendars")).toEqual([
+        expect.objectContaining({ calendarId: `${a}-remote` }),
+      ]);
       expect(await state.storage.getAlarm()).not.toBeNull();
     });
     expect(await alarmOf(b)).toBeNull();
@@ -596,5 +635,111 @@ describe("echo filter", () => {
     await notify("channel-unknown");
     expect(urls).toHaveLength(0);
     expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("recognises its own Google write when Retry-After delays the check", async () => {
+    const { a, b, stub, notify } = await setupGoogle("gdelay", [feed(["block-1"], "token-2")]);
+    await notify();
+    // A throttled rule run moved the alarm by the longest Retry-After.
+    advanceClock(5 * 60_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).toBeNull();
+    expect(await alarmOf(b)).toBeNull();
+  });
+
+  it("syncs a later change to a block it wrote, reported by a later notification", async () => {
+    const { a, b, stub, notify } = await setupGoogle("glater", [feed(["block-1"], "token-2")]);
+    await notify();
+    // The user moves the block three minutes after it was written; the check waits for Retry-After.
+    advanceClock(3 * 60_000);
+    await notify();
+    advanceClock(2 * 60_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(a)).not.toBeNull();
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("retries a failed sync request after a Graph notification in a later alarm", async () => {
+    const { a, b } = await setup("gr-retry");
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    failSyncRequests([b], 1);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await notifyGraph(a, "someone-elses-meeting");
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).toBeNull();
+
+    advanceClock(60_000);
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("retries a failed sync request after a Google notification without reading the feed again", async () => {
+    const { b, stub, urls, notify, storedToken } = await setupGoogle("g-retry", [
+      feed(["users-meeting"], "token-2"),
+    ]);
+    failSyncRequests([b], 1);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await notify();
+    await runDurableObjectAlarm(stub);
+    expect(await alarmOf(b)).toBeNull();
+    // The retry holds the change, so the feed moves on.
+    expect(await storedToken()).toBe("token-2");
+
+    advanceClock(60_000);
+    await runDurableObjectAlarm(stub);
+    expect(urls).toHaveLength(1);
+    expect(await alarmOf(b)).not.toBeNull();
+  });
+
+  it("gives up on a failing sync request after a few attempts, and runs the rules meanwhile", async () => {
+    const { a, b } = await setup("g-giveup");
+    // A rule into the first account, so that its full cycle has work.
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'g-giveup-back', user_id, ?, ? FROM rules WHERE id = 'g-giveup-rule'",
+    )
+      .bind(`${b}-cal`, `${a}-cal`)
+      .run();
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    const failed = failSyncRequests([b]);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return Response.json({ value: [] });
+    });
+
+    await notifyGraph(a, "someone-elses-meeting");
+    await runDurableObjectAlarm(stub);
+    expect(failed).toEqual([b]);
+    // The retry is not due yet; the next alarm runs the rule.
+    await runDurableObjectAlarm(stub);
+    expect(urls.some((url) => url.includes(`/calendars/${b}-remote/calendarView`))).toBe(true);
+
+    // Each due alarm retries once, until the attempts are used up; then no alarm is left.
+    for (let i = 0; i < 10 && (await alarmOf(a)) !== null; i++) {
+      advanceClock(10 * 60_000);
+      await runDurableObjectAlarm(stub);
+    }
+    expect(failed).toEqual([b, b, b, b]);
+    expect(await alarmOf(a)).toBeNull();
+  });
+
+  it("lets a new notification move the alarm that waits for a retry", async () => {
+    const { a, b } = await setup("g-first");
+    const stub = env.ACCOUNT_SYNC.getByName(a);
+    failSyncRequests([b], 1);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
+    await notifyGraph(a, "someone-elses-meeting");
+    await runDurableObjectAlarm(stub);
+    // The cycle the change started in the first account; afterwards only the retry waits.
+    await runDurableObjectAlarm(stub);
+    const retryAt = await alarmOf(a);
+    expect(retryAt).not.toBeNull();
+
+    // The check gets its own alarm after the debounce delay. In production that delay is shorter
+    // than the retry's; the tests use a longer one.
+    await notifyGraph(a, "another-meeting");
+    expect(await alarmOf(a)).not.toBe(retryAt);
   });
 });

@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     # Wait three days after a release before proposing it; matches the local pnpm setting.
+    # Dependabot passes this cooldown to pnpm as minimum-release-age and resolves the whole
+    # lockfile with it. A direct dependency that the lockfile pins at a version younger than three
+    # days therefore fails every npm update with ERR_PNPM_NO_MATURE_MATCHING_VERSION. Do not commit
+    # such versions; wait out the cooldown instead of adding an exception.
     cooldown:
       default-days: 3
     commit-message:

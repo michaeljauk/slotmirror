@@ -104,6 +104,10 @@ interface Removal {
   attempts: number;
 }
 
+function sameRemoval(a: Removal, b: Removal): boolean {
+  return a.ruleId === b.ruleId && a.remoteCalendarId === b.remoteCalendarId;
+}
+
 /** Refresh the access token this long before it expires. */
 const REFRESH_MARGIN_MS = 60_000;
 
@@ -173,11 +177,9 @@ export class AccountSync extends DurableObject<Env> {
       .bind(accountId, now, now)
       .all<{ id: string }>();
     if (results.length === 0) return;
-    const queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
-    const merged = await inPrecedenceOrder([
-      ...new Set([...queue, ...results.map((row) => row.id)]),
-    ]);
-    await this.ctx.storage.put(RULE_QUEUE_KEY, merged);
+    await this.updateQueue<string>(RULE_QUEUE_KEY, (queue) =>
+      inPrecedenceOrder([...new Set([...queue, ...results.map((row) => row.id)])]),
+    );
     this.sourceCache.clear();
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.setAlarm(now + this.delays().debounce);
@@ -436,7 +438,7 @@ export class AccountSync extends DurableObject<Env> {
   async removeRuleBlocks(
     ruleId: string,
     remoteCalendarId: string,
-  ): Promise<{ removed: number; remaining: number }> {
+  ): Promise<{ removed: number; remaining: number; throttled: boolean }> {
     const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
     const blocks = await target.existingBlocks(remoteCalendarId, cleanupWindow(), [ruleTag]);
@@ -446,12 +448,16 @@ export class AccountSync extends DurableObject<Env> {
       marker: block.marker,
     }));
     let removed = 0;
+    let throttled = false;
     for (const batch of chunk(actions, target.batchLimit).slice(0, MAX_BATCHES_PER_RUN)) {
       const result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
       removed += batch.length - result.failed - result.throttled;
-      if (result.throttled > 0) break;
+      if (result.throttled > 0) {
+        throttled = true;
+        break;
+      }
     }
-    return { removed, remaining: actions.length - removed };
+    return { removed, remaining: actions.length - removed, throttled };
   }
 
   /**
@@ -459,11 +465,10 @@ export class AccountSync extends DurableObject<Env> {
    * after the rule itself is gone. The editor uses this so that a click does not wait for Graph.
    */
   async queueRemoval(ruleId: string, remoteCalendarId: string): Promise<void> {
-    const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
-    if (!queue.some((job) => job.ruleId === ruleId && job.remoteCalendarId === remoteCalendarId)) {
-      queue.push({ ruleId, remoteCalendarId, attempts: 0 });
-      await this.ctx.storage.put(REMOVAL_QUEUE_KEY, queue);
-    }
+    const job = { ruleId, remoteCalendarId, attempts: 0 };
+    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) =>
+      queue.some((queued) => sameRemoval(queued, job)) ? queue : [...queue, job],
+    );
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.ctx.storage.setAlarm(soon);
@@ -483,23 +488,29 @@ export class AccountSync extends DurableObject<Env> {
   /** Run one queued removal. Returns false if there was none. */
   private async runRemoval(): Promise<boolean> {
     const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
-    const [job, ...rest] = queue;
+    const [job] = queue;
     if (!job) return false;
-    let next = rest;
+    let outcome: "done" | "continue" | "retry" = "done";
     let delayMs = this.delays().nextRun;
     try {
-      const { remaining } = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
-      if (remaining > 0) next = [job, ...rest];
+      const result = await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
+      // A run without progress and without throttling failed, for example with 403 on every
+      // block. It counts as an attempt, so that the job cannot block the account's syncs forever.
+      if (result.remaining > 0 && (result.removed > 0 || result.throttled)) outcome = "continue";
+      else if (result.remaining > 0 && job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) outcome = "retry";
     } catch (error) {
       console.error("Queued removal failed", job.ruleId, error);
       const throttleDelay = throttleDelayMs(error);
       if (throttleDelay !== null) delayMs = throttleDelay;
-      if (throttleDelay !== null || job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) {
-        next = [...rest, { ...job, attempts: job.attempts + 1 }];
-      }
+      if (throttleDelay !== null || job.attempts + 1 < MAX_REMOVAL_ATTEMPTS) outcome = "retry";
     }
-    if (next.length > 0) await this.ctx.storage.put(REMOVAL_QUEUE_KEY, next);
-    else await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
+    // Removals queued during the provider calls are in the stored queue, not in `queue`.
+    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
+      const others = current.filter((queued) => !sameRemoval(queued, job));
+      if (outcome === "continue") return [job, ...others];
+      if (outcome === "retry") return [...others, { ...job, attempts: job.attempts + 1 }];
+      return others;
+    });
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
     return true;
   }
@@ -522,10 +533,15 @@ export class AccountSync extends DurableObject<Env> {
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
-      queue = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
+      const all = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
+      // Stored before the run, so that the end of the run reads the whole cycle back.
+      // A tick may have queued some rules meanwhile; the full cycle still runs all of them.
+      queue = await this.updateQueue<string>(RULE_QUEUE_KEY, (current) =>
+        inPrecedenceOrder([...new Set([...current, ...all])]),
+      );
       await this.ctx.storage.put(FULL_CYCLE_KEY, Date.now());
     }
-    const [ruleId, ...rest] = queue;
+    const [ruleId] = queue;
     if (!ruleId) {
       await this.ensureWatchesSafely();
       return;
@@ -550,30 +566,46 @@ export class AccountSync extends DurableObject<Env> {
       }
     }
 
-    let next = unfinished ? [ruleId, ...rest] : rest;
-    if (removedBlocks) next = await this.withFollowers(ruleId, next);
+    const followers = removedBlocks ? await this.followersOf(ruleId) : [];
+    // Rules queued during the run (by a tick) are in the stored queue, not in `queue`.
+    const next = await this.updateQueue<string>(RULE_QUEUE_KEY, (current) => {
+      const others = current.filter((id) => id !== ruleId);
+      const merged = [...new Set([...(unfinished ? [ruleId] : []), ...others, ...followers])];
+      return followers.length > 0 ? inPrecedenceOrder(merged) : merged;
+    });
     if (next.length > 0) {
-      await this.ctx.storage.put(RULE_QUEUE_KEY, next);
       await this.ctx.storage.setAlarm(Date.now() + delayMs);
     } else {
-      await this.ctx.storage.delete(RULE_QUEUE_KEY);
       // The cycle is done: check the watches once per cycle, with the rest of the budget.
       await this.ensureWatchesSafely();
     }
   }
 
   /**
-   * Add the rules that come after a rule into the same calendar to the queue. They may have left
-   * out events whose blocks the rule just removed, and must now write their own.
+   * The rules that come after a rule into the same calendar. They may have left out events whose
+   * blocks the rule just removed, and must now write their own.
    */
-  private async withFollowers(ruleId: string, queue: string[]): Promise<string[]> {
+  private async followersOf(ruleId: string): Promise<string[]> {
     const tag = await ruleTagFor(ruleId);
     const followers: string[] = [];
     for (const id of await siblingRuleIds(this.env.DB, ruleId)) {
       if ((await ruleTagFor(id)) > tag) followers.push(id);
     }
-    if (followers.length === 0) return queue;
-    return inPrecedenceOrder([...new Set([...queue, ...followers])]);
+    return followers;
+  }
+
+  /**
+   * Read, change and write a stored queue with no other request in between, and return the new
+   * queue. A provider call lets other requests into the instance, so a queue read before the call
+   * is stale after it; writing it back would drop what they queued.
+   */
+  private updateQueue<T>(key: string, change: (queue: T[]) => T[] | Promise<T[]>): Promise<T[]> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const next = await change((await this.ctx.storage.get<T[]>(key)) ?? []);
+      if (next.length > 0) await this.ctx.storage.put(key, next);
+      else await this.ctx.storage.delete(key);
+      return next;
+    });
   }
 
   /**

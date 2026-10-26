@@ -222,7 +222,7 @@ export const en = {
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
       "A session cookie and a language cookie in your browser.",
-      "For each free/busy feed you create: its calendars, its settings and a hash of its secret address. Whoever has the address sees your busy times, without content. Cloudflare's cache keeps each rendered feed for 15 minutes.",
+      "For each free/busy feed you create: its calendars, its settings and a hash of its secret address. Whoever has the address sees your busy times, without content. The last rendered feed, busy times only, is kept with the feed and in Cloudflare's cache to answer the next fetches.",
     ],
     notStoredTitle: "What is not stored",
     notStored:
@@ -316,12 +316,17 @@ export const en = {
     renewedOn: (date: string) => `new address ${date}`,
     daysAhead: (count: number) => `${count} days ahead`,
     withAllDay: "with all-day events",
+    cut: (date: string) =>
+      `Too many busy times: the feed ends before ${date}. Choose fewer days or calendars.`,
+    calendarUnreadable: (name: string) =>
+      `“${name}” cannot be read any more, so subscribers get no update. Remove it from the feed.`,
+    removeCalendar: "Remove calendar",
     create: "New feed",
     calendarsLabel: (max: number) => `Calendars, at most ${max}`,
     daysLabel: "Days ahead",
     allDayLabel: "Include all-day events",
     shares:
-      "Subscribers see each event that blocks time as “Busy”, marked private, from 7 days ago on. Titles, places, notes and attendees stay out, and so do free and declined events.",
+      "Subscribers see when you are busy, from 7 days ago on: blocks titled “Busy”, marked private, where overlapping events form one block. Titles, places, notes and attendees stay out, and so do free and declined events. Only calendars your accounts own can be chosen.",
     submit: "Create feed",
     rotate: "New address",
     rotateText:

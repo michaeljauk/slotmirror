@@ -7,6 +7,7 @@ import {
   feedUrl,
   MAX_FEED_CALENDARS,
   MAX_FEEDS_PER_USER,
+  removeFeedCalendar,
   rotateFeed,
   type FeedInput,
 } from "../feeds";
@@ -72,6 +73,17 @@ feeds.post("/:id/rotate", async (c) => {
   const rotated = await rotateFeed(c.env, currentUser(c), c.req.param("id"));
   if (!rotated) return c.notFound();
   return showUrl(c, rotated.feedId, rotated.token);
+});
+
+feeds.post("/:id/calendars/:calendarId/remove", async (c) => {
+  const removed = await removeFeedCalendar(
+    c.env,
+    currentUser(c),
+    c.req.param("id"),
+    c.req.param("calendarId"),
+  );
+  if (!removed) return c.notFound();
+  return c.redirect("/#feeds");
 });
 
 feeds.post("/:id/delete", async (c) => {

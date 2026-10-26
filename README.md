@@ -207,28 +207,61 @@ Under **Free/busy feed** on the start page, each user can create a secret calend
 people outside the deployment. They subscribe to it by URL in their calendar app, for example with
 "Add calendar from URL" in Google Calendar or "Subscribe from web" in Outlook.
 
-**What it shares.** One event per busy time in the chosen calendars, at most five calendars, from 7
-days ago to up to 180 days ahead (60 by default). Each event has only its start, end, the title
-"Busy" in your language, and the marks private and busy. Titles, places, notes, attendees,
-organizers and the source event IDs stay out. The same events count as for a rule with default
-settings: free and declined events stay out, tentative ones count as busy, and all-day events count
-only if you turn them on. Blocks that slotmirror wrote are left out, so choose every calendar whose
-own events should count. The event IDs in the feed are hashed with a secret per feed, so two feeds
-cannot be linked through them.
+**What it shares.** Busy blocks from up to five calendars, from 7 days ago to up to 180 days ahead
+(60 by default). Overlapping and adjacent events form one block. Each block has only its start,
+its end, the title "Busy" in your language, and the marks private and busy. Titles, places, notes,
+attendees, organizers, source event IDs and the number of events in a block stay out. The same
+events count as for a rule with default settings: free and declined events stay out, tentative
+ones count as busy, and all-day events count only if you turn them on. Blocks that slotmirror
+wrote are left out, so choose every calendar whose own events should count. Only calendars that
+your accounts own can go into a feed, not calendars that other people shared with you. The UID of
+a block is an HMAC of its start and end with a secret per feed, so a moved meeting is a new block,
+and two feeds cannot be linked through their UIDs.
 
-**Who can see it.** Anyone with the address. The address holds a random 256-bit token; slotmirror
-stores only its SHA-256 hash and shows the address once, when you create the feed or renew it.
+**At most 1000 blocks.** Above that, the oldest past blocks go first. If the feed is still too
+long, it ends early, and the start page says before which date. Choose fewer days or calendars.
+
+**Who can see it.** Anyone with the address. The address holds a random 256-bit token;
+slotmirror stores only its SHA-256 hash and shows the address once, when you create the feed or
+renew it. The token is in the URL path, so it reaches every log that records request URLs; see
+[Logs](#logs-and-the-feed-token).
 
 **Renew or delete.** "New address" replaces the token: the old address returns 404 at once, and
 everyone who should still see the feed needs the new one. "Delete" ends the feed. A feed also ends
-when its last calendar goes with a disconnected account, and when its user is deleted. While a user
-is deactivated, their feeds return 404.
+when its last calendar goes with a disconnected account, when its user is deleted or deactivated,
+and at its next fetch once the access settings no longer admit its user. A reactivated user
+creates new feeds.
 
-**Delay.** A rendered feed is cached for 15 minutes, and calendar apps fetch subscribed calendars
-on their own schedule, from every 15 minutes to once a day. A change can take that long to appear.
-The cache works on a custom domain or a route. Cloudflare's Cache API stores nothing on a
-`workers.dev` address, so there each fetch reads the calendars. If an account needs to be connected
-again, the feed answers 503 and the apps keep their last copy.
+**Delay.** A rendered feed is reused for 15 minutes. The last copy stays in D1 with the feed, so
+a repeated fetch costs one D1 read and no calendar read; the Cache API also keeps it, but
+Cloudflare documents a working cache only for custom domains. Calendar apps fetch subscribed
+calendars on their own schedule, from every 15 minutes to once a day. A change can take that long
+to appear.
+
+**When a calendar cannot be read.** Subscribers never get a partial feed:
+
+- While Microsoft or Google throttles the account, the feed serves its last copy, however old, and
+  makes no provider call. Without a copy, it answers 503 with the remaining `Retry-After`.
+- If an account needs to be connected again, the feed answers 503.
+- If the provider no longer finds a calendar or refuses access to it, the feed answers 503, and the
+  start page names the calendar with a button to remove it from the feed.
+
+Apps keep their last copy while the feed answers 503.
+
+### Logs and the feed token
+
+With `observability` on in `wrangler.jsonc`, Workers Logs record an invocation log for every
+request, with its URL, so the feed token is stored in the operator's Cloudflare account. slotmirror
+itself logs only feed IDs. An operator can turn the invocation logs off; `console` output is a
+separate kind of log in Workers Logs:
+
+```jsonc
+"observability": { "enabled": true, "logs": { "invocation_logs": false } }
+```
+
+This drops the invocation logs of every request, not only of feeds. `wrangler tail` and the
+dashboard's live logs still show URLs while they run. On a custom domain, other Cloudflare
+products that log requests, such as Logpush, record the path too.
 
 ## Limits
 

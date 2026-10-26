@@ -18,7 +18,12 @@ import {
   siblingRuleIds,
   syncWindow,
 } from "./sync/rules";
-import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
+import {
+  clampRetryAfter,
+  formatStatuses,
+  throttleDelayMs,
+  type BatchResult,
+} from "./sync/throttle";
 import type { SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
@@ -116,6 +121,19 @@ const WATCH_LIFETIME_MS = 6 * 24 * 60 * 60 * 1000;
 
 /** Renew a watch when less than this is left. The cron runs every 10 minutes, so this is plenty. */
 const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Durable Object storage key: until when the provider throttles this account (Unix ms). `client()`
+ * sets it from every throttled answer. Feed reads do not call the provider before it; the sync
+ * keeps waiting through its alarm.
+ */
+const THROTTLED_UNTIL_KEY = "throttledUntil";
+
+/** Outcome of a feed read. A throttled or unreadable calendar is an answer, not an error. */
+export type FeedRead =
+  | { kind: "events"; events: SourceEvent[] }
+  | { kind: "throttled"; retryAfterMs: number }
+  | { kind: "unavailable"; code: string };
 
 /** Durable Object storage key: forget the tokens once every queued removal ran. */
 const RETIRING_KEY = "retiring";
@@ -476,6 +494,46 @@ export class AccountSync extends DurableObject<Env> {
     // A failed read is not cached.
     events.catch(() => this.sourceCache.delete(key));
     return events;
+  }
+
+  /**
+   * Busy events of one calendar of this account for a free/busy feed. While the provider throttles
+   * the account, the read makes no provider call, so that a feed never extends the penalty. A
+   * calendar the provider no longer finds or lets the account read is reported as unavailable.
+   */
+  async readFeedEvents(
+    remoteCalendarId: string,
+    window: { start: Date; end: Date },
+  ): Promise<FeedRead> {
+    const until = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
+    const now = Date.now();
+    if (until > now) return { kind: "throttled", retryAfterMs: until - now };
+    try {
+      return {
+        kind: "events",
+        events: await this.readSourceEvents(remoteCalendarId, window, false),
+      };
+    } catch (error) {
+      const delay = throttleDelayMs(error);
+      if (delay !== null) {
+        // Also noted by `client()`; here before the answer leaves, so that the next read sees it.
+        await this.notePenalty(delay);
+        return { kind: "throttled", retryAfterMs: delay };
+      }
+      const { status } = error as { status?: unknown };
+      if (status === 403 || status === 404 || status === 410) {
+        return { kind: "unavailable", code: errorCode(error) };
+      }
+      throw error;
+    }
+  }
+
+  /** Remember a provider penalty, so that feed reads wait for it. A shorter one never shortens it. */
+  private async notePenalty(delayMs: number | null): Promise<void> {
+    if (delayMs === null) return;
+    const until = Date.now() + delayMs;
+    const current = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
+    if (until > current) await this.ctx.storage.put(THROTTLED_UNTIL_KEY, until);
   }
 
   /** Local load tests only: replace this account's simulated events. */
@@ -962,6 +1020,11 @@ export class AccountSync extends DurableObject<Env> {
     return oneCallAtATime(provider, (call) => {
       const result = this.providerQueue.then(call);
       this.providerQueue = result.catch(() => undefined);
+      // Every throttled answer, read or write, starts a penalty that feed reads respect.
+      void result.then(
+        (value) => this.notePenalty(batchPenalty(value)),
+        (error: unknown) => this.notePenalty(throttleDelayMs(error)),
+      );
       return result;
     });
   }
@@ -1080,6 +1143,14 @@ export class AccountSync extends DurableObject<Env> {
       sql.exec(`UPDATE schema_version SET version = ?`, MIGRATIONS.length);
     }
   }
+}
+
+/** The wait a write batch asks for, or null if the provider throttled none of its actions. */
+function batchPenalty(value: unknown): number | null {
+  const result = value as Partial<BatchResult> | null;
+  return typeof result?.throttled === "number" && result.throttled > 0
+    ? clampRetryAfter(result.retryAfterMs)
+    : null;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {

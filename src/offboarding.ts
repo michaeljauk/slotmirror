@@ -1,6 +1,6 @@
 import { recordAudit } from "./audit";
 import { accountSync } from "./durable";
-import { deleteEmptyFeeds } from "./feeds";
+import { deleteEmptyFeeds, revokeFeeds } from "./feeds";
 
 /**
  * Removing accounts and users, and pausing a user. The blocks go through the removal queue of each
@@ -97,6 +97,7 @@ export async function deleteUser(
 /**
  * Deactivate or reactivate a user. Deactivated: sign-in and sessions stop, rules no longer run
  * and their blocks are removed; accounts and rules stay for a reactivation, which syncs again.
+ * Free/busy feeds are deleted: a reactivation does not publish them again.
  */
 export async function setUserActive(
   env: Env,
@@ -116,6 +117,8 @@ export async function setUserActive(
     for (const id of accountIds) await accountSync(env, id).requestSync();
   } else {
     await queueRemovals(env, await rulesOfAccounts(env, accountIds));
+    // A feed is a grant to people outside the deployment; it ends with the user's access.
+    await revokeFeeds(env, user, "user_deactivated");
   }
   await recordAudit(env.DB, {
     orgId: user.orgId,

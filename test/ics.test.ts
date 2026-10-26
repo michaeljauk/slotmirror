@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { busyEvents, MAX_FEED_EVENTS } from "../src/feeds";
-import { escapeText, foldLine, renderBusyCalendar } from "../src/ics";
+import { escapeText, foldLine, renderBusyCalendar, type BusyEvent } from "../src/ics";
 import type { SourceEvent } from "../src/sync/types";
 
 const SALT = "11".repeat(32);
@@ -24,7 +24,20 @@ function sourceEvent(overrides: Partial<SourceEvent> = {}): SourceEvent {
   };
 }
 
-function render(events: Awaited<ReturnType<typeof busyEvents>>, summary = "Busy"): string {
+/** Start of the UTC day the tests treat as today. */
+const TODAY = new Date("2026-10-26T00:00:00.000Z");
+
+type Reads = Parameters<typeof busyEvents>[0];
+
+/** The busy blocks of the reads, with today as above. */
+async function blocks(
+  reads: Reads,
+  options: { includeAllDay: boolean; uidSalt: string },
+): Promise<BusyEvent[]> {
+  return (await busyEvents(reads, { ...options, today: TODAY })).events;
+}
+
+function render(events: BusyEvent[], summary = "Busy"): string {
   return renderBusyCalendar({
     name: "Busy times",
     summary,
@@ -88,7 +101,7 @@ describe("ics text", () => {
 describe("busy calendar", () => {
   it("ends every line with CRLF and has no bare line feed", async () => {
     const ics = render(
-      await busyEvents([{ calendarId: "c1", events: [sourceEvent()] }], {
+      await blocks([{ calendarId: "c1", events: [sourceEvent()] }], {
         includeAllDay: false,
         uidSalt: SALT,
       }),
@@ -100,7 +113,7 @@ describe("busy calendar", () => {
   });
 
   it("writes UTC times for timed events and dates for all-day events", async () => {
-    const events = await busyEvents(
+    const events = await blocks(
       [
         {
           calendarId: "c1",
@@ -126,7 +139,7 @@ describe("busy calendar", () => {
   it("carries no title, location, body, category or source ID of the event", async () => {
     const event = sourceEvent();
     const ics = render(
-      await busyEvents([{ calendarId: "c1", events: [event] }], {
+      await blocks([{ calendarId: "c1", events: [event] }], {
         includeAllDay: false,
         uidSalt: SALT,
       }),
@@ -162,46 +175,40 @@ describe("busy calendar", () => {
 
 describe("busy events", () => {
   const options = { includeAllDay: false, uidSalt: SALT };
+  const at = (time: string) => `2026-10-27T${time}:00.000Z`;
+  const timed = (key: string, start: string, end: string, overrides: Partial<SourceEvent> = {}) =>
+    sourceEvent({ occurrenceKey: key, start: at(start), end: at(end), ...overrides });
 
   it("skips free, declined, all-day and mirrored events, and keeps tentative ones", async () => {
-    const events = await busyEvents(
+    const events = await blocks(
       [
         {
           calendarId: "c1",
           events: [
-            sourceEvent({ occurrenceKey: "busy" }),
-            sourceEvent({ occurrenceKey: "free", showAs: "free", start: "2026-10-27T11:00:00Z" }),
-            sourceEvent({
-              occurrenceKey: "declined",
-              declined: true,
-              start: "2026-10-27T12:00:00Z",
-            }),
+            timed("busy", "09:00", "10:00"),
+            timed("free", "11:00", "11:30", { showAs: "free" }),
+            timed("declined", "12:00", "12:30", { declined: true }),
             sourceEvent({
               occurrenceKey: "all-day",
               allDay: true,
               start: "2026-10-28",
               end: "2026-10-29",
             }),
-            sourceEvent({ occurrenceKey: "mirror", isMirror: true, start: "2026-10-27T13:00:00Z" }),
-            sourceEvent({
-              occurrenceKey: "tentative",
-              showAs: "tentative",
-              start: "2026-10-27T14:00:00.000Z",
-              end: "2026-10-27T15:00:00.000Z",
-            }),
+            timed("mirror", "13:00", "13:30", { isMirror: true }),
+            timed("tentative", "14:00", "15:00", { showAs: "tentative" }),
           ],
         },
       ],
       options,
     );
-    expect(events.map((event) => event.start)).toEqual([
-      "2026-10-27T09:00:00.000Z",
-      "2026-10-27T14:00:00.000Z",
+    expect(events.map((event) => [event.start, event.end])).toEqual([
+      [at("09:00"), at("10:00")],
+      [at("14:00"), at("15:00")],
     ]);
   });
 
   it("includes all-day events when the feed asks for them", async () => {
-    const events = await busyEvents(
+    const events = await blocks(
       [
         {
           calendarId: "c1",
@@ -214,37 +221,125 @@ describe("busy events", () => {
     expect(events[0]?.allDay).toBe(true);
   });
 
-  it("makes UIDs stable per feed, different between feeds, and free of the source ID", async () => {
-    const read = [{ calendarId: "c1", events: [sourceEvent()] }];
-    const [first] = await busyEvents(read, options);
-    const [again] = await busyEvents(read, options);
-    const [otherFeed] = await busyEvents(read, { ...options, uidSalt: OTHER_SALT });
-    expect(first?.uid).toMatch(/^[0-9a-f]{32}@slotmirror$/);
-    expect(again?.uid).toBe(first?.uid);
-    expect(otherFeed?.uid).not.toBe(first?.uid);
-    expect(first?.uid).not.toContain("AAMk");
+  it("merges overlapping, adjacent and nested events into one block", async () => {
+    const events = await blocks(
+      [
+        {
+          calendarId: "c1",
+          events: [
+            timed("a", "09:00", "10:00"),
+            timed("b", "09:30", "11:00"),
+            timed("c", "11:00", "11:30"),
+            timed("d", "13:00", "16:00"),
+            timed("e", "14:00", "15:00"),
+          ],
+        },
+        { calendarId: "c2", events: [timed("f", "11:15", "12:00"), timed("g", "16:30", "17:00")] },
+      ],
+      options,
+    );
+    expect(events.map((event) => [event.start, event.end])).toEqual([
+      [at("09:00"), at("12:00")],
+      [at("13:00"), at("16:00")],
+      [at("16:30"), at("17:00")],
+    ]);
   });
 
-  it("lists an interval found in two calendars once, whatever the order", async () => {
-    const a = { calendarId: "c1", events: [sourceEvent({ occurrenceKey: "a" })] };
-    const b = { calendarId: "c2", events: [sourceEvent({ occurrenceKey: "b" })] };
-    const one = await busyEvents([a, b], options);
-    const other = await busyEvents([b, a], options);
-    expect(one).toHaveLength(1);
-    expect(other).toEqual(one);
+  it("merges adjacent all-day events, and keeps them apart from timed ones", async () => {
+    const day = (key: string, start: string, end: string) =>
+      sourceEvent({ occurrenceKey: key, allDay: true, start, end });
+    const events = await blocks(
+      [
+        {
+          calendarId: "c1",
+          events: [
+            day("x", "2026-10-28", "2026-10-29"),
+            day("y", "2026-10-29", "2026-10-31"),
+            day("z", "2026-11-02", "2026-11-03"),
+            sourceEvent({
+              occurrenceKey: "t",
+              start: "2026-10-29T09:00:00.000Z",
+              end: "2026-10-29T10:00:00.000Z",
+            }),
+          ],
+        },
+      ],
+      { ...options, includeAllDay: true },
+    );
+    expect(events.map((event) => [event.allDay, event.start, event.end])).toEqual([
+      [true, "2026-10-28", "2026-10-31"],
+      [false, "2026-10-29T09:00:00.000Z", "2026-10-29T10:00:00.000Z"],
+      [true, "2026-11-02", "2026-11-03"],
+    ]);
   });
 
-  it("keeps at most MAX_FEED_EVENTS, nearest first", async () => {
-    const base = Date.parse("2026-10-20T00:00:00Z");
-    const many = Array.from({ length: MAX_FEED_EVENTS + 50 }, (_, index) =>
+  it("derives the UID from the block, not from the events in it", async () => {
+    const uid = async (reads: Reads, salt = SALT) =>
+      (await blocks(reads, { ...options, uidSalt: salt }))[0]?.uid;
+    const first = await uid([{ calendarId: "c1", events: [timed("meeting", "09:00", "10:00")] }]);
+    expect(first).toMatch(/^[0-9a-f]{32}@slotmirror$/);
+    // The same block from another event, in another calendar, has the same UID.
+    expect(await uid([{ calendarId: "c2", events: [timed("other", "09:00", "10:00")] }])).toBe(
+      first,
+    );
+    // A moved meeting is a new block: nothing links it to its old time.
+    expect(
+      await uid([{ calendarId: "c1", events: [timed("meeting", "11:00", "12:00")] }]),
+    ).not.toBe(first);
+    expect(
+      await uid([{ calendarId: "c1", events: [timed("meeting", "09:00", "10:00")] }], OTHER_SALT),
+    ).not.toBe(first);
+  });
+
+  /** `count` separate half-hour blocks, one per hour from `from`. */
+  function separate(count: number, from: number, prefix: string): SourceEvent[] {
+    return Array.from({ length: count }, (_, index) =>
       sourceEvent({
-        occurrenceKey: `e${index}`,
-        start: new Date(base + index * 3_600_000).toISOString(),
-        end: new Date(base + index * 3_600_000 + 1_800_000).toISOString(),
+        occurrenceKey: `${prefix}${index}`,
+        start: new Date(from + index * 3_600_000).toISOString(),
+        end: new Date(from + index * 3_600_000 + 1_800_000).toISOString(),
       }),
     ).reverse();
-    const events = await busyEvents([{ calendarId: "c1", events: many }], options);
-    expect(events).toHaveLength(MAX_FEED_EVENTS);
-    expect(events[0]?.start).toBe(new Date(base).toISOString());
+  }
+
+  it("drops past blocks first when there are too many", async () => {
+    const past = separate(60, TODAY.getTime() - 5 * 86_400_000, "p");
+    const future = separate(MAX_FEED_EVENTS - 10, TODAY.getTime(), "f");
+    const result = await busyEvents([{ calendarId: "c1", events: [...past, ...future] }], {
+      ...options,
+      today: TODAY,
+    });
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBeNull();
+    // The 50 oldest past blocks went; the 10 latest stay.
+    expect(result.events[0]?.start).toBe(
+      new Date(TODAY.getTime() - 5 * 86_400_000 + 50 * 3_600_000).toISOString(),
+    );
+    expect(result.events.at(-1)?.start).toBe(
+      new Date(TODAY.getTime() + (MAX_FEED_EVENTS - 11) * 3_600_000).toISOString(),
+    );
+  });
+
+  it("cuts the window end once no past block is left, and says where", async () => {
+    const past = separate(5, TODAY.getTime() - 86_400_000, "p");
+    const future = separate(MAX_FEED_EVENTS + 20, TODAY.getTime(), "f");
+    const result = await busyEvents([{ calendarId: "c1", events: [...past, ...future] }], {
+      ...options,
+      today: TODAY,
+    });
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.events[0]?.start).toBe(TODAY.toISOString());
+    const firstLeftOut = new Date(TODAY.getTime() + MAX_FEED_EVENTS * 3_600_000).toISOString();
+    expect(result.cutAt).toBe(firstLeftOut);
+    expect(result.events.every((event) => event.start < firstLeftOut)).toBe(true);
+  });
+
+  it("reports no cut below the cap", async () => {
+    const result = await busyEvents(
+      [{ calendarId: "c1", events: separate(10, TODAY.getTime(), "f") }],
+      { ...options, today: TODAY },
+    );
+    expect(result.events).toHaveLength(10);
+    expect(result.cutAt).toBeNull();
   });
 });

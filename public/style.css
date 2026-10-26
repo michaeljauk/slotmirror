@@ -1989,3 +1989,12 @@ details.feed-new[open] > summary {
 .center .feed-shares {
   text-align: left;
 }
+
+.feed-error {
+  margin: 4px 0 0;
+}
+
+.feed-error .link-button {
+  color: inherit;
+  text-decoration: underline;
+}

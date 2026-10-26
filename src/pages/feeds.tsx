@@ -13,6 +13,8 @@ import { Layout } from "./layout";
 /** The free/busy feeds of the user on the start page: list, rotate, delete, create. */
 export function FeedSection(props: { feeds: FeedSummary[]; calendars: CalendarRow[] }) {
   const { t, formatDate } = useI18n();
+  // Only calendars the accounts own; a calendar shared by someone else is not theirs to publish.
+  const owned = props.calendars.filter((calendar) => calendar.owned);
   return (
     <section class="section" id="feeds">
       <div class="section-head">
@@ -39,6 +41,21 @@ export function FeedSection(props: { feeds: FeedSummary[]; calendars: CalendarRo
                   <div class="item-main">
                     <div class="item-title">{t.feeds.feedTitle(formatDate(feed.createdAt))}</div>
                     <div class="item-meta">{meta.join(" · ")}</div>
+                    {feed.cutAt ? (
+                      <div class="item-meta">{t.feeds.cut(formatDate(feed.cutAt))}</div>
+                    ) : null}
+                    {feed.errorCalendar ? (
+                      <form
+                        method="post"
+                        action={`/feeds/${feed.id}/calendars/${feed.errorCalendar.id}/remove`}
+                        class="item-meta error feed-error"
+                      >
+                        {t.feeds.calendarUnreadable(feed.errorCalendar.name)}{" "}
+                        <button type="submit" class="link-button danger">
+                          {t.feeds.removeCalendar}
+                        </button>
+                      </form>
+                    ) : null}
                   </div>
                   <details class="rename">
                     <summary class="link-button quiet">{t.feeds.rotate}</summary>
@@ -65,7 +82,7 @@ export function FeedSection(props: { feeds: FeedSummary[]; calendars: CalendarRo
         )}
       </div>
 
-      {props.calendars.length === 0 ? (
+      {owned.length === 0 ? (
         <p class="fineprint">{t.feeds.noCalendars}</p>
       ) : props.feeds.length >= MAX_FEEDS_PER_USER ? (
         <p class="fineprint">{t.feeds.tooManyFeeds(MAX_FEEDS_PER_USER)}</p>
@@ -75,7 +92,7 @@ export function FeedSection(props: { feeds: FeedSummary[]; calendars: CalendarRo
           <form method="post" action="/feeds" class="form">
             <fieldset class="feed-calendars">
               <legend>{t.feeds.calendarsLabel(MAX_FEED_CALENDARS)}</legend>
-              {props.calendars.map((calendar) => (
+              {owned.map((calendar) => (
                 <label class="check-row">
                   <input type="checkbox" name="calendar" value={calendar.id} />
                   <span>

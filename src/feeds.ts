@@ -1,4 +1,5 @@
 import { errorCode, recordAudit } from "./audit";
+import type { FeedRead } from "./account-sync";
 import { ruleOptionsSchema } from "./config";
 import { accountSync } from "./durable";
 import { i18nFor, isLocale, LOCALES, type Locale } from "./i18n";
@@ -6,7 +7,7 @@ import { renderBusyCalendar, type BusyEvent } from "./ics";
 import { base64url } from "./session";
 import { isIncluded } from "./sync/plan";
 import type { SourceEvent } from "./sync/types";
-import { loadUser, type CurrentUser } from "./users";
+import { admittedUser, type CurrentUser } from "./users";
 
 /**
  * Private free/busy feeds. A feed is a secret ICS address that shows the busy times of calendars
@@ -23,9 +24,15 @@ export const FEED_MAX_DAYS = 180;
 export const FEED_DAYS_BEHIND = 7;
 export const MAX_FEED_CALENDARS = 5;
 export const MAX_FEEDS_PER_USER = 10;
-/** Events per feed, nearest first. Keeps a fetch inside the 10 ms CPU of the Free plan. */
+/**
+ * Busy blocks per feed, after merging. Keeps a fetch inside the 10 ms CPU of the Free plan. Above
+ * it, past blocks go first, then the end of the window.
+ */
 export const MAX_FEED_EVENTS = 1000;
-/** How long a rendered feed is reused, and how often apps should fetch it. */
+/**
+ * How long a rendered feed is reused, from the copy in D1 or from the Cache API, and how often apps
+ * should fetch it.
+ */
 export const FEED_CACHE_SECONDS = 15 * 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -97,6 +104,10 @@ export interface FeedSummary {
   daysAhead: number;
   includeAllDay: boolean;
   calendars: { id: string; name: string; accountEmail: string }[];
+  /** Set if the last fetch ended early because of the block cap: the first block left out. */
+  cutAt: string | null;
+  /** A calendar of the feed that the provider no longer lets the account read. */
+  errorCalendar: { id: string; name: string } | null;
 }
 
 /** The feeds of a user with their calendars, for the start page. */
@@ -105,7 +116,8 @@ export async function listFeeds(db: D1Database, userId: string): Promise<FeedSum
     db
       .prepare(
         `SELECT id, created_at AS createdAt, rotated_at AS rotatedAt, days_ahead AS daysAhead,
-                include_all_day AS includeAllDay
+                include_all_day AS includeAllDay, cut_at AS cutAt,
+                error_calendar_id AS errorCalendarId
          FROM feeds WHERE user_id = ? ORDER BY created_at, id`,
       )
       .bind(userId),
@@ -127,16 +139,22 @@ export async function listFeeds(db: D1Database, userId: string): Promise<FeedSum
     name: string;
     accountEmail: string;
   }[];
-  const feedRows = (feeds?.results ?? []) as (Omit<FeedSummary, "includeAllDay" | "calendars"> & {
-    includeAllDay: number;
-  })[];
-  return feedRows.map((row) => ({
-    ...row,
-    includeAllDay: row.includeAllDay === 1,
-    calendars: calendarRows
+  const feedRows = (feeds?.results ?? []) as (Omit<
+    FeedSummary,
+    "includeAllDay" | "calendars" | "errorCalendar"
+  > & { includeAllDay: number; errorCalendarId: string | null })[];
+  return feedRows.map(({ errorCalendarId, ...row }) => {
+    const own = calendarRows
       .filter((calendar) => calendar.feedId === row.id)
-      .map(({ id, name, accountEmail }) => ({ id, name, accountEmail })),
-  }));
+      .map(({ id, name, accountEmail }) => ({ id, name, accountEmail }));
+    const failed = own.find((calendar) => calendar.id === errorCalendarId);
+    return {
+      ...row,
+      includeAllDay: row.includeAllDay === 1,
+      calendars: own,
+      errorCalendar: failed ? { id: failed.id, name: failed.name } : null,
+    };
+  });
 }
 
 export interface FeedInput {
@@ -149,7 +167,14 @@ export type CreateFeedResult =
   | { ok: true; feedId: string; token: string }
   | { ok: false; reason: "no_calendar" | "too_many_calendars" | "too_many_feeds" | "not_owned" };
 
-/** Create a feed over calendars of the user's own accounts. The token is returned only here. */
+/**
+ * Calendars that may go into a feed: those the user's accounts own. A calendar someone else
+ * shared with the user is not theirs to publish.
+ */
+const OWN_CALENDAR = `calendars c JOIN accounts a ON a.id = c.account_id
+  WHERE a.user_id = ? AND c.owned = 1`;
+
+/** Create a feed over calendars the user owns. The token is returned only here. */
 export async function createFeed(
   env: Env,
   user: CurrentUser,
@@ -161,8 +186,7 @@ export async function createFeed(
   if (calendarIds.length > MAX_FEED_CALENDARS) return { ok: false, reason: "too_many_calendars" };
   const marks = calendarIds.map(() => "?").join(", ");
   const owned = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM calendars c JOIN accounts a ON a.id = c.account_id
-     WHERE a.user_id = ? AND c.id IN (${marks})`,
+    `SELECT COUNT(*) AS n FROM ${OWN_CALENDAR} AND c.id IN (${marks})`,
   )
     .bind(user.id, ...calendarIds)
     .first<{ n: number }>();
@@ -187,13 +211,12 @@ export async function createFeed(
       input.includeAllDay ? 1 : 0,
       locale,
     ),
-    // The calendar must still belong to the user when the row is written.
+    // The calendar must still be the user's own when the row is written.
     ...calendarIds.map((calendarId) =>
       env.DB.prepare(
         `INSERT INTO feed_calendars (feed_id, calendar_id)
-         SELECT ?, c.id FROM calendars c JOIN accounts a ON a.id = c.account_id
-         WHERE c.id = ? AND a.user_id = ?`,
-      ).bind(feedId, calendarId, user.id),
+         SELECT ?, c.id FROM ${OWN_CALENDAR} AND c.id = ?`,
+      ).bind(feedId, user.id, calendarId),
     ),
   ]);
   await recordAudit(env.DB, {
@@ -228,8 +251,38 @@ export async function rotateFeed(
   return { feedId, token };
 }
 
-/** Why a feed went: its user deleted it, or its last calendar left with an account. */
-type FeedDeletedBy = "self" | "account_removed";
+/**
+ * Take a calendar out of a feed of the user, for example one the account can no longer read. A
+ * feed without calendars goes. Returns false if the user has no such feed and calendar.
+ */
+export async function removeFeedCalendar(
+  env: Env,
+  user: CurrentUser,
+  feedId: string,
+  calendarId: string,
+): Promise<boolean> {
+  const removed = await env.DB.prepare(
+    `DELETE FROM feed_calendars WHERE feed_id = ? AND calendar_id = ?
+       AND feed_id IN (SELECT id FROM feeds WHERE user_id = ?)`,
+  )
+    .bind(feedId, calendarId, user.id)
+    .run();
+  if (removed.meta.changes === 0) return false;
+  await env.DB.prepare(
+    `UPDATE feeds SET error_calendar_id = NULL
+     WHERE id = ? AND user_id = ? AND error_calendar_id = ?`,
+  )
+    .bind(feedId, user.id, calendarId)
+    .run();
+  await deleteEmptyFeeds(env, user);
+  return true;
+}
+
+/**
+ * Why a feed went: its user deleted it, its last calendar left, or its user was deactivated or is
+ * no longer admitted by the access policy.
+ */
+type FeedDeletedBy = "self" | "account_removed" | "user_deactivated" | "user_not_admitted";
 
 /** Delete a feed of the user. Returns false if the user has no such feed. */
 export async function deleteFeed(
@@ -252,6 +305,21 @@ export async function deleteFeed(
 }
 
 /**
+ * Delete every feed of a user who lost access. A feed is a standing grant to people outside the
+ * deployment, so it ends with the access; a reactivation does not bring it back.
+ */
+export async function revokeFeeds(
+  env: Env,
+  user: { id: string; orgId: string },
+  by: "user_deactivated" | "user_not_admitted",
+): Promise<void> {
+  const { results } = await env.DB.prepare("SELECT id FROM feeds WHERE user_id = ?")
+    .bind(user.id)
+    .all<{ id: string }>();
+  for (const { id } of results) await deleteFeed(env, user, id, by);
+}
+
+/**
  * Delete the user's feeds that have no calendar left, after accounts went. An empty feed would
  * tell subscribers that the user is always free; without the feed, their app reports an error.
  */
@@ -268,6 +336,14 @@ export async function deleteEmptyFeeds(
   for (const { id } of results) await deleteFeed(env, user, id, "account_removed");
 }
 
+interface FeedCalendar {
+  id: string;
+  accountId: string;
+  remoteId: string;
+  needsReconnect: number;
+}
+
+/** Everything a fetch needs, in one D1 read: feed, user, policy, calendars and the last copy. */
 interface FeedRow {
   id: string;
   userId: string;
@@ -276,55 +352,79 @@ interface FeedRow {
   daysAhead: number;
   includeAllDay: number;
   locale: string;
+  lastBody: string | null;
+  lastRenderedAt: number | null;
+  lastKey: string | null;
+  orgId: string;
+  email: string;
+  tenantId: string | null;
+  active: number;
+  policy: string;
+  /** JSON array of FeedCalendar: the chosen calendars the user still owns. */
+  calendars: string;
 }
 
-interface FeedCalendar {
-  id: string;
-  accountId: string;
-  remoteId: string;
-  needsReconnect: number;
-}
+const FEED_SELECT = `
+  SELECT f.id, f.user_id AS userId, f.token_hash AS tokenHash, f.uid_salt AS uidSalt,
+         f.days_ahead AS daysAhead, f.include_all_day AS includeAllDay, f.locale,
+         f.last_body AS lastBody, f.last_rendered_at AS lastRenderedAt, f.last_key AS lastKey,
+         u.org_id AS orgId, u.email, u.tenant_id AS tenantId, u.active, o.policy,
+         (SELECT json_group_array(json_object('id', c.id, 'accountId', c.account_id,
+                                              'remoteId', c.remote_id,
+                                              'needsReconnect', a.needs_reconnect))
+          FROM feed_calendars fc
+          JOIN calendars c ON c.id = fc.calendar_id
+          JOIN accounts a ON a.id = c.account_id
+          WHERE fc.feed_id = f.id AND a.user_id = f.user_id AND c.owned = 1) AS calendars
+  FROM feeds f JOIN users u ON u.id = f.user_id JOIN orgs o ON o.id = u.org_id
+  WHERE f.id = ?`;
+
+const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
 
 /** Headers of every refusal. A 404 must not be cached anywhere, so that a new feed works at once. */
 function notFound(): Response {
-  return new Response("Not found", {
-    status: 404,
-    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-  });
+  return new Response("Not found", { status: 404, headers: TEXT_HEADERS });
 }
 
-/** A calendar could not be read. Apps keep their last copy and fetch again later. */
-function unavailable(): Response {
+/** No calendar data now. Apps keep their last copy and fetch again after `Retry-After`. */
+function unavailable(retryAfterMs = FEED_CACHE_SECONDS * 1000): Response {
   return new Response("Unavailable", {
     status: 503,
     headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store",
-      "retry-after": String(FEED_CACHE_SECONDS),
+      ...TEXT_HEADERS,
+      "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
     },
   });
 }
 
 const ICS_CONTENT_TYPE = "text/calendar; charset=utf-8";
 
-/** Headers for the subscriber: no shared cache may keep a feed, and no search engine index it. */
-function forSubscriber(response: Response): Response {
-  const headers = new Headers(response.headers);
-  headers.set("content-type", ICS_CONTENT_TYPE);
-  headers.set("cache-control", `private, max-age=${FEED_CACHE_SECONDS}`);
-  headers.set("x-robots-tag", "noindex, nofollow");
-  headers.set("referrer-policy", "no-referrer");
-  return new Response(response.body, { status: 200, headers });
+/** The feed for the subscriber: no shared cache may keep it, and no search engine index it. */
+function forSubscriber(body: BodyInit | null): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": ICS_CONTENT_TYPE,
+      "cache-control": `private, max-age=${FEED_CACHE_SECONDS}`,
+      "x-robots-tag": "noindex, nofollow",
+      "referrer-policy": "no-referrer",
+    },
+  });
 }
 
 /**
- * Answer a fetch of `/ics/<feedId>/<token>.ics`. Unknown feeds and wrong tokens both get a plain
- * 404 after the same lookup, hash and comparison. A valid token still yields 404 if the user is
- * inactive or no longer admitted, or if no chosen calendar belongs to the user any more.
+ * Answer a fetch of `/ics/<feedId>/<token>.ics`.
  *
- * The rendered feed is cached for 15 minutes under the feed, the token hash and the calendar set,
- * so that a rotated token or a disconnected account never gets a cached answer. Events are read
- * through each account's Durable Object, where provider calls run one at a time.
+ * 1. One D1 read loads the feed, its user and policy, the calendars the user still owns, and the
+ *    last rendered copy. Unknown feeds and wrong tokens both get a plain 404 after the same hash
+ *    and comparison.
+ * 2. If the user is inactive or no longer admitted, their feeds are deleted: 404.
+ * 3. A copy younger than 15 minutes from the same calendars and settings answers at once. Then the
+ *    Cache API, keyed by feed, token hash and calendar set.
+ * 4. Otherwise each calendar is read through its account's Durable Object. While an account is
+ *    throttled, the last copy answers, however old; without one, 503 with the remaining wait. A
+ *    calendar the account can no longer read gives 503 and a notice on the start page: subscribers
+ *    never get a partial feed.
  */
 export async function feedResponse(
   env: Env,
@@ -335,126 +435,179 @@ export async function feedResponse(
 ): Promise<Response> {
   const token = file.endsWith(".ics") ? file.slice(0, -4) : "";
   if (!FEED_ID_PATTERN.test(feedId) || !TOKEN_PATTERN.test(token)) return notFound();
-  const feed = await env.DB.prepare(
-    `SELECT id, user_id AS userId, token_hash AS tokenHash, uid_salt AS uidSalt,
-            days_ahead AS daysAhead, include_all_day AS includeAllDay, locale
-     FROM feeds WHERE id = ?`,
-  )
-    .bind(feedId)
-    .first<FeedRow>();
+  const feed = await env.DB.prepare(FEED_SELECT).bind(feedId).first<FeedRow>();
   const matches = await tokenMatches(token, feed?.tokenHash ?? UNKNOWN_FEED_HASH);
   if (!feed || !matches) return notFound();
 
-  // The same checks as a session: a deactivated or removed user shares nothing.
-  if (!(await loadUser(env, feed.userId))) return notFound();
-  const { results: calendars } = await env.DB.prepare(
-    `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId,
-            a.needs_reconnect AS needsReconnect
-     FROM feed_calendars fc
-     JOIN calendars c ON c.id = fc.calendar_id
-     JOIN accounts a ON a.id = c.account_id
-     WHERE fc.feed_id = ? AND a.user_id = ?
-     ORDER BY c.id
-     LIMIT ?`,
-  )
-    .bind(feed.id, feed.userId, MAX_FEED_CALENDARS)
-    .all<FeedCalendar>();
+  // The same checks as a session. Losing access ends the feed for good.
+  const admitted =
+    feed.active === 1 &&
+    admittedUser(env, {
+      id: feed.userId,
+      orgId: feed.orgId,
+      email: feed.email,
+      tenantId: feed.tenantId,
+      policy: feed.policy,
+    });
+  if (!admitted) {
+    await revokeFeeds(
+      env,
+      { id: feed.userId, orgId: feed.orgId },
+      feed.active === 1 ? "user_not_admitted" : "user_deactivated",
+    );
+    return notFound();
+  }
+  const calendars = (JSON.parse(feed.calendars) as FeedCalendar[])
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, MAX_FEED_CALENDARS);
   if (calendars.length === 0) return notFound();
-  // Without its tokens the account cannot be read; every attempt would only ask the provider again.
-  if (calendars.some((calendar) => calendar.needsReconnect)) return unavailable();
 
   const locale: Locale = isLocale(feed.locale) ? feed.locale : LOCALES[0];
-  const key = new URL(`${origin}/ics-cache/${feed.id}/${feed.tokenHash}`);
-  key.searchParams.set("calendars", calendars.map((calendar) => calendar.id).join(","));
-  key.searchParams.set("days", String(feed.daysAhead));
-  key.searchParams.set("allDay", String(feed.includeAllDay));
-  key.searchParams.set("locale", locale);
-  const cacheKey = new Request(key.toString());
+  // What the body depends on. A copy from other calendars or settings is never served.
+  const renderKey = [
+    calendars.map((calendar) => calendar.id).join(","),
+    feed.daysAhead,
+    feed.includeAllDay,
+    locale,
+  ].join("|");
+  const sameCopy = feed.lastBody !== null && feed.lastKey === renderKey;
+  if (sameCopy && now.getTime() - (feed.lastRenderedAt ?? 0) < FEED_CACHE_SECONDS * 1000) {
+    return forSubscriber(feed.lastBody);
+  }
+
+  const cacheKey = new Request(
+    `${origin}/ics-cache/${feed.id}/${feed.tokenHash}?${new URLSearchParams({ key: renderKey }).toString()}`,
+  );
   const cache = caches.default;
   const cached = await cache.match(cacheKey).catch(() => undefined);
-  if (cached) return forSubscriber(cached);
+  if (cached) return forSubscriber(cached.body);
+
+  // Without its tokens the account cannot be read; every attempt would only ask the provider again.
+  if (calendars.some((calendar) => calendar.needsReconnect)) return unavailable();
 
   const window = feedWindow(feed.daysAhead, now);
   const reads: { calendarId: string; events: SourceEvent[] }[] = [];
   for (const calendar of calendars) {
+    let read: FeedRead;
     try {
       // One after another: two calendars of one account share its mailbox's request limit.
-      const events = await accountSync(env, calendar.accountId).readSourceEvents(
-        calendar.remoteId,
-        window,
-        false,
-      );
-      reads.push({ calendarId: calendar.id, events });
+      read = await accountSync(env, calendar.accountId).readFeedEvents(calendar.remoteId, window);
     } catch (error) {
       console.error("Reading a feed calendar failed", feed.id, calendar.id, errorCode(error));
       return unavailable();
     }
+    if (read.kind === "throttled") {
+      // Stale is better than nothing, and no further call may extend the penalty.
+      return sameCopy ? forSubscriber(feed.lastBody) : unavailable(read.retryAfterMs);
+    }
+    if (read.kind === "unavailable") {
+      console.error("A feed calendar can no longer be read", feed.id, calendar.id, read.code);
+      await env.DB.prepare("UPDATE feeds SET error_calendar_id = ? WHERE id = ?")
+        .bind(calendar.id, feed.id)
+        .run();
+      return unavailable();
+    }
+    reads.push({ calendarId: calendar.id, events: read.events });
   }
 
   const { t } = i18nFor(locale);
+  const today = new Date(window.start.getTime() + FEED_DAYS_BEHIND * DAY_MS);
+  const blocks = await busyEvents(reads, {
+    includeAllDay: feed.includeAllDay === 1,
+    uidSalt: feed.uidSalt,
+    today,
+  });
   const body = renderBusyCalendar({
     name: t.feeds.calendarName,
     summary: t.feeds.eventTitle,
     refreshMinutes: FEED_CACHE_SECONDS / 60,
-    events: await busyEvents(reads, {
-      includeAllDay: feed.includeAllDay === 1,
-      uidSalt: feed.uidSalt,
-    }),
+    events: blocks.events,
     now,
   });
-  const response = new Response(body, {
-    headers: {
-      "content-type": ICS_CONTENT_TYPE,
-      "cache-control": `max-age=${FEED_CACHE_SECONDS}`,
-    },
-  });
+  await env.DB.prepare(
+    `UPDATE feeds SET last_body = ?, last_rendered_at = ?, last_key = ?, cut_at = ?,
+            error_calendar_id = NULL
+     WHERE id = ?`,
+  )
+    .bind(body, now.getTime(), renderKey, blocks.cutAt, feed.id)
+    .run();
   try {
-    await cache.put(cacheKey, response.clone());
+    await cache.put(
+      cacheKey,
+      new Response(body, {
+        headers: {
+          "content-type": ICS_CONTENT_TYPE,
+          "cache-control": `max-age=${FEED_CACHE_SECONDS}`,
+        },
+      }),
+    );
   } catch (error) {
     console.error("Caching a feed failed", feed.id, errorCode(error));
   }
-  return forSubscriber(response);
+  return forSubscriber(body);
+}
+
+interface Block {
+  allDay: boolean;
+  /** Unix ms, or the UTC midnight of an all-day date. */
+  start: number;
+  end: number;
+}
+
+/** Merge overlapping and adjacent intervals. Expects them sorted by start. */
+function merge(sorted: Block[]): Block[] {
+  const merged: Block[] = [];
+  for (const block of sorted) {
+    const last = merged.at(-1);
+    if (last && block.start <= last.end) last.end = Math.max(last.end, block.end);
+    else merged.push({ ...block });
+  }
+  return merged;
 }
 
 /**
- * The busy intervals of the read calendars: events that block time, without any content. Equal
- * intervals from several calendars appear once. At most MAX_FEED_EVENTS, nearest first.
+ * The busy blocks of the read calendars: events that block time, merged where they overlap or
+ * touch, without any content. All-day events form their own blocks. A UID is an HMAC of the
+ * block's kind, start and end with the feed's salt: stable while the block stays, different in
+ * every feed, and with no link to the events inside it. A moved meeting is a new block.
  *
- * A UID is an HMAC of calendar and occurrence key with the feed's salt: stable across fetches, no
- * source event ID, and different in every feed.
+ * Above MAX_FEED_EVENTS blocks, the oldest past blocks go first, then the latest ones. `cutAt` is
+ * then the start of the first block left out at the end, or null if the end is complete.
  */
 export async function busyEvents(
   reads: { calendarId: string; events: SourceEvent[] }[],
-  feed: { includeAllDay: boolean; uidSalt: string },
-): Promise<BusyEvent[]> {
+  feed: { includeAllDay: boolean; uidSalt: string; today: Date },
+): Promise<{ events: BusyEvent[]; cutAt: string | null }> {
   const options = { ...DEFAULT_OPTIONS, skipAllDay: !feed.includeAllDay };
-  const byInterval = new Map<
-    string,
-    { key: string; start: string; end: string; allDay: boolean; at: number }
-  >();
-  for (const { calendarId, events } of reads) {
+  const timed: Block[] = [];
+  const allDay: Block[] = [];
+  for (const { events } of reads) {
     for (const event of events) {
       if (!isIncluded(event, options)) continue;
-      const at = Date.parse(event.start);
-      if (Number.isNaN(at) || Number.isNaN(Date.parse(event.end))) continue;
-      const interval = `${event.allDay ? "date" : "time"}|${event.start}|${event.end}`;
-      const key = `${calendarId}\u0000${event.occurrenceKey}`;
-      const current = byInterval.get(interval);
-      // The smaller key wins, so that the UID of an interval does not depend on read order.
-      if (!current || key < current.key) {
-        byInterval.set(interval, {
-          key,
-          start: event.start,
-          end: event.end,
-          allDay: event.allDay,
-          at,
-        });
-      }
+      const start = Date.parse(event.start);
+      const end = Date.parse(event.end);
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;
+      (event.allDay ? allDay : timed).push({ allDay: event.allDay, start, end });
     }
   }
-  const kept = [...byInterval.values()]
-    .sort((a, b) => a.at - b.at || (a.key < b.key ? -1 : 1))
-    .slice(0, MAX_FEED_EVENTS);
+  const byStart = (a: Block, b: Block) => a.start - b.start || a.end - b.end;
+  let blocks = [...merge(timed.sort(byStart)), ...merge(allDay.sort(byStart))].sort(
+    (a, b) => byStart(a, b) || Number(a.allDay) - Number(b.allDay),
+  );
+
+  let cutAt: string | null = null;
+  const overflow = blocks.length - MAX_FEED_EVENTS;
+  if (overflow > 0) {
+    const today = feed.today.getTime();
+    const past = blocks.filter((block) => block.end <= today).length;
+    blocks = blocks.slice(Math.min(overflow, past));
+    if (blocks.length > MAX_FEED_EVENTS) {
+      const first = blocks[MAX_FEED_EVENTS];
+      if (first) cutAt = new Date(first.start).toISOString();
+      blocks = blocks.slice(0, MAX_FEED_EVENTS);
+    }
+  }
+
   const hmac = await crypto.subtle.importKey(
     "raw",
     fromHex(feed.uidSalt),
@@ -463,15 +616,22 @@ export async function busyEvents(
     ["sign"],
   );
   const encoder = new TextEncoder();
-  const result: BusyEvent[] = [];
-  for (const event of kept) {
-    const mac = await crypto.subtle.sign("HMAC", hmac, encoder.encode(event.key));
-    result.push({
+  const events: BusyEvent[] = [];
+  for (const block of blocks) {
+    const start = block.allDay
+      ? new Date(block.start).toISOString().slice(0, 10)
+      : new Date(block.start).toISOString();
+    const end = block.allDay
+      ? new Date(block.end).toISOString().slice(0, 10)
+      : new Date(block.end).toISOString();
+    const key = `${block.allDay ? "date" : "time"}|${start}|${end}`;
+    const mac = await crypto.subtle.sign("HMAC", hmac, encoder.encode(key));
+    events.push({
       uid: `${toHex(new Uint8Array(mac).slice(0, 16))}@slotmirror`,
-      start: event.start,
-      end: event.end,
-      allDay: event.allDay,
+      start,
+      end,
+      allDay: block.allDay,
     });
   }
-  return result;
+  return { events, cutAt };
 }

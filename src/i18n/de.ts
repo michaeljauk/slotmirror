@@ -224,7 +224,7 @@ export const de: Messages = {
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
       "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
-      "Für jeden Frei/Belegt-Feed, den du anlegst: seine Kalender, seine Einstellungen und ein Hash seiner geheimen Adresse. Wer die Adresse hat, sieht deine Belegt-Zeiten, ohne Inhalte. Der Cache von Cloudflare hält jeden erzeugten Feed 15 Minuten.",
+      "Für jeden Frei/Belegt-Feed, den du anlegst: seine Kalender, seine Einstellungen und ein Hash seiner geheimen Adresse. Wer die Adresse hat, sieht deine Belegt-Zeiten, ohne Inhalte. Der zuletzt erzeugte Feed, nur Belegt-Zeiten, wird beim Feed und im Cache von Cloudflare gehalten, um die nächsten Abrufe zu beantworten.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:
@@ -318,12 +318,17 @@ export const de: Messages = {
     renewedOn: (date) => `neue Adresse ${date}`,
     daysAhead: (count) => `${count} Tage voraus`,
     withAllDay: "mit ganztägigen Terminen",
+    cut: (date) =>
+      `Zu viele Belegt-Zeiten: Der Feed endet vor dem ${date}. Wähle weniger Tage oder Kalender.`,
+    calendarUnreadable: (name) =>
+      `„${name}“ lässt sich nicht mehr lesen, Abonnenten bekommen keine Aktualisierung. Entferne den Kalender aus dem Feed.`,
+    removeCalendar: "Kalender entfernen",
     create: "Neuer Feed",
     calendarsLabel: (max) => `Kalender, höchstens ${max}`,
     daysLabel: "Tage voraus",
     allDayLabel: "Ganztägige Termine einschließen",
     shares:
-      "Abonnenten sehen jeden Termin, der Zeit blockiert, als „Belegt“, als privat markiert, ab 7 Tagen in der Vergangenheit. Titel, Orte, Notizen und Teilnehmer bleiben draußen, ebenso freie und abgelehnte Termine.",
+      "Abonnenten sehen, wann du belegt bist, ab 7 Tagen in der Vergangenheit: Blöcke mit dem Titel „Belegt“, als privat markiert, wobei überlappende Termine einen Block bilden. Titel, Orte, Notizen und Teilnehmer bleiben draußen, ebenso freie und abgelehnte Termine. Wählbar sind nur Kalender, die deinen Konten gehören.",
     submit: "Feed erstellen",
     rotate: "Neue Adresse",
     rotateText:

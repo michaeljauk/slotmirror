@@ -314,3 +314,43 @@ describe("source calendars", () => {
     expect((await rulesOf(user.id)).filter((rule) => rule.source === g)).toHaveLength(2);
   });
 });
+
+describe("title and filter settings", () => {
+  it("stores the block title and categories from the form, and colours as color:<id>", async () => {
+    const { user, cookie, w, g } = await setup("titlefilter");
+    await setDirection(env, user, w, g, "busy");
+    const body = new URLSearchParams({
+      settings: "1",
+      "settings.daysAhead": "90",
+      "settings.blockTitle": "  Belegt ",
+      "settings.skipCategories": "Privat, Fokus,, ",
+    });
+    body.append("settings.skipColor", "color:11");
+    body.append("settings.skipColor", "color:evil");
+    await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const rule = await env.DB.prepare("SELECT options FROM rules WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ options: string }>();
+    expect(JSON.parse(rule?.options ?? "{}")).toMatchObject({
+      blockTitle: "Belegt",
+      skipCategories: ["Privat", "Fokus", "color:11"],
+    });
+  });
+});
+
+describe("reconnect", () => {
+  it("clears the flag when the account is connected again", async () => {
+    const { user, w } = await setup("reconnect");
+    await env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?").bind(w).run();
+    let state = await loadEditorState(env, user.id);
+    expect(state.accounts.find((a) => a.id === w)?.needsReconnect).toBe(true);
+    await env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?").bind(w).run();
+    state = await loadEditorState(env, user.id);
+    expect(state.accounts.find((a) => a.id === w)?.needsReconnect).toBe(false);
+  });
+});

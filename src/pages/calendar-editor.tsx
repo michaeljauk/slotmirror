@@ -63,6 +63,50 @@ function Switch(props: { name: string; checked: boolean; title: string; hint: st
   );
 }
 
+/** Google's event colours by ID, as Google Calendar shows them. */
+const GOOGLE_COLORS: readonly { id: string; hex: string }[] = [
+  { id: "1", hex: "#7986cb" },
+  { id: "2", hex: "#33b679" },
+  { id: "3", hex: "#8e24aa" },
+  { id: "4", hex: "#e67c73" },
+  { id: "5", hex: "#f6bf26" },
+  { id: "6", hex: "#f4511e" },
+  { id: "7", hex: "#039be5" },
+  { id: "8", hex: "#616161" },
+  { id: "9", hex: "#3f51b5" },
+  { id: "10", hex: "#0b8043" },
+  { id: "11", hex: "#d50000" },
+];
+
+/**
+ * A notice for every account whose connection the provider ended, with the way back. Nothing of
+ * that account syncs until the user connects it again. Also shown on the accounts page.
+ */
+export function ReconnectNotice(props: {
+  accounts: {
+    id: string;
+    provider: "microsoft" | "google";
+    name: string;
+    needsReconnect: boolean;
+  }[];
+}) {
+  const { t } = useI18n();
+  const broken = props.accounts.filter((account) => account.needsReconnect);
+  if (broken.length === 0) return null;
+  return (
+    <div class="reconnect-notice" role="alert">
+      {broken.map((account) => (
+        <p>
+          <span>{t.editor.reconnectText(account.name)}</span>
+          <a class="button small primary" href={`/auth/${account.provider}/connect`}>
+            {t.editor.reconnect(account.name)}
+          </a>
+        </p>
+      ))}
+    </div>
+  );
+}
+
 /** Settings for all directions. With the editor script they join the page's unsaved changes. */
 function SettingsCard(props: { state: EditorState }) {
   const { t } = useI18n();
@@ -85,6 +129,37 @@ function SettingsCard(props: { state: EditorState }) {
                 checked={settings.daysAhead === days}
               />
               <span class="choice">{t.editor.days(days)}</span>
+            </label>
+          ))}
+        </span>
+      </div>
+      <label class="settings-field">
+        <span class="switch-title">{t.editor.blockTitleLabel}</span>
+        <span class="switch-hint">{t.editor.blockTitleHint}</span>
+        <input type="text" name="blockTitle" maxlength={255} value={settings.blockTitle} />
+      </label>
+      <label class="settings-field">
+        <span class="switch-title">{t.editor.skipCategoriesLabel}</span>
+        <span class="switch-hint">{t.editor.skipCategoriesHint}</span>
+        <input
+          type="text"
+          name="skipCategories"
+          placeholder={t.editor.skipCategoriesPlaceholder}
+          value={settings.skipCategories.filter((name) => !name.startsWith("color:")).join(", ")}
+        />
+      </label>
+      <div class="settings-field">
+        <span class="switch-title">{t.editor.skipColorsLabel}</span>
+        <span class="color-row">
+          {GOOGLE_COLORS.map((color) => (
+            <label class="color-choice" title={t.editor.googleColor(color.id)}>
+              <input
+                type="checkbox"
+                name="skipColor"
+                value={`color:${color.id}`}
+                checked={settings.skipCategories.includes(`color:${color.id}`)}
+              />
+              <span class="color-dot" style={`background:${color.hex}`} />
             </label>
           ))}
         </span>
@@ -359,6 +434,7 @@ export function CalendarEditorPage(props: {
         </div>
 
         {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
+        <ReconnectNotice accounts={props.state.accounts} />
 
         {ready.length < 2 ? (
           <div class="card">

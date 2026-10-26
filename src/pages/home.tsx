@@ -5,7 +5,7 @@ import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
 import { MAX_NAME_LENGTH, type EditorState } from "../editor";
-import { SourcePills } from "./calendar-editor";
+import { ReconnectNotice, SourcePills } from "./calendar-editor";
 
 export interface AccountRow {
   id: string;
@@ -13,6 +13,8 @@ export interface AccountRow {
   email: string;
   tenantId: string | null;
   createdAt: string;
+  /** 1 if the provider refused the refresh token; the account has to be connected again. */
+  needsReconnect: number;
 }
 
 /** Product names stay untranslated. */
@@ -109,6 +111,8 @@ export function HomePage(props: {
           </div>
         </div>
 
+        <ReconnectNotice accounts={props.editor.accounts} />
+
         <div class="card">
           {props.accounts.length === 0 ? (
             <div class="empty">
@@ -135,7 +139,13 @@ export function HomePage(props: {
                       {accountKind(account)}
                     </div>
                   </div>
-                  {syncStatus(props.statuses.get(account.id))}
+                  {account.needsReconnect ? (
+                    <a class="status error" href={`/auth/${account.provider}/connect`}>
+                      {t.editor.reconnectShort}
+                    </a>
+                  ) : (
+                    syncStatus(props.statuses.get(account.id))
+                  )}
                   <details class="rename">
                     <summary class="link-button quiet">{t.accounts.rename}</summary>
                     <form method="post" action={`/accounts/${account.id}/name`} class="rename-form">

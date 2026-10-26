@@ -15,6 +15,10 @@ export function isIncluded(event: SourceEvent, options: RuleOptions): boolean {
   if (options.skipDeclined && event.declined) return false;
   if (options.skipFree && event.showAs === "free") return false;
   if (options.skipTentative && event.showAs === "tentative") return false;
+  if (options.skipCategories.length > 0) {
+    const skipped = new Set(options.skipCategories.map((name) => name.trim().toLowerCase()));
+    if (event.categories.some((name) => skipped.has(name.trim().toLowerCase()))) return false;
+  }
   return true;
 }
 

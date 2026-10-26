@@ -11,6 +11,7 @@ describe("parseRuleOptions", () => {
       skipFree: true,
       skipTentative: false,
       skipDeclined: true,
+      skipCategories: [],
       markPrivate: true,
     });
   });

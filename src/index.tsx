@@ -116,7 +116,8 @@ app.get("/", async (c) => {
     return render(c, <SignInPage providers={signInProviders(c.env)} />);
   }
   const { results } = await c.env.DB.prepare(
-    `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt
+    `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt,
+            needs_reconnect AS needsReconnect
      FROM accounts WHERE user_id = ? ORDER BY provider, email`,
   )
     .bind(user.id)

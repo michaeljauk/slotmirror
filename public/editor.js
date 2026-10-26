@@ -91,11 +91,13 @@
   const settings = document.getElementById("settings");
   const readSettings = () => new URLSearchParams(new FormData(settings)).toString();
   const savedSettings = settings ? readSettings() : "";
-  settings?.addEventListener("change", () => {
+  const onSettings = () => {
     if (readSettings() === savedSettings) pending.delete("settings");
     else pending.set("settings", readSettings());
     refreshBar();
-  });
+  };
+  settings?.addEventListener("change", onSettings);
+  settings?.addEventListener("input", onSettings);
 
   bar.querySelector(".edit-cancel").addEventListener("click", () => {
     const keys = [...pending.keys()];

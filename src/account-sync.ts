@@ -8,7 +8,7 @@ import {
   type CalendarInfo,
 } from "./providers/calendar-client";
 import { clientCredentials, oauthClient } from "./providers/oauth-clients";
-import type { TokenResponse } from "./providers/oauth-token";
+import { TokenError, type TokenResponse } from "./providers/oauth-token";
 import { desiredBlocks, planSync, ruleTagFor } from "./sync/plan";
 import { cleanupWindow, loadRule, rulesTargetingAccount, syncWindow } from "./sync/rules";
 import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
@@ -50,6 +50,12 @@ const RULE_QUEUE_KEY = "ruleQueue";
 
 /** Durable Object storage key of block removals for deleted or switched-off rules. */
 const REMOVAL_QUEUE_KEY = "removalQueue";
+
+/**
+ * Token errors that mean the refresh token is gone for good: revoked, expired (Google's testing
+ * mode ends tokens after 7 days), or new consent needed.
+ */
+const RECONNECT_CODES = new Set(["invalid_grant", "interaction_required", "consent_required"]);
 
 /** How long a new watch lasts. Graph allows under 7 days for events. */
 const WATCH_LIFETIME_MS = 6 * 24 * 60 * 60 * 1000;
@@ -531,6 +537,12 @@ export class AccountSync extends DurableObject<Env> {
         refreshToken,
       });
     } catch (error) {
+      // A refused refresh token does not recover by itself; the user has to connect again.
+      if (error instanceof TokenError && RECONNECT_CODES.has(error.code)) {
+        await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
+          .bind(accountId)
+          .run();
+      }
       const owner = await accountOwner(this.env.DB, accountId);
       if (owner) {
         await recordAudit(this.env.DB, {

@@ -145,6 +145,17 @@ export const de: Messages = {
     settingsTitle: "Für alle Kalender",
     settingsLead: "Diese Einstellungen gelten für alle Richtungen oben.",
     window: "Zeitraum",
+    blockTitleLabel: "Titel belegter Blöcke",
+    blockTitleHint: "Diesen Titel tragen Kopien mit der Stufe „Als belegt“.",
+    skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
+    skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
+    skipCategoriesPlaceholder: "Privat, Fokus",
+    skipColorsLabel: "Google-Termine mit diesen Farben auslassen",
+    googleColor: (id: string) => `Google-Farbe ${id}`,
+    reconnectText: (name: string) =>
+      `${name} ist nicht mehr verbunden. Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.`,
+    reconnect: (name: string) => `${name} neu verbinden`,
+    reconnectShort: "Neu verbinden",
     calendarsFrom: (name: string) => `Kalender aus ${name}:`,
     mainCalendar: "Hauptkalender",
     noSource:

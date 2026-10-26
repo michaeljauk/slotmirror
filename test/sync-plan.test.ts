@@ -7,7 +7,7 @@ import {
   LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
 } from "../src/sync/graph-events";
-import { desiredBlocks, planSync } from "../src/sync/plan";
+import { desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
 import fixture from "./fixtures/graph/calendar-view.json";
 
@@ -240,5 +240,30 @@ describe("legacy marker", () => {
     expect(googleMarker(event({ [LEGACY_GOOGLE_MARKER_KEY]: value }))?.ruleTag).toBe(
       "aaaaaaaaaaaa",
     );
+  });
+});
+
+describe("category filter", () => {
+  it("skips events with a listed Outlook category or Google colour, ignoring case", () => {
+    const options = ruleOptionsSchema.parse({ skipCategories: ["privat", "color:11"] });
+    const event = (categories: string[]) =>
+      ({
+        occurrenceKey: "event:x",
+        start: "2026-10-26T10:00:00.000Z",
+        end: "2026-10-26T11:00:00.000Z",
+        allDay: false,
+        showAs: "busy",
+        isPrivate: false,
+        declined: false,
+        categories,
+        subject: "x",
+        location: "",
+        body: "",
+        isMirror: false,
+      }) satisfies SourceEvent;
+    expect(isIncluded(event(["Privat"]), options)).toBe(false);
+    expect(isIncluded(event(["color:11"]), options)).toBe(false);
+    expect(isIncluded(event(["Arbeit"]), options)).toBe(true);
+    expect(isIncluded(event([]), options)).toBe(true);
   });
 });

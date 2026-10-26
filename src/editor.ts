@@ -25,6 +25,8 @@ export interface EditorAccount {
   email: string;
   tenantId: string | null;
   inGroup: boolean;
+  /** The provider refused the refresh token; nothing syncs until the user connects again. */
+  needsReconnect: boolean;
   /** Short display name, derived from the address. */
   name: string;
   /** Main calendar; null until the calendars are loaded or if the account has none it can write. */
@@ -58,7 +60,7 @@ export interface EditorDirection {
 /** Settings for all rules of a user. The editor shows them once, not per direction. */
 export type SyncSettings = Pick<
   RuleOptions,
-  "daysAhead" | "skipAllDay" | "skipTentative" | "markPrivate"
+  "daysAhead" | "skipAllDay" | "skipTentative" | "markPrivate" | "blockTitle" | "skipCategories"
 >;
 
 export interface EditorState {
@@ -108,7 +110,7 @@ function toChoice(level: DetailLevel): Choice {
 export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
   const { results: accountRows } = await env.DB.prepare(
     `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
-            display_name AS displayName
+            display_name AS displayName, needs_reconnect AS needsReconnect
      FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
   )
     .bind(userId)
@@ -119,6 +121,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       tenantId: string | null;
       inGroup: number;
       displayName: string | null;
+      needsReconnect: number;
     }>();
   const { results: calendarRows } = await env.DB.prepare(
     `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
@@ -146,6 +149,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       email: row.email,
       tenantId: row.tenantId,
       inGroup: row.inGroup === 1,
+      needsReconnect: row.needsReconnect === 1,
       name: row.displayName ?? names[index] ?? row.email,
       calendar: main ? { id: main.id, remoteId: main.remoteId, canEdit: main.canEdit === 1 } : null,
       calendars: own.map((calendar) => ({
@@ -239,8 +243,9 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
 }
 
 function parseSettings(json: string): SyncSettings {
-  const { daysAhead, skipAllDay, skipTentative, markPrivate } = parseRuleOptions(json);
-  return { daysAhead, skipAllDay, skipTentative, markPrivate };
+  const { daysAhead, skipAllDay, skipTentative, markPrivate, blockTitle, skipCategories } =
+    parseRuleOptions(json);
+  return { daysAhead, skipAllDay, skipTentative, markPrivate, blockTitle, skipCategories };
 }
 
 /** Options of a new rule: the user's settings with the given detail level. */
@@ -281,7 +286,14 @@ export async function setSettings(
     orgId: user.orgId,
     userId: user.id,
     kind: "settings_changed",
-    detail: { ...settings },
+    // The block title and category names are the user's own words; the log keeps counts only.
+    detail: {
+      daysAhead: settings.daysAhead,
+      skipAllDay: settings.skipAllDay,
+      skipTentative: settings.skipTentative,
+      markPrivate: settings.markPrivate,
+      skipCategories: settings.skipCategories.length,
+    },
   });
   for (const id of targets) await accountSync(env, id).requestSync();
 }

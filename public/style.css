@@ -1521,3 +1521,99 @@ input[role="switch"]:focus-visible {
 .none-chosen {
   padding: 8px 16px;
 }
+
+/* Reconnect notice */
+
+.reconnect-notice {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.reconnect-notice p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #f0c9c5;
+  border-radius: 10px;
+  background: #fdf1f0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.reconnect-notice p span {
+  flex: 1 1 260px;
+}
+
+a.status.error {
+  text-decoration: underline;
+}
+
+/* Text and colour settings */
+
+.settings-field {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.settings-field input[type="text"] {
+  max-width: 360px;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+}
+
+.color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.color-choice {
+  position: relative;
+  cursor: pointer;
+}
+
+.color-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.color-dot {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0%);
+}
+
+.color-choice input:checked + .color-dot {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--text);
+}
+
+.color-choice input:checked + .color-dot::after {
+  content: "✕";
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.color-choice input:focus-visible + .color-dot {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}

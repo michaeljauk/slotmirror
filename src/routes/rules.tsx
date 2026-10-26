@@ -207,11 +207,25 @@ rules.post("/direction/reset", async (c) => {
 /** Settings from a form or the editor script's fields "settings.<name>". */
 function settingsFrom(form: FormData, prefix = ""): SyncSettings {
   const days = Number(form.get(`${prefix}daysAhead`) ?? 90);
+  const text = (name: string) => {
+    const value = form.get(`${prefix}${name}`);
+    return typeof value === "string" ? value : "";
+  };
+  // Outlook categories as comma-separated names, Google colours as checkboxes "color:<id>".
+  const categories = text("skipCategories")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0 && name.length <= 100);
+  const colors = form
+    .getAll(`${prefix}skipColor`)
+    .filter((value): value is string => typeof value === "string" && /^color:\d{1,2}$/.test(value));
   return {
     daysAhead: [30, 90, 180, 365].includes(days) ? days : 90,
     skipAllDay: form.has(`${prefix}skipAllDay`),
     skipTentative: form.has(`${prefix}skipTentative`),
     markPrivate: form.has(`${prefix}markPrivate`),
+    blockTitle: text("blockTitle").trim().slice(0, 255) || "Busy",
+    skipCategories: [...new Set([...categories, ...colors])].slice(0, 50),
   };
 }
 

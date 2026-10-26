@@ -18,6 +18,14 @@ export const ruleOptionsSchema = z.object({
   skipFree: z._default(z.boolean(), true),
   skipTentative: z._default(z.boolean(), false),
   skipDeclined: z._default(z.boolean(), true),
+  /**
+   * Skip events with any of these categories: Outlook category names, or "color:<id>" for Google
+   * event colours. Compared without case.
+   */
+  skipCategories: z._default(
+    z.array(z.string().check(z.maxLength(100))).check(z.maxLength(50)),
+    [],
+  ),
   /** Mark blocks as private so that people with access to the target calendar see no detail. */
   markPrivate: z._default(z.boolean(), true),
 });

@@ -143,6 +143,17 @@ export const en = {
     settingsTitle: "For all calendars",
     settingsLead: "These settings apply to every direction above.",
     window: "Time window",
+    blockTitleLabel: "Title of busy blocks",
+    blockTitleHint: "Copies at the level “As busy” carry this title.",
+    skipCategoriesLabel: "Skip events with these categories",
+    skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
+    skipCategoriesPlaceholder: "Private, Focus",
+    skipColorsLabel: "Skip Google events with these colours",
+    googleColor: (id: string) => `Google colour ${id}`,
+    reconnectText: (name: string) =>
+      `${name} is no longer connected. Until you connect it again, its calendars do not sync.`,
+    reconnect: (name: string) => `Connect ${name} again`,
+    reconnectShort: "Connect again",
     calendarsFrom: (name: string) => `Calendars from ${name}:`,
     mainCalendar: "Main calendar",
     noSource:

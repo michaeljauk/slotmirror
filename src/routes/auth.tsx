@@ -200,6 +200,9 @@ auth.get("/:provider/callback", async (c) => {
     },
     provider,
   );
+  await c.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
+    .bind(account.id)
+    .run();
   await recordAudit(c.env.DB, {
     orgId: user.orgId,
     userId: user.id,

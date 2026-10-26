@@ -347,7 +347,7 @@ describe("sync status in the UI", () => {
     expect(row.slice(0, row.indexOf("</li>"))).toContain("Not synced yet");
   });
 
-  it("shows the error state after a failed run", async () => {
+  it("asks to connect again after the provider refused the refresh token", async () => {
     const { stub } = await setupRule("acc-ui-fail");
     await stub.storeTokens("acc-ui-fail", {
       refreshToken: "r",
@@ -364,8 +364,31 @@ describe("sync status in the UI", () => {
 
     const html = await accountsPage();
     const row = html.slice(html.indexOf("acc-ui-fail@example.com"));
+    expect(row.slice(0, row.indexOf("</li>"))).toContain(
+      'class="status error" href="/auth/microsoft/connect">Connect again<',
+    );
+    expect(html).toContain('class="reconnect-notice"');
+  });
+
+  it("shows the error state after a run that failed for another reason", async () => {
+    const { stub } = await setupRule("acc-ui-down");
+    await stub.storeTokens("acc-ui-down", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ error: "temporarily_unavailable" }, { status: 503 }),
+    );
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    vi.restoreAllMocks();
+
+    const html = await accountsPage();
+    const row = html.slice(html.indexOf("acc-ui-down@example.com"));
     expect(row.slice(0, row.indexOf("</li>"))).toMatch(
-      /status error" title="[^"]*UTC">Sync failed: token_invalid_grant · now</,
+      /status error" title="[^"]*UTC">Sync failed: token_temporarily_unavailable · now</,
     );
   });
 });

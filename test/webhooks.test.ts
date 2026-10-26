@@ -206,8 +206,11 @@ describe("cron ticks", () => {
     expect(await alarmOf(b)).not.toBeNull();
     expect(await queueOf(b)).toBeUndefined();
 
-    // After a recent full cycle, an unwatched source is polled.
-    await runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm());
+    // After a recent full cycle, an unwatched source is polled. The cycle cleared its request.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.deleteAlarm();
+      await state.storage.delete("fullCycleRequested");
+    });
     await setFullCycle(b, Date.now());
     await stub.tick();
     expect(await queueOf(b)).toEqual(["tick-rule"]);

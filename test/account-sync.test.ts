@@ -600,8 +600,9 @@ describe("alarm queue", () => {
       await state.storage.put("ruleQueue", [ruleId]);
       // A recent full cycle, so that the tick queues only the unwatched rules.
       await state.storage.put("fullCycleAt", Date.now());
+      // An alarm for the queue, but no requested full cycle: that would make the tick wait for it.
+      await state.storage.setAlarm(Date.now() + 60_000);
     });
-    await stub.requestSync();
 
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
@@ -895,7 +896,7 @@ describe("changes during a cycle", () => {
     const created: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
-      for (const calendar of [SOURCE_CAL, TARGET_CAL]) {
+      for (const calendar of Object.keys(events)) {
         if (url.includes(`/calendars/${calendar}/calendarView`)) {
           return Response.json({ value: events[calendar] });
         }
@@ -973,6 +974,53 @@ describe("changes during a cycle", () => {
     expect(await runs(second)).toBe(1);
     expect(await marked()).toBeUndefined();
   });
+
+  it("waits for the debounce before the further cycle", async () => {
+    const { stub } = await setupCycle("acc-wait");
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    vi.spyOn(instance as unknown as { delays: () => object }, "delays").mockReturnValue({
+      debounce: 900_000,
+      nextRun: 600_000,
+    });
+
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await stub.requestSync();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    // The queue is done; the further cycle waits like any requested sync.
+    expect(await alarmIn(stub)).toBeGreaterThan(800_000);
+  });
+
+  it("runs the requested full cycle when a tick queues rules before it starts", async () => {
+    const { stub, first, second, events, runs, runAllAlarms } = await setupCycle("acc-tick");
+    events["remote-unwatched"] = [];
+    // A third calendar without a watch, read by a third rule; the other two are watched.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-tick-src2', 'acc-tick', 'remote-unwatched', 'Other')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-tick-rule-3', user_id, 'acc-tick-src2', target_calendar_id FROM rules WHERE id = 'acc-tick-rule'",
+      ),
+      env.DB.prepare(
+        "UPDATE calendars SET watched_until = ? WHERE id IN ('acc-tick-src', 'acc-tick-dst')",
+      ).bind(Date.now() + 86_400_000),
+    ]);
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("fullCycleAt", Date.now()),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await stub.requestSync();
+    // The cron fires within the debounce and polls only the unwatched rule.
+    await stub.tick();
+    await runAllAlarms();
+
+    expect(await runs(first)).toBe(1);
+    expect(await runs(second)).toBe(1);
+    expect(await runs("acc-tick-rule-3")).toBe(1);
+  });
 });
 
 describe("overlapping runs", () => {
@@ -1031,5 +1079,77 @@ describe("overlapping runs", () => {
     expect(await auditOf(ruleId, "sync_run")).toHaveLength(2);
     // Once the first run is done, a new run plans from the calendar again.
     expect(await stub.runRule(ruleId)).toMatchObject({ applied: 0, stats: { create: 0 } });
+  });
+
+  it("runs the rule again in the alarm after a manual run that read the source before a change", async () => {
+    const { stub, ruleId } = await setupRule("acc-manual");
+    await stub.storeTokens("acc-manual", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const source: unknown[] = fixture.value.slice(0, 2);
+    const target: { start: { dateTime: string } }[] = [];
+    // Flags and timers, not shared promises: a promise resolved in the Durable Object would
+    // continue the test in its I/O context.
+    const sleep = () => new Promise((resolve) => setTimeout(resolve, 1));
+    let sourceRead = false;
+    let batchReleased = false;
+    let firstBatch = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`)) {
+        sourceRead = true;
+        return Response.json({ value: [...source] });
+      }
+      if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
+        return Response.json({ value: [...target] });
+      if (url.endsWith("/$batch")) {
+        // The manual run waits here with the plan it made before the change.
+        if (firstBatch) {
+          firstBatch = false;
+          while (!batchReleased) await sleep();
+        }
+        const body = JSON.parse(init?.body as string) as {
+          requests: { id: string; method: string; body?: { start: { dateTime: string } } }[];
+        };
+        for (const request of body.requests) {
+          if (request.method !== "POST" || !request.body) continue;
+          target.push({
+            ...fixture.value[0],
+            ...request.body,
+            id: `block-${target.length}`,
+            type: "singleInstance",
+            seriesMasterId: null,
+            originalStart: null,
+          } as unknown as { start: { dateTime: string } });
+        }
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 201 })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const manual = stub.runRule(ruleId);
+    while (!sourceRead) await sleep();
+    // The source changes after the manual run read it, and the notification asks for a sync.
+    source.push({
+      ...fixture.value[0],
+      id: "new-meeting",
+      type: "singleInstance",
+      seriesMasterId: null,
+      originalStart: null,
+      start: { dateTime: "2026-12-01T10:00:00.0000000", timeZone: "UTC" },
+      end: { dateTime: "2026-12-01T11:00:00.0000000", timeZone: "UTC" },
+    });
+    await stub.requestSync();
+    const alarm = runDurableObjectAlarm(stub);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    batchReleased = true;
+    await manual;
+    await alarm;
+
+    expect(target.some((block) => block.start.dateTime.startsWith("2026-12-01T10:00"))).toBe(true);
   });
 });

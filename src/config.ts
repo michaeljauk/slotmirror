@@ -37,7 +37,7 @@ export const ruleOptionsSchema = z.object({
    * Add a note to each block that names the source account, e.g. "From: Work (Microsoft)", or only
    * the provider for an account without a name. It is the whole description up to detail level
    * "title_location"; at "full" it follows the copied description. The note is the account's name
-   * only, never event content. Where a cap of the deployment lowers the rule's level, no note.
+   * only, never event content. Where any detail cap below "full" applies, no note.
    */
   showOrigin: z._default(z.boolean(), false),
   /**

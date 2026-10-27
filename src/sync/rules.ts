@@ -95,13 +95,14 @@ export function originLine(rule: Pick<RuleContext, "options" | "source">): strin
   return name === "" ? t.originAccount(provider) : t.origin(name, provider);
 }
 
-/** Bidi controls, which can reorder the text around the name. */
-const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
-
-/** An account name for the note: one line, without control or bidi characters. */
+/**
+ * An account name for the note: one line, without control or format characters. Format characters
+ * (`\p{Cf}`) include the bidi controls, which can reorder the text around the name, zero-width
+ * characters, the soft hyphen and tag characters.
+ */
 function noteName(name: string): string {
   return name
-    .replace(BIDI_CONTROLS, "")
+    .replace(/\p{Cf}/gu, "")
     .replace(/[\p{Cc}\s]+/gu, " ")
     .trim();
 }

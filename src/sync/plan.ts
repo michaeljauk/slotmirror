@@ -88,7 +88,7 @@ function blockBody(
  * Marker for a block: SHA-256 of rule ID and occurrence key, so the marker carries no source ID.
  * The one exception to "no source ID leaves the source" is the origin link (`linkOrigin`): the
  * provider's address of the source event, written only at detail level "title" or more, never for
- * a private event, and never where a cap of the deployment lowers the rule's level.
+ * a private event, and never where a detail cap below "full" applies to the rule's direction.
  */
 export async function markerFor(ruleId: string, occurrenceKey: string): Promise<string> {
   return shortHash(markerText(ruleId, occurrenceKey));

@@ -956,9 +956,11 @@ export class AccountSync extends DurableObject<Env> {
     const effective = detailLevelFor(this.env, rule.options.detailLevel, rule.source, rule.target);
     const ruleOptions = { ...rule.options, detailLevel: effective.level };
     const withBody = ruleOptions.detailLevel === "full";
-    // The origin note names the source account. Where a cap lowers the level, the org limits what
-    // crosses, so the rule writes neither the note nor the link.
-    const origin = ruleOptions.showOrigin && !effective.capped ? originLine(rule) : null;
+    // The origin note names the source account. Where any cap below "full" applies to the
+    // direction, the org limits what crosses from this source, so the rule writes neither the note
+    // nor the link, even if the cap does not lower this rule's level.
+    const capApplies = detailLevelFor(this.env, "full", rule.source, rule.target).level !== "full";
+    const origin = ruleOptions.showOrigin && !capApplies ? originLine(rule) : null;
     // The link needs one more field per occurrence, and detail level "title" or more.
     const withLink = origin !== null && ruleOptions.linkOrigin && effective.level !== "busy";
     const sourceEvents =

@@ -1,6 +1,6 @@
 import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
 import { errorCode, errorLogFields, stackFrames } from "../src/audit";
 import { en } from "../src/i18n/en";
@@ -176,6 +176,16 @@ afterEach(async () => {
 function atFixtureTime(): void {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-22T00:00:00Z"));
+}
+
+/**
+ * Stop the clock of the test and the Durable Object one hour ahead of real time. A wait then ends
+ * only when the test moves the clock, and alarm times stay exact on a slow machine. The runtime
+ * fires alarms in real time, so the hour also keeps them from firing by themselves.
+ */
+function stopClock(): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 3_600_000);
 }
 
 describe("AccountSync.runRule", () => {
@@ -829,8 +839,7 @@ describe("alarm queue", () => {
       const url = input instanceof Request ? input.url : String(input);
       if (url.includes("calendarView") && !raced) {
         raced = true;
-        void instance.queueRemoval("late-rule", TARGET_CAL);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await instance.queueRemoval("late-rule", TARGET_CAL);
       }
       return Response.json({ value: [] });
     });
@@ -1367,8 +1376,7 @@ describe("alarm queue", () => {
       const url = input instanceof Request ? input.url : String(input);
       if (url.includes("calendarView") && !raced) {
         raced = true;
-        void instance.tick();
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await instance.tick();
       }
       if (url.endsWith("/$batch")) return Response.json({ responses: [] });
       return Response.json({ value: [] });
@@ -1601,6 +1609,8 @@ async function alarmIn(stub: DurableObjectStub): Promise<number | null> {
 }
 
 describe("throttling", () => {
+  beforeEach(stopClock);
+
   it("keeps throttled writes open, records their status, and waits for Retry-After", async () => {
     const { stub, ruleId } = await setupRule("acc-throttle");
     await stub.storeTokens("acc-throttle", {
@@ -1941,6 +1951,8 @@ async function waitingRuleSetup(id: string, wait = 300_000) {
 }
 
 describe("waiting rules", () => {
+  beforeEach(stopClock);
+
   it("comes back within 30 seconds after the only queued rule is deferred for 300", async () => {
     const { stub, throttledRule } = await sourceThrottledSetup("acc-wait-defer");
     await runInDurableObject(stub, async (_instance, state) => {
@@ -3216,16 +3228,19 @@ describe("changes during a cycle", () => {
     const db = (instance as unknown as { env: Env }).env.DB;
     const prepare = db.prepare.bind(db);
     let raced = false;
+    // Every instance and the test share this binding. Only this account's read of its rule list
+    // races, so that a late query of another account cannot take the race.
     vi.spyOn(db, "prepare").mockImplementation((query: string) => {
       const statement = prepare(query);
-      if (raced || !query.includes("JOIN calendars tc ON tc.id = r.target_calendar_id")) {
-        return statement;
-      }
-      raced = true;
-      // A request, for example after a new rule, arrives while the cycle reads the rule list.
+      if (!query.includes("JOIN calendars tc ON tc.id = r.target_calendar_id")) return statement;
       return {
         bind: (...values: unknown[]) => {
           const bound = statement.bind(...values);
+          if (raced || !query.includes("WHERE tc.account_id = ?") || values[0] !== "acc-list") {
+            return bound;
+          }
+          raced = true;
+          // A request, for example after a new rule, arrives while the cycle reads the rule list.
           return {
             all: async () => {
               await instance.requestSync();
@@ -3284,11 +3299,21 @@ describe("overlapping runs", () => {
       accessExpiresAt: Date.now() + 3_600_000,
     });
     const [template] = fixture.value;
+    // The first provider call waits until the preview starts to run. Calls reach the instance in
+    // order, so by then the second click has joined the first run, however slow the machine is.
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    const self = instance as unknown as { executeRule: (...args: unknown[]) => Promise<unknown> };
+    const executeRule = self.executeRule.bind(instance);
+    let started = 0;
+    vi.spyOn(self, "executeRule").mockImplementation((...args) => {
+      started++;
+      return executeRule(...args);
+    });
     // Blocks written by `$batch` show up in later reads of the target calendar.
     const target: unknown[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      while (started < 2) await new Promise((resolve) => setTimeout(resolve, 1));
       if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
         return Response.json({ value: fixture.value });
       if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))

@@ -39,6 +39,12 @@ export interface ChangeFeed {
   syncToken: string;
 }
 
+/** Optional fields of a source read. */
+export interface SourceFields {
+  withBody?: boolean;
+  withLink?: boolean;
+}
+
 export interface TimeWindow {
   start: Date;
   end: Date;
@@ -52,11 +58,14 @@ export interface CalendarClient {
   /** Writes per batch request. */
   readonly batchLimit: number;
   listCalendars(): Promise<CalendarInfo[]>;
-  /** Every occurrence in the window, series expanded, with our own blocks recognisable. */
+  /**
+   * Every occurrence in the window, series expanded, with our own blocks recognisable. The body
+   * and the web link of each occurrence only on request.
+   */
   sourceEvents(
     calendarId: string,
     window: TimeWindow,
-    options?: { withBody?: boolean },
+    options?: SourceFields,
   ): Promise<SourceEvent[]>;
   /** Blocks in the window that carry one of the given rule tags. */
   existingBlocks(

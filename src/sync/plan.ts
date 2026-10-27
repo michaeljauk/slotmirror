@@ -1,6 +1,7 @@
 import type { RuleOptions } from "../config";
 import type {
   BlockContent,
+  DetailLevel,
   DesiredBlock,
   ExistingBlock,
   SourceEvent,
@@ -40,8 +41,16 @@ function included(
  * The block content for a source event at the rule's detail level.
  * Events the source marks private never carry more than "busy", whatever the rule says.
  * The buffers widen timed blocks only; the times of all-day blocks are dates.
+ *
+ * `origin` is the first line of the origin note, e.g. "From: Work (Microsoft)"; see `showOrigin`.
+ * The caller builds it from the rule's source account. Without it, or with `showOrigin` off, the
+ * block has no note.
  */
-export function blockContent(event: SourceEvent, options: RuleOptions): BlockContent {
+export function blockContent(
+  event: SourceEvent,
+  options: RuleOptions,
+  origin: string | null = null,
+): BlockContent {
   const level = event.isPrivate ? "busy" : options.detailLevel;
   const withTitle = level !== "busy" && event.subject.trim() !== "";
   return {
@@ -52,7 +61,7 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
     isPrivate: options.markPrivate || event.isPrivate,
     subject: withTitle ? event.subject : options.blockTitle,
     location: level === "title_location" || level === "full" ? event.location : "",
-    body: level === "full" ? event.body : "",
+    body: blockBody(level === "full" ? event.body : "", level, event, options, origin),
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
   };
 }
@@ -67,7 +76,32 @@ function shifted(time: string, minutes: number): string {
   return new Date(instant + minutes * 60_000).toISOString();
 }
 
-/** Marker for a block: SHA-256 of rule ID and occurrence key, so no source ID leaves the source. */
+/**
+ * The description of a block: the copied description, then the origin note after a blank line.
+ * The note is the origin line and, with `linkOrigin`, the link to the source event below it. The
+ * link needs detail level "title" or more, so a private source event never gets one. The note is
+ * part of the content hash, so a run writes it once and the next run finds the block unchanged.
+ */
+function blockBody(
+  copied: string,
+  level: DetailLevel,
+  event: SourceEvent,
+  options: RuleOptions,
+  origin: string | null,
+): string {
+  if (!options.showOrigin || !origin) return copied;
+  const link = options.linkOrigin && level !== "busy" ? event.link : undefined;
+  const note = link ? `${origin}\n${link}` : origin;
+  const text = copied.trimEnd();
+  return text === "" ? note : `${text}\n\n${note}`;
+}
+
+/**
+ * Marker for a block: SHA-256 of rule ID and occurrence key, so the marker carries no source ID.
+ * The one exception to "no source ID leaves the source" is the origin link (`linkOrigin`): the
+ * provider's address of the source event, written only at detail level "title" or more, never for
+ * a private event, and never where a detail cap below "full" applies to the rule's direction.
+ */
 export async function markerFor(ruleId: string, occurrenceKey: string): Promise<string> {
   return shortHash(markerText(ruleId, occurrenceKey));
 }
@@ -135,11 +169,12 @@ const encoder = new TextEncoder();
 /**
  * Hashes of recent inputs. A rule runs every few minutes over mostly the same events, so most
  * hashes of a run repeat those of the run before. The cache lives in memory only. It is bounded,
- * and it keeps no long inputs, such as content hashes of events with a body.
+ * and it keeps no long inputs, such as content hashes of events with a body. A block with the
+ * origin note and link is about 450 characters, so the limit leaves room for it.
  */
 const hashCache = new Map<string, string>();
 const HASH_CACHE_ENTRIES = 10_000;
-const HASH_CACHE_INPUT_LENGTH = 400;
+const HASH_CACHE_INPUT_LENGTH = 600;
 
 /** Like `shortHash`, but without a promise if the hash is cached. */
 function cachedHash(text: string): string | Promise<string> {
@@ -197,12 +232,14 @@ function isClaimed(
  * that rules with precedence wrote into the same calendar. The rule leaves out an event whose
  * block would look the same and that such a block covers, buffers included, so that an event in
  * several source calendars is blocked once. A rule with a wider buffer still writes its own block.
+ * `origin` is the first line of the origin note; see `blockContent`.
  */
 export async function desiredBlocks(
   ruleId: string,
   events: SourceEvent[],
   options: RuleOptions,
   dedup: { scope: string; claimed?: ReadonlySet<string> | Claims } = { scope: "" },
+  origin: string | null = null,
 ): Promise<DesiredBlock[]> {
   const blocks = new Map<string, DesiredBlock>();
   const buffered = options.bufferBefore > 0 || options.bufferAfter > 0;
@@ -210,7 +247,7 @@ export async function desiredBlocks(
   // Most hashes are cached; the loop awaits only those that are not.
   for (const event of events) {
     if (!included(event, options, skipped)) continue;
-    const content = blockContent(event, options);
+    const content = blockContent(event, options, origin);
     // The dedup key uses the event's times, so that rules with different buffers find one meeting.
     const keyed = buffered ? { ...content, start: event.start, end: event.end } : content;
     const dedupHash = cachedHash(dedupText(dedup.scope, keyed));

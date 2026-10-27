@@ -469,6 +469,55 @@ describe("buffer", () => {
     expect(own).toMatchObject({ start: "2026-10-27T09:30:00.000Z" });
     expect(await write({}, { bufferAfter: 5 })).toHaveLength(1);
   });
+
+  it("writes the origin note into a buffered block, and the note changes no dedup key", async () => {
+    const linked = { ...timed, link: "https://example.com/event" };
+    const note = { showOrigin: true, linkOrigin: true, detailLevel: "title" } as const;
+    const block = async (rule: string, overrides: Partial<RuleOptions>, origin: string) => {
+      const blocks = await desiredBlocks(
+        rule,
+        [linked],
+        options({ ...note, ...overrides }),
+        {
+          scope: "user",
+        },
+        origin,
+      );
+      if (!blocks[0]) throw new Error("no block");
+      return blocks[0];
+    };
+    const plain = await blockOf(linked, { detailLevel: "title" });
+    const buffered = await block(RULE, { bufferBefore: 30 }, "From: Work (Microsoft)");
+    expect(buffered).toMatchObject({
+      start: "2026-10-27T09:30:00.000Z",
+      end: "2026-10-27T11:00:00.000Z",
+      body: "From: Work (Microsoft)\nhttps://example.com/event",
+    });
+    // Same occurrence, same meeting: only the content hash sees the buffer and the note.
+    expect(buffered.marker).toBe(plain.marker);
+    expect(buffered.dedupKey).toBe(plain.dedupKey);
+    expect(buffered.contentHash).not.toBe(plain.contentHash);
+
+    // A block from another source with its own note claims the meeting if it covers the buffer.
+    const other = await block("rule-a", { bufferBefore: 30 }, "From: Home (Google)");
+    const write = async (own: Partial<RuleOptions>) =>
+      desiredBlocks(
+        "rule-b",
+        [linked],
+        options({ ...note, ...own }),
+        {
+          scope: "user",
+          claimed: claimsFrom([other]),
+        },
+        "From: Work (Microsoft)",
+      );
+    expect(await write({ bufferBefore: 15 })).toEqual([]);
+    const [own] = await write({ bufferBefore: 45 });
+    expect(own).toMatchObject({
+      start: "2026-10-27T09:15:00.000Z",
+      body: "From: Work (Microsoft)\nhttps://example.com/event",
+    });
+  });
 });
 
 describe("planSync in a sync window", () => {

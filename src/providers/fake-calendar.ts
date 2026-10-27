@@ -4,6 +4,7 @@ import type {
   CalendarClient,
   CalendarInfo,
   ChangeFeed,
+  SourceFields,
   TimeWindow,
   Watch,
 } from "./calendar-client";
@@ -39,7 +40,11 @@ export class FakeCalendar implements CalendarClient {
     ];
   }
 
-  async sourceEvents(calendarId: string, window: TimeWindow): Promise<SourceEvent[]> {
+  async sourceEvents(
+    calendarId: string,
+    window: TimeWindow,
+    options: SourceFields = {},
+  ): Promise<SourceEvent[]> {
     await this.call("sourceEvents");
     const events = this.sql
       .exec<{ id: string; start: string; end: string; subject: string; private: number }>(
@@ -63,6 +68,9 @@ export class FakeCalendar implements CalendarClient {
         location: "",
         body: "",
         isMirror: false,
+        ...(options.withLink
+          ? { link: `https://calendar.invalid/event?id=${encodeURIComponent(row.id)}` }
+          : {}),
       }));
     // Blocks other rules wrote into this calendar are events too; the loop guard skips them.
     const mirrors = this.blocks(calendarId, window).map((block) => ({

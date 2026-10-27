@@ -103,6 +103,7 @@ const GRAPH_BASES: Record<string, unknown>[] = [
     subject: "Weekly sync",
     location: { displayName: "Room", address: {} },
     bodyPreview: "Preview",
+    webLink: "https://outlook.office365.com/owa/?itemid=AAMk%2Bx&exvsurl=1&path=/calendar/item",
     body: { content: "Body", contentType: "text" },
     singleValueExtendedProperties: [
       { id: MARKER_PROPERTY_ID, value: "tag.marker.hash" },
@@ -151,6 +152,7 @@ const GOOGLE_BASES: Record<string, unknown>[] = [
     transparency: "opaque",
     visibility: "private",
     colorId: "5",
+    htmlLink: "https://www.google.com/calendar/event?eid=eDEgbWVAZXhhbXBsZS5jb20",
     attendees: [
       { email: "a@example.com", responseStatus: "accepted" },
       { email: "me@example.com", self: true, responseStatus: "tentative" },

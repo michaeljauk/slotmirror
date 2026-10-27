@@ -3,7 +3,7 @@ import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
-import { displayTimeZone } from "./i18n";
+import { displayTimeZone, isLocale, type Locale } from "./i18n";
 import {
   ALL_WEEKDAYS,
   canonicalTimeZone,
@@ -1019,6 +1019,82 @@ async function writePatches(
   if (statements.length === 0) return;
   await guardedBatch(env, statements);
   await requestSyncs(env, targets, syncs);
+}
+
+/** The origin note of the blocks from one source; see `showOrigin` and `linkOrigin`. */
+export interface OriginNoteForm {
+  showOrigin: boolean;
+  linkOrigin: boolean;
+}
+
+/**
+ * Turn the origin note on or off for every rule from the calendars of one source account, in the
+ * user's current language. The link needs the note. Invalid input, or an account that is not the
+ * user's, returns false and writes nothing. All rules change in one batch with the audit event,
+ * so that a save changes all or none. Each changed block is written again once, in the alarm's
+ * pace; see `MAX_BATCHES_PER_RUN`.
+ */
+export async function setOriginNote(
+  env: Env,
+  user: CurrentUser,
+  sourceAccountId: string,
+  form: OriginNoteForm,
+  locale: Locale,
+): Promise<boolean> {
+  const { showOrigin, linkOrigin } = form;
+  if (typeof showOrigin !== "boolean" || typeof linkOrigin !== "boolean") return false;
+  if (linkOrigin && !showOrigin) return false;
+  if (!isLocale(locale)) return false;
+  const account = await env.DB.prepare(
+    "SELECT 1 AS found FROM accounts WHERE id = ? AND user_id = ?",
+  )
+    .bind(sourceAccountId, user.id)
+    .first<{ found: number }>();
+  if (!account) return false;
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, r.options, r.enabled, tc.account_id AS targetAccountId
+     FROM rules r
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN calendars tc ON tc.id = r.target_calendar_id
+     WHERE r.user_id = ? AND sc.account_id = ?`,
+  )
+    .bind(user.id, sourceAccountId)
+    .all<{ id: string; options: string; enabled: number; targetAccountId: string }>();
+  const changed = results.filter((row) => {
+    const options = parseRuleOptions(row.options);
+    return (
+      options.showOrigin !== showOrigin ||
+      options.linkOrigin !== linkOrigin ||
+      (showOrigin && options.originLocale !== locale)
+    );
+  });
+  if (changed.length === 0) return true;
+  // json_set changes only these keys, so that a concurrent save of other options is kept.
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE rules SET options = json_set(options, '$.showOrigin', json(?), '$.linkOrigin', json(?),
+         '$.originLocale', ?)
+       WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))`,
+    ).bind(
+      String(showOrigin),
+      String(linkOrigin),
+      locale,
+      user.id,
+      JSON.stringify(changed.map((row) => row.id)),
+    ),
+    auditStatement(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      accountId: sourceAccountId,
+      kind: "rule_updated",
+      detail: { showOrigin, linkOrigin, rules: changed.length },
+    }),
+  ]);
+  await requestSyncs(
+    env,
+    new Set(changed.filter((row) => row.enabled === 1).map((row) => row.targetAccountId)),
+  );
+  return true;
 }
 
 /** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */

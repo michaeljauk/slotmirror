@@ -490,6 +490,12 @@ export const de: Messages = {
     alreadyConnectedText: (email) =>
       `${email} ist bereits von einem anderen Nutzer dieser Installation verbunden.`,
   },
+  mirror: {
+    origin: (account, provider) => `Aus: ${account} (${provider})`,
+    originAccount: (provider) => `Aus: ${provider}-Konto`,
+    microsoft: "Microsoft",
+    google: "Google",
+  },
   alerts: {
     reconnect: (provider, url) =>
       `slotmirror: Ein ${provider}-Konto muss neu verbunden werden. Bis sein Nutzer es neu verbindet, werden seine Kalender nicht synchronisiert. Die Verwaltungsseite zeigt die betroffenen Nutzer.${url ? ` ${url}` : ""}`,

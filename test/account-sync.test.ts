@@ -2,6 +2,7 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
+import { errorCode, errorLogFields } from "../src/audit";
 import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
 import { inPrecedenceOrder, ruleTagFor } from "../src/sync/plan";
 import fixture from "./fixtures/graph/calendar-view.json";
@@ -373,6 +374,58 @@ describe("manual run failures", () => {
     const failed = (await auditOf(ruleId)).filter((event) => event.kind === "sync_failed");
     expect(failed).toHaveLength(1);
     expect(failed[0]?.detail).toEqual({ code: "token_invalid_grant" });
+  });
+});
+
+describe("errors that cross the Durable Object boundary", () => {
+  it("keep the provider description out of the log fields and the error code", async () => {
+    const { stub, ruleId } = await setupRule("acc-rpc-error");
+    await stub.storeTokens("acc-rpc-error", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        {
+          error: "invalid_grant",
+          error_description: "AADSTS50173: the grant expired for user alice@corp.example",
+        },
+        { status: 400 },
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await stub.runRule(ruleId);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const error = caught as Error;
+    // The boundary leaves a plain Error. The description is still in its message.
+    expect(error.name).toBe("Error");
+    expect(error.message).toContain("alice@corp.example");
+
+    const logged = JSON.stringify([errorLogFields(error), errorCode(error)]);
+    expect(logged).not.toContain("alice@");
+    expect(logged).not.toContain("AADSTS");
+    expect(errorCode(error)).toBe("invalid_grant");
+    expect(errorLogFields(error).slice(0, 2)).toEqual(["Error", "invalid_grant"]);
+  });
+
+  it("keep the codes the UI and the audit log rely on", () => {
+    expect(errorCode(new Error("Account has no tokens"))).toBe("Account has no tokens");
+    expect(errorCode(new Error("Graph calendar view failed: 403 ErrorAccessDenied"))).toBe(
+      "Graph calendar view failed: 403 ErrorAccessDenied",
+    );
+    expect(errorCode(new Error("D1_ERROR: database is locked"))).toBe(
+      "D1_ERROR: database is locked",
+    );
+    expect(errorCode(new Error("something with bob@corp.example"))).toBe("Error");
+    expect(errorCode(new SyntaxError("Unexpected token in 'Dentist'"))).toBe("SyntaxError");
+    expect(errorCode("text")).toBe("unknown");
   });
 });
 

@@ -95,14 +95,83 @@ export async function recordAudit(db: D1Database, event: AuditEvent): Promise<vo
   }
 }
 
+/**
+ * Messages this app throws itself. They hold no provider text and no user data, so they are safe
+ * to log and store. A Durable Object error reaches the Worker as a plain `Error`, so the UI and
+ * the audit log tell these apart by message.
+ */
+const STATIC_MESSAGES = new Set([
+  "Account has no tokens",
+  "Simulation is off",
+  "A rule runs in the instance of its target account",
+  "Token response carries no ID token",
+  "Batch too large",
+  "Google listed no sync token",
+  "Google address is not verified",
+  "Malformed ID token",
+  "ID token carries no email or preferred_username",
+  "Google event time has neither date nor dateTime",
+]);
+
+/** Static text with IDs or status codes: "Rule <id> not found", "Graph <what> failed: 403 <reason>". */
+const STATIC_PATTERNS = [
+  /^Rule [\w-]{1,64} not found$/,
+  /^(Graph|Google) [A-Za-z ]{1,40} failed: \d{3}( [A-Za-z0-9_.-]{1,64})?$/,
+];
+
+/**
+ * The message of an error, only if it cannot quote provider text or user data: a static message
+ * of this app, or a D1 message, which names tables and columns but holds no bound values.
+ */
+export function safeMessage(error: Error): string | undefined {
+  const { message } = error;
+  if (STATIC_MESSAGES.has(message) || STATIC_PATTERNS.some((pattern) => pattern.test(message))) {
+    return message;
+  }
+  if (message.startsWith("D1_")) return message.slice(0, 120);
+  return undefined;
+}
+
+/** An own `code` property that survived the Durable Object boundary, if it looks like a code. */
+function safeCode(error: Error): string | undefined {
+  const code: unknown = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[a-z0-9_]{1,64}$/i.test(code) ? code : undefined;
+}
+
+/** The "at ..." lines of a stack, without the first line, which repeats the message. */
+export function stackFrames(error: Error): string {
+  return (error.stack ?? "")
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("at "))
+    .join("\n");
+}
+
+/**
+ * What to log for an error: name, a safe code, a safe message and the stack frames. Never the raw
+ * message or stack. A provider's `error_description` can name the user, and a SyntaxError can
+ * quote the input. Spread the result into `console.error`.
+ */
+export function errorLogFields(error: Error): string[] {
+  const fields = [error.name];
+  const code = safeCode(error);
+  if (code) fields.push(code);
+  const message = safeMessage(error);
+  if (message) fields.push(message);
+  fields.push(stackFrames(error));
+  return fields;
+}
+
 /** A short code for an error, safe to store: no response bodies, no event content. */
 export function errorCode(error: unknown): string {
   if (error instanceof TokenError) return `token_${error.code}`;
   if (error instanceof GraphError) return withReason(`graph_${error.status}`, error.reason);
   if (error instanceof GoogleApiError) return withReason(`google_${error.status}`, error.reason);
-  // Errors thrown by this app carry static messages. Other error types may echo input.
-  if (error instanceof Error && error.name === "Error") return error.message.slice(0, 120);
-  return error instanceof Error ? error.name : "unknown";
+  if (error instanceof Error) {
+    // Over the Durable Object boundary a subclass becomes a plain Error with its own properties.
+    if (error.name === "Error") return safeMessage(error) ?? safeCode(error) ?? "Error";
+    return error.name;
+  }
+  return "unknown";
 }
 
 function withReason(code: string, reason: string | undefined): string {

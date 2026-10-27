@@ -154,7 +154,7 @@ export class GoogleCalendar implements CalendarClient {
             ? httpPart(
                 "PATCH",
                 `${path}/${encodeURIComponent(action.targetId)}`,
-                toGoogleBlock(action.block, ruleTag),
+                toGoogleBlock(action.block, ruleTag, { update: true }),
               )
             : httpPart("DELETE", `${path}/${encodeURIComponent(action.targetId)}`);
       return `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <item${index}>\r\n\r\n${request}\r\n`;

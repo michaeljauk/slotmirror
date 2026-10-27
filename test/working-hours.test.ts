@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseRuleOptions, ruleOptionsSchema, type RuleOptions } from "../src/config";
 import { fromGraphEvent } from "../src/sync/graph-events";
 import { desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
+import { syncWindow, targetReadWindow } from "../src/sync/rules";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
 import {
   canonicalTimeZone,
@@ -529,5 +530,98 @@ describe("working hours: turning the filter on", () => {
       actions: [],
       stats: { create: 0, update: 0, delete: 0, unchanged: after.length },
     });
+  });
+});
+
+describe("working hours: with the sync window", () => {
+  const HOUR = 60 * 60 * 1000;
+  // On 27 Oct 2026 at 12:00 UTC the sync window runs from 27 Oct to 26 Nov, 00:00 UTC.
+  const now = new Date("2026-10-27T12:00:00Z");
+  const asExisting = (blocks: DesiredBlock[]): ExistingBlock[] =>
+    blocks.map((block) => ({ ...block, ruleTag: "tag", targetId: `target-${block.start}` }));
+
+  it("deletes filtered blocks inside the window only, and the next run changes nothing", async () => {
+    const base = options({ skipAllDay: false, daysAhead: 30 });
+    const office = options({ ...OFFICE, skipAllDay: false, daysAhead: 30 });
+    const window = syncWindow(base, now);
+    const windows = { sync: window, target: targetReadWindow(window) };
+    const events = [
+      // Monday 26 Oct, 10:00 Vienna: in the hours, before the window.
+      event("2026-10-26T09:00:00.000Z", "2026-10-26T10:00:00.000Z"),
+      // Monday 26 Oct, 21:00 Vienna: outside the hours, before the window.
+      event("2026-10-26T20:00:00.000Z", "2026-10-26T21:00:00.000Z"),
+      // Tuesday 27 Oct, 10:00 Vienna: in the hours and in the window.
+      event("2026-10-27T09:00:00.000Z", "2026-10-27T10:00:00.000Z"),
+      // Saturday 31 Oct: outside the weekdays, in the window.
+      event("2026-10-31T09:00:00.000Z", "2026-10-31T10:00:00.000Z"),
+      allDay("2026-10-31", "2026-11-01"),
+      // Thursday 26 Nov, 20:00 Vienna: outside the hours, after the window.
+      event("2026-11-26T19:00:00.000Z", "2026-11-26T20:00:00.000Z"),
+    ];
+    const existing = asExisting(await desiredBlocks(RULE, events, base));
+    expect(existing).toHaveLength(events.length);
+
+    const desired = await desiredBlocks(RULE, events, office);
+    const plan = planSync(desired, existing, windows);
+    const deleted = plan.actions.map((action) => (action.kind === "delete" ? action.targetId : ""));
+    // Only the Saturday blocks go. Filtered blocks outside the window stay, like blocks of
+    // events the source read did not return.
+    expect(deleted.sort()).toEqual(["target-2026-10-31", "target-2026-10-31T09:00:00.000Z"]);
+    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 2, unchanged: 2 });
+
+    const remaining = existing.filter((block) => !deleted.includes(block.targetId));
+    expect(planSync(desired, remaining, windows).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: 0,
+      unchanged: 2,
+    });
+  });
+
+  it("writes each block once over a day of runs at the window edges", async () => {
+    const rule = options({
+      ...OFFICE,
+      workStart: "",
+      workEnd: "",
+      skipAllDay: false,
+      daysAhead: 30,
+    });
+    // Monday 26 Oct and Thursday 26 Nov are chosen weekdays; Saturday 28 Nov is not.
+    const events = [
+      allDay("2026-10-26", "2026-10-27"),
+      allDay("2026-10-27", "2026-10-28"),
+      allDay("2026-11-26", "2026-11-27"),
+      allDay("2026-11-28", "2026-11-29"),
+      event("2026-10-26T23:30:00.000Z", "2026-10-27T00:30:00.000Z"),
+      event("2026-11-25T23:30:00.000Z", "2026-11-26T00:30:00.000Z"),
+    ];
+    const target = new Map<string, DesiredBlock>();
+    for (let at = Date.parse("2026-10-27T00:30:00Z"); at < Date.parse("2026-10-28T06:00:00Z");) {
+      const window = syncWindow(rule, new Date(at));
+      const read = targetReadWindow(window);
+      const inRead = (b: { start: string; end: string }, w: { start: Date; end: Date }) =>
+        Date.parse(b.start) < w.end.getTime() && Date.parse(b.end) > w.start.getTime();
+      const source = events.filter((item) => inRead(item, window) || item.allDay);
+      const desired = await desiredBlocks(RULE, source, rule);
+      for (const pass of [1, 2]) {
+        const existing = [...target]
+          .filter(([, block]) => inRead(block, read))
+          .map(([targetId, block]) => ({ ...block, targetId, ruleTag: "tag" }));
+        const plan = planSync(desired, existing, { sync: window, target: read });
+        if (pass === 2) expect(plan.actions, new Date(at).toISOString()).toEqual([]);
+        for (const action of plan.actions) {
+          if (action.kind === "delete") target.delete(action.targetId);
+          else
+            target.set(
+              action.kind === "create" ? action.block.marker : action.targetId,
+              action.block,
+            );
+        }
+      }
+      at += 6 * HOUR;
+    }
+    const starts = [...target.values()].map((block) => block.start);
+    expect(starts).not.toContain("2026-11-28");
+    expect(new Set(starts).size).toBe(starts.length);
   });
 });

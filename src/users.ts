@@ -64,8 +64,17 @@ export async function loadUser(env: Env, userId: string): Promise<CurrentUser | 
     .bind(userId)
     .first<{ id: string; orgId: string; email: string; tenantId: string | null; policy: string }>();
   if (!row) return null;
+  return admittedUser(env, row);
+}
 
-  // The default org follows the variables; other orgs (hosted mode) follow their stored policy.
+/**
+ * The user if the org policy still admits them, otherwise null. The default org follows the
+ * variables; other orgs (hosted mode) follow their stored policy.
+ */
+export function admittedUser(
+  env: Env,
+  row: { id: string; orgId: string; email: string; tenantId: string | null; policy: string },
+): CurrentUser | null {
   const policy =
     row.orgId === DEFAULT_ORG_ID
       ? policyFromEnv(env)

@@ -14,6 +14,12 @@ export interface CalendarInfo {
    * calendar shared by a colleague with edit rights never receives blocks by accident.
    */
   owned: boolean;
+  /**
+   * True if the calendar's data belongs to the account. Only such calendars may go into a busy
+   * feed. Stricter than `owned` on Google, where the role "owner" also means "manage sharing" on
+   * someone else's calendar.
+   */
+  dataOwned: boolean;
 }
 
 /** A change subscription at the provider: a Graph subscription or a Google channel. */

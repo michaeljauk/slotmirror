@@ -1,4 +1,4 @@
-import { errorCode, recordAudit } from "./audit";
+import { errorLogFields, recordAudit } from "./audit";
 import type { FeedRead } from "./account-sync";
 import { accessPolicySchema, DEFAULT_ORG_ID, policyAdmitsAnyone } from "./access";
 import { ruleOptionsSchema, setupStatus } from "./config";
@@ -530,7 +530,12 @@ export async function feedResponse(
       // One after another: two calendars of one account share its mailbox's request limit.
       read = await accountSync(env, calendar.accountId).readFeedEvents(calendar.remoteId, window);
     } catch (error) {
-      console.error("Reading a feed calendar failed", feed.id, calendar.id, errorCode(error));
+      console.error(
+        "Reading a feed calendar failed",
+        feed.id,
+        calendar.id,
+        ...errorLogFields(error),
+      );
       return failed(null);
     }
     if (read.kind === "throttled") {
@@ -538,7 +543,7 @@ export async function feedResponse(
       return sameCopy ? forSubscriber(feed.lastBody) : unavailable(read.retryAfterMs);
     }
     if (read.kind === "unavailable") {
-      console.error("A feed calendar can no longer be read", feed.id, calendar.id, read.code);
+      console.error("A feed calendar can no longer be read", feed.id, calendar.id);
       return failed(calendar.id);
     }
     reads.push({ calendarId: calendar.id, events: read.events });
@@ -576,7 +581,7 @@ export async function feedResponse(
       }),
     );
   } catch (error) {
-    console.error("Caching a feed failed", feed.id, errorCode(error));
+    console.error("Caching a feed failed", feed.id, ...errorLogFields(error));
   }
   return forSubscriber(body);
 }

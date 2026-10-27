@@ -230,7 +230,7 @@ class PenaltyActive extends Error {
 export type FeedRead =
   | { kind: "events"; events: SourceEvent[] }
   | { kind: "throttled"; retryAfterMs: number }
-  | { kind: "unavailable"; code: string };
+  | { kind: "unavailable" };
 
 /** Durable Object storage key: forget the tokens once every queued removal ran. */
 const RETIRING_KEY = "retiring";
@@ -817,7 +817,8 @@ export class AccountSync extends DurableObject<Env> {
       if (delay !== null) return { kind: "throttled", retryAfterMs: delay };
       const { status } = error as { status?: unknown };
       if (status === 403 || status === 404 || status === 410) {
-        return { kind: "unavailable", code: errorCode(error) };
+        console.error("A feed calendar can no longer be read", ...errorLogFields(error));
+        return { kind: "unavailable" };
       }
       throw error;
     }
@@ -842,7 +843,7 @@ export class AccountSync extends DurableObject<Env> {
       const current = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
       if (until > current) await this.ctx.storage.put(THROTTLED_UNTIL_KEY, until);
     } catch (error) {
-      console.error("Recording a provider penalty failed", errorCode(error));
+      console.error("Recording a provider penalty failed", ...errorLogFields(error));
     }
   }
 

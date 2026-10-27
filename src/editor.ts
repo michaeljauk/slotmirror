@@ -279,7 +279,8 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
 
 /**
  * Store the settings and apply them to every rule of the user. The detail level of each rule
- * stays; it is the choice per direction.
+ * stays; it is the choice per direction. A smaller `daysAhead` queues the removal of the blocks
+ * beyond the new window, which no run reads any more.
  */
 export async function setSettings(
   env: Env,
@@ -290,17 +291,22 @@ export async function setSettings(
     .bind(JSON.stringify(settings), user.id)
     .run();
   const { results } = await env.DB.prepare(
-    `SELECT r.id, r.options, tc.account_id AS targetAccountId FROM rules r
-     JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
+    `SELECT r.id, r.options, tc.account_id AS targetAccountId, tc.remote_id AS remoteCalendarId
+     FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
   )
     .bind(user.id)
-    .all<{ id: string; options: string; targetAccountId: string }>();
+    .all<{ id: string; options: string; targetAccountId: string; remoteCalendarId: string }>();
   const targets = new Set<string>();
   for (const row of results) {
-    const options = ruleOptionsSchema.parse({ ...parseRuleOptions(row.options), ...settings });
+    const previous = parseRuleOptions(row.options);
+    const options = ruleOptionsSchema.parse({ ...previous, ...settings });
     await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
       .bind(JSON.stringify(options), row.id)
       .run();
+    if (options.daysAhead < previous.daysAhead) {
+      const target = { accountId: row.targetAccountId, remoteCalendarId: row.remoteCalendarId };
+      await queueRemoval(env, row.id, target, { trim: true });
+    }
     targets.add(row.targetAccountId);
   }
   await recordAudit(env.DB, {
@@ -445,9 +451,10 @@ async function queueRemoval(
   env: Env,
   ruleId: string,
   target: { accountId: string; remoteCalendarId: string },
+  options: { trim?: boolean } = {},
 ): Promise<boolean> {
   try {
-    await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId);
+    await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId, options);
     return true;
   } catch (error) {
     console.error("Queueing the removal failed", ruleId, error);

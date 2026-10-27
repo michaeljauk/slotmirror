@@ -156,6 +156,16 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
 }
 
 /**
+ * True if a rule whose sync window ends at `end` never wants the block: a timed block starts at
+ * `end` or later, an all-day block on a later date. The source read returns the all-day date at
+ * `end` for a calendar east of UTC; see `planSync`.
+ */
+export function startsBeyond(block: { start: string; allDay: boolean }, end: Date): boolean {
+  const start = Date.parse(block.start);
+  return block.allDay ? start > end.getTime() : start >= end.getTime();
+}
+
+/**
  * The window of the target read of a rule: the sync window and one day more on each side. Each
  * provider filters all-day blocks at the midnights of the target calendar's time zone, so only a
  * wider read returns every all-day date that the source read can return; see `planSync`.

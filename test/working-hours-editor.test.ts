@@ -5,6 +5,8 @@ import {
   resetDirection,
   setDirection,
   setGroupMembership,
+  setSettings,
+  setSourceCalendar,
   setWorkingHours,
 } from "../src/editor";
 import { BASE, signIn } from "./helpers";
@@ -234,10 +236,9 @@ describe("working hours per direction", () => {
     const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
     expect(response.status).toBe(400);
     // The editor script shows this message in its bar.
-    expect(await response.json()).toEqual({
-      error:
-        "Working hours: the end must be after the start. For the end of the day, choose “until midnight”.",
-    });
+    expect(await response.text()).toBe(
+      "Working hours: the end must be after the start. For the end of the day, choose “until midnight”. Nothing was saved.",
+    );
     expect(await rulesOf(user.id, w, g)).toEqual([]);
     expect(await rulesOf(user.id, g, w)).toEqual([]);
 
@@ -482,5 +483,89 @@ describe("working hours in the block group", () => {
     expect(await optionsOf(user.id, g, w)).toMatchObject({ workDays: [1, 2, 3, 4, 5] });
     // The direction without hours was a group rule and goes with the group.
     expect(await rulesOf(user.id, w, g)).toEqual([]);
+  });
+});
+
+describe("working hours with copies and parked rules", () => {
+  const office = {
+    workDays: [1, 2, 3, 4, 5],
+    workStart: "08:00",
+    workEnd: "18:00",
+    workTimeZone: "Europe/Vienna",
+  };
+
+  it("refuses hours for a direction that does not exist, and writes nothing", async () => {
+    const { user, cookie, w, g } = await setup("hoursgone");
+    const body = new URLSearchParams({
+      [`choice.${g}.${w}`]: "busy",
+      [`workDays.nope.${w}`]: "1",
+    });
+    const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("direction that no longer exists");
+    expect(await rulesOf(user.id, g, w)).toEqual([]);
+  });
+
+  it("gives a copy of a direction's rule the direction's working hours", async () => {
+    const { user, w, g } = await setup("hourscopy");
+    await setDirection(env, user, g, w, "busy");
+    expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Side', 1, 0, 0)",
+    )
+      .bind(`${g}-side`, g, `${g}-side-remote`)
+      .run();
+    await setSourceCalendar(env, user, `${g}-side`, true);
+    const rules = await rulesOf(user.id, g, w);
+    expect(rules).toHaveLength(2);
+    for (const rule of rules) {
+      expect(JSON.parse(rule.options)).toMatchObject(office);
+      expect(rule.origin).toBe("custom");
+    }
+  });
+
+  it("keeps the hours of a parked rule, and the parked mark next to them", async () => {
+    const { user, w, g } = await setup("hourspark");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, g, w, "off");
+    expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
+    // Turning the only source calendar off parks the "off" exception.
+    await setSourceCalendar(env, user, `${g}-cal`, false);
+    const [parked] = await rulesOf(user.id, g, w);
+    expect(JSON.parse(parked?.options ?? "{}")).toMatchObject({ ...office, parked: true });
+    // Settings keep both.
+    await setSettings(env, user, {
+      skipAllDay: true,
+      skipTentative: false,
+      markPrivate: true,
+      blockTitle: "Busy",
+      skipCategories: [],
+    });
+    const [kept] = await rulesOf(user.id, g, w);
+    expect(JSON.parse(kept?.options ?? "{}")).toMatchObject({ ...office, parked: true });
+    // Back as a source: the rule is no longer parked, still off, and keeps its hours.
+    await setSourceCalendar(env, user, `${g}-cal`, true);
+    const [back] = await rulesOf(user.id, g, w);
+    expect(back?.enabled).toBe(0);
+    expect(JSON.parse(back?.options ?? "{}")).not.toHaveProperty("parked");
+    expect(JSON.parse(back?.options ?? "{}")).toMatchObject(office);
+  });
+
+  it("keeps a parked mark when it stores hours on a marked rule", async () => {
+    const { user, w, g } = await setup("hoursmark");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, g, w, "off");
+    // A rule can still carry the mark while its calendar is a source, for example between the
+    // two writes of `setSourceCalendar`. Hours must not drop it.
+    await env.DB.prepare(
+      "UPDATE rules SET options = json_set(options, '$.parked', json('true')) WHERE user_id = ?",
+    )
+      .bind(user.id)
+      .run();
+    expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
+    const [rule] = await rulesOf(user.id, g, w);
+    expect(JSON.parse(rule?.options ?? "{}")).toMatchObject({ ...office, parked: true });
   });
 });

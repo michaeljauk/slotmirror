@@ -2,6 +2,9 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
+import { errorCode, errorLogFields, stackFrames } from "../src/audit";
+import { en } from "../src/i18n/en";
+import { runErrorText } from "../src/routes/rules";
 import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
 import { inPrecedenceOrder, ruleTagFor } from "../src/sync/plan";
 import fixture from "./fixtures/graph/calendar-view.json";
@@ -376,6 +379,68 @@ describe("manual run failures", () => {
   });
 });
 
+describe("errors that cross the Durable Object boundary", () => {
+  it("keep the provider description out of the log fields and the error code", async () => {
+    const { stub, ruleId } = await setupRule("acc-rpc-error");
+    await stub.storeTokens("acc-rpc-error", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        {
+          error: "invalid_grant",
+          error_description: "AADSTS50173: the grant expired for user alice@corp.example",
+        },
+        { status: 400 },
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await stub.runRule(ruleId);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const error = caught as Error;
+    // The boundary leaves a plain Error. Its message is the code: the description is dropped at
+    // the source, because workerd prints an uncaught error with its full message.
+    expect(error.name).toBe("Error");
+    expect(error.message).toBe("invalid_grant");
+    expect(JSON.stringify(error)).not.toContain("alice@");
+    expect(String(error.stack)).not.toContain("alice@");
+
+    const logged = JSON.stringify([errorLogFields(error), errorCode(error)]);
+    expect(logged).not.toContain("alice@");
+    expect(logged).not.toContain("AADSTS");
+    expect(errorCode(error)).toBe("token_invalid_grant");
+    expect(errorLogFields(error).slice(0, 2)).toEqual(["Error", "invalid_grant"]);
+    // The UI still tells the user to connect again.
+    expect(runErrorText(en, error)).toBe(en.editor.checkNoTokens);
+    expect(runErrorText(en, new Error("Account has no tokens"))).toBe(en.editor.checkNoTokens);
+    expect(runErrorText(en, new Error("boom"))).toBe(en.editor.checkFailed);
+  });
+
+  it("keep the codes the UI and the audit log rely on", () => {
+    expect(errorCode(new Error("Account has no tokens"))).toBe("Account has no tokens");
+    expect(errorCode(new Error("Graph calendar view failed: 403 ErrorAccessDenied"))).toBe(
+      "Graph calendar view failed: 403 ErrorAccessDenied",
+    );
+    expect(errorCode(new Error("Graph $batch failed: 429 ApplicationThrottled"))).toBe(
+      "Graph $batch failed: 429 ApplicationThrottled",
+    );
+    expect(errorCode(new Error("D1_ERROR: database is locked"))).toBe(
+      "D1_ERROR: database is locked",
+    );
+    expect(errorCode(new Error("something with bob@corp.example"))).toBe("Error");
+    expect(errorCode(new SyntaxError("Unexpected token in 'Dentist'"))).toBe("SyntaxError");
+    expect(errorCode("text")).toBe("unknown");
+  });
+});
+
 /** RPC rejections must be awaited inside try/catch, or the test runner reports them as unhandled. */
 async function expectRejection(promise: Promise<unknown>): Promise<void> {
   let rejected = false;
@@ -711,6 +776,18 @@ describe("alarm queue", () => {
     // An earlier partial attempt may have deleted blocks the rule wants again.
     expect(await cycleOwed()).toBe(true);
     expect(lookupFailed()).toBe(false);
+  });
+
+  it("keeps retrying the removal of a retiring account whose rule is enabled", async () => {
+    // The request that retires an account can stop before it deletes the account's rules.
+    const { stub, ruleId, deletes, cycleOwed } = await waitingRemoval("acc-removal-retiring-rule");
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+    await stub.retire();
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+    expect(await cycleOwed()).toBeUndefined();
+    expect(await stub.hasTokens()).toBe(true);
   });
 
   it("checks the rule only on retries, not on the first attempt", async () => {
@@ -2367,5 +2444,82 @@ describe("overlapping runs", () => {
     await alarm;
 
     expect(target.some((block) => block.start.dateTime.startsWith("2026-12-01T10:00"))).toBe(true);
+  });
+});
+
+describe("safe messages", () => {
+  it("keep runtime and infrastructure diagnostics", () => {
+    for (const message of [
+      "Network connection lost.",
+      "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/platform/limits#subrequests",
+      "Too many subrequests.",
+      "Exceeded allowed rows read in Durable Objects free tier.",
+      "Exceeded allowed rows written in Durable Objects free tier.",
+      "Exceeded allowed duration in Durable Objects free tier.",
+      "Worker exceeded CPU time limit.",
+      "internal error; reference = 0123456789abcdefghij",
+      "Durable Object storage operation exceeded timeout which caused object to be reset.",
+      "Durable Object waited for too long. The call was canceled and the Durable Object was reset.",
+      "Requesting a sync failed in 3 account(s)",
+    ]) {
+      expect(errorCode(new Error(message))).toBe(message);
+      expect(errorLogFields(new Error(message))).toContain(message);
+    }
+  });
+
+  it("drop V8 messages that can quote values", () => {
+    for (const error of [
+      new TypeError("Cannot read properties of undefined (reading 'alice@corp.example')"),
+      new RangeError("Invalid time value 'Dentist'"),
+      new Error("Unexpected token 'Dentist' in JSON"),
+    ]) {
+      expect(JSON.stringify([errorCode(error), errorLogFields(error)])).not.toMatch(
+        /alice|Dentist/,
+      );
+    }
+    expect(errorCode(new TypeError("x"))).toBe("TypeError");
+  });
+
+  it("allow D1_ERROR, not D1_TYPE_ERROR", () => {
+    const unique = "D1_ERROR: UNIQUE constraint failed: users.email: SQLITE_CONSTRAINT";
+    expect(errorCode(new Error(unique))).toBe(unique);
+    expect(
+      errorCode(new Error("D1_TYPE_ERROR: Type 'object' not supported for value 'alice@x'")),
+    ).toBe("Error");
+    expect(errorLogFields(new Error("D1_TYPE_ERROR: bad value alice@x")).join(" ")).not.toContain(
+      "alice",
+    );
+  });
+
+  it("return one code for a token error inside and outside the Durable Object", () => {
+    const boundary = Object.assign(new Error("invalid_grant: AADSTS50173 alice@corp.example"), {
+      code: "invalid_grant",
+    });
+    expect(errorCode(boundary)).toBe("token_invalid_grant");
+  });
+
+  it("take only real frames from a stack", () => {
+    const error = new Error("first\n    at fake (alice@corp.example:1:1)\nlast");
+    error.stack = [
+      "Error: first",
+      "    at fake (alice@corp.example:1:1)",
+      "last",
+      "    at run (file:///src/a.ts:10:5)",
+      "    at file:///src/b.ts:3:9",
+      "    at not a frame alice@corp.example",
+    ].join("\n");
+    expect(stackFrames(error)).toBe(
+      ["    at run (file:///src/a.ts:10:5)", "    at file:///src/b.ts:3:9"].join("\n"),
+    );
+  });
+});
+
+describe("static messages", () => {
+  it("allows a time zone name in the Graph message, but not other text", () => {
+    const zone = "Expected UTC times from Graph, got W. Europe Standard Time";
+    expect(errorCode(new Error(zone))).toBe(zone);
+    expect(errorCode(new Error("Expected UTC times from Graph, got alice@corp.example"))).toBe(
+      "Error",
+    );
   });
 });

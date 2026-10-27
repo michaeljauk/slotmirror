@@ -1,28 +1,31 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
-import { latestRuleOutcomes, recordAudit } from "../audit";
+import { errorLogFields, latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { ruleOptionsSchema, setupStatus } from "../config";
-import { i18nFromContext, useI18n as i18nForStatus } from "../i18n";
+import { i18nFromContext, useI18n as i18nForStatus, type Messages } from "../i18n";
 import {
-  blockColorFor,
+  blockColorProblem,
   CHOICES,
   deleteRuleWithBlocks,
   loadEditorState,
+  MAX_CATEGORY_LENGTH,
   resetDirection,
   setDirection,
   setBlockColor,
+  setDefaultBlockTitle,
   setGroupMembership,
+  setGroupMemberships,
   setWorkingHours,
   setSettings,
   setSourceCalendar,
-  type SyncSettings,
+  type SettingsForm,
   type Choice,
   type WorkingHours,
   NO_WORKING_HOURS,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
-import { workingHoursProblem, type WorkingHoursProblem } from "../sync/working-hours";
+import { workingHoursProblem } from "../sync/working-hours";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
@@ -45,6 +48,8 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
   if ((await userCalendars(c.env.DB, user.id)).length === 0) {
     await refreshUserCalendars(c.env, user.id);
   }
+  // Every rule starts on this page, so a new user's first rule gets the title in their language.
+  await setDefaultBlockTitle(c.env, user.id, i18nFromContext(c).t.editor.defaultBlockTitle);
   const page = (
     <CalendarEditorPage
       user={user}
@@ -61,11 +66,13 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
 /** One line for the whole page: the newest run, or the first failure. */
 function SyncStatus(props: { outcomes: Awaited<ReturnType<typeof latestRuleOutcomes>> }) {
   const { t, formatRelative, formatTimestamp } = i18nForStatus();
-  if (props.outcomes.length === 0) return null;
-  const failed = props.outcomes.find(
+  // A paused rule's last run is history; the line shows the rules that run.
+  const outcomes = props.outcomes.filter((outcome) => outcome.enabled);
+  if (outcomes.length === 0) return null;
+  const failed = outcomes.find(
     (outcome) => outcome.kind === "sync_failed" || (outcome.detail.failed ?? 0) > 0,
   );
-  const newest = props.outcomes.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+  const newest = outcomes.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
   const shown = failed ?? newest;
   return (
     <span class={failed ? "status error" : "status ok"} title={formatTimestamp(shown.createdAt)}>
@@ -160,9 +167,8 @@ function backTo(c: Context<AppEnv>, sourceId: string) {
 rules.post("/group/all", async (c) => {
   const user = currentUser(c);
   const state = await loadEditorState(c.env, user.id);
-  for (const account of state.accounts) {
-    await setGroupMembership(c.env, user, account.id, true);
-  }
+  const ids = state.accounts.map((account) => account.id);
+  await setGroupMemberships(c.env, user, ids, true);
   return c.redirect("/rules");
 });
 
@@ -177,85 +183,122 @@ rules.post("/group/:accountId", async (c) => {
   return c.redirect("/rules");
 });
 
+/** A refused change: plain text for the editor script, the page with a notice without it. */
+function refuse(c: Context<AppEnv>, text: string) {
+  return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+}
+
+/** Why a block colour cannot be stored for a target, in the user's words; null if it can. */
+function blockColorError(
+  t: Messages,
+  target: { provider: "microsoft" | "google" } | undefined,
+  value: string,
+): string | null {
+  const problem = target ? blockColorProblem(target.provider, value) : "invalid";
+  if (problem === "comma") return t.editor.blockCategoryComma;
+  if (problem === "tooLong") return t.editor.blockCategoryTooLong(MAX_CATEGORY_LENGTH);
+  return problem ? t.editor.blockColorInvalid : null;
+}
+
 rules.post("/direction", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
   const to = formText(form, "to");
   const choice = formText(form, "choice");
-  if (!(CHOICES as readonly string[]).includes(choice)) return c.text("Bad choice", 400);
+  if (!(CHOICES as readonly string[]).includes(choice)) {
+    return refuse(c, i18nFromContext(c).t.editor.choiceInvalid);
+  }
   await setDirection(c.env, currentUser(c), from, to, choice as Choice);
   return backTo(c, from);
 });
 
-// All unsaved changes of the page, sent by the editor script: fields "choice.<from>.<to>" and
-// others. Every field is checked before the first write, so that a save is all or nothing.
+// All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
+// "choice.<from>.<to>", "blockColor.<from>.<to>", the working hours
+// "workDays.<from>.<to>" and so on, and "settings.<name>". Every field is checked
+// before the first write, so that an invalid field refuses the whole save. The writes are not one
+// transaction: a D1 or Durable Object failure can still stop them part-way.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
+  const { t } = i18nFromContext(c);
   const form = await c.req.formData();
-  const state = await loadEditorState(c.env, user.id);
-  const directionOf = (from: string, to: string) =>
-    state.directions.find((d) => d.from === from && d.to === to);
   // The editor sends text only; a file in one of its fields is a bad request, not a skip.
   for (const [name, value] of form.entries()) {
     if (typeof value !== "string" && isEditorField(name.split(".")[0])) {
       return c.text("Bad field", 400);
     }
   }
-
-  const calendars: { calendarId: string; isSource: boolean }[] = [];
+  const fields = (kind: string) =>
+    [...form.entries()].flatMap(([name, value]) => {
+      const [prefix, first, second, ...rest] = name.split(".");
+      if (prefix !== kind || !first || rest.length > 0 || typeof value !== "string") return [];
+      return [{ first, second, value }];
+    });
+  const calendars = fields("calendar").filter((field) => field.second === undefined);
   const changes: { from: string; to: string; choice: Choice }[] = [];
+  for (const { first, second, value } of fields("choice")) {
+    if (!second) continue;
+    if (!(CHOICES as readonly string[]).includes(value)) return refuse(c, t.editor.choiceInvalid);
+    changes.push({ from: first, to: second, choice: value as Choice });
+  }
   const colors: { from: string; to: string; value: string }[] = [];
+  const { accounts, directions } = await loadEditorState(c.env, user.id);
+  for (const { first, second, value } of fields("blockColor")) {
+    if (!second) continue;
+    const error = blockColorError(
+      t,
+      accounts.find((account) => account.id === second),
+      value,
+    );
+    if (error) return refuse(c, error);
+    colors.push({ from: first, to: second, value });
+  }
+
+  // Fields of one direction's hours that are missing get the defaults.
   const hours = new Map<string, { from: string; to: string; hours: Required<WorkingHours> }>();
-  for (const [name, value] of form.entries()) {
-    const [prefix, first, second, ...rest] = name.split(".");
-    if (prefix === "calendar" && first && !second) {
-      calendars.push({ calendarId: first, isSource: value === "1" });
-      continue;
-    }
-    // Fields "<prefix>.<from>.<to>"; other names are not the editor's and stay ignored.
-    if (!first || !second || rest.length > 0 || typeof value !== "string") continue;
-    const [from, to] = [first, second];
-    if (prefix === "choice") {
-      if (!(CHOICES as readonly string[]).includes(value)) return c.text("Bad choice", 400);
-      changes.push({ from, to, choice: value as Choice });
-    } else if (prefix === "blockColor") {
-      const target = state.accounts.find((account) => account.id === to);
-      if (!target || !directionOf(from, to) || blockColorFor(target.provider, value) === null) {
-        return c.text("Bad block colour", 400);
-      }
-      colors.push({ from, to, value });
-    } else if (isWorkingHoursField(prefix)) {
-      // Fields of one direction's hours that are missing get the defaults.
-      const entry = hours.get(`${from}>${to}`) ?? { from, to, hours: { ...NO_WORKING_HOURS } };
+  for (const prefix of WORKING_HOURS_FIELDS) {
+    for (const { first, second, value } of fields(prefix)) {
+      if (!second) continue;
+      const entry = hours.get(`${first}>${second}`) ?? {
+        from: first,
+        to: second,
+        hours: { ...NO_WORKING_HOURS },
+      };
       if (prefix === "workDays") entry.hours.workDays = weekdays(value.split(","));
       else entry.hours[prefix] = value.trim();
-      hours.set(`${from}>${to}`, entry);
+      hours.set(`${first}>${second}`, entry);
     }
   }
   for (const entry of hours.values()) {
-    if (!directionOf(entry.from, entry.to)) return c.text("Bad working hours", 400);
+    if (!directions.some((d) => d.from === entry.from && d.to === entry.to)) {
+      return refuse(c, t.editor.workHoursDirection);
+    }
     const problem = workingHoursProblem(entry.hours);
-    if (problem) return hoursRefused(c, problem);
+    if (problem) return refuse(c, t.editor.workHoursErrors[problem]);
   }
 
   // Source calendars first, so that the choices below also reach newly chosen calendars.
-  for (const { calendarId, isSource } of calendars) {
-    await setSourceCalendar(c.env, user, calendarId, isSource);
+  for (const { first, value } of calendars) {
+    await setSourceCalendar(c.env, user, first, value === "1");
   }
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
-  // Colours and hours after the choices, so that a direction turned on in this save has rules.
-  // The writes are separate D1 statements, not one batch: each helper reads the state its
-  // predecessors wrote and queues a sync. The checks above leave only storage errors, and a
-  // direction whose last source calendar this save turned off; the earlier writes then stay.
-  for (const { from, to, value } of colors) await setBlockColor(c.env, user, from, to, value);
+  // Block colours after the choices, so that a direction turned on in the same save has its rules.
+  // A direction that lost its last source in this save has no rules left to colour.
+  for (const color of colors) {
+    await setBlockColor(c.env, user, color.from, color.to, color.value);
+  }
+  if (form.has("settings")) {
+    await setSettings(c.env, user, settingsFrom(form, t.editor.defaultBlockTitle, "settings."));
+  }
+  // Hours last: each helper reads the state that the writes before it left, so the writes are not
+  // one D1 batch. After the checks above, a write fails only on a storage error or if the direction
+  // is gone; the earlier writes then stay.
   for (const entry of hours.values()) {
     if (!(await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours))) {
       return c.text("Working hours not saved", 409);
     }
   }
-  if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
 });
@@ -282,16 +325,6 @@ function isWorkingHoursField(
   return (WORKING_HOURS_FIELDS as readonly (string | undefined)[]).includes(name);
 }
 
-/**
- * Refuse invalid working hours with a message for the field: as JSON for the editor script, which
- * shows it in its bar, and as the page with an error notice for the form without the script.
- */
-async function hoursRefused(c: Context<AppEnv>, problem: WorkingHoursProblem) {
-  const text = i18nFromContext(c).t.editor.workHoursErrors[problem];
-  if (wantsFragment(c)) return c.json({ error: text }, 400);
-  return renderPage(c, { kind: "error", text }, 400);
-}
-
 rules.post("/direction/hours", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
@@ -302,24 +335,30 @@ rules.post("/direction/hours", async (c) => {
     workEnd: form.has("workUntilMidnight") ? "24:00" : formText(form, "workEnd").trim(),
     workTimeZone: formText(form, "workTimeZone").trim(),
   };
+  const { t } = i18nFromContext(c);
   const problem = workingHoursProblem(hours);
-  if (problem) return hoursRefused(c, problem);
+  if (problem) return refuse(c, t.editor.workHoursErrors[problem]);
   const ok = await setWorkingHours(c.env, currentUser(c), from, formText(form, "to"), hours);
-  if (!ok) return c.text("Bad working hours", 400);
+  if (!ok) return refuse(c, t.editor.workHoursDirection);
   return backTo(c, from);
 });
 
 rules.post("/direction/color", async (c) => {
+  const user = currentUser(c);
+  const { t } = i18nFromContext(c);
   const form = await c.req.formData();
   const from = formText(form, "from");
-  const ok = await setBlockColor(
-    c.env,
-    currentUser(c),
-    from,
-    formText(form, "to"),
-    formText(form, "blockColor"),
+  const to = formText(form, "to");
+  const value = formText(form, "blockColor");
+  const { accounts } = await loadEditorState(c.env, user.id);
+  const error = blockColorError(
+    t,
+    accounts.find((account) => account.id === to),
+    value,
   );
-  if (!ok) return c.text("Bad block colour", 400);
+  if (error) return refuse(c, error);
+  if (!(await setBlockColor(c.env, user, from, to, value)))
+    return refuse(c, t.editor.blockColorInvalid);
   return backTo(c, from);
 });
 
@@ -330,9 +369,13 @@ rules.post("/direction/reset", async (c) => {
   return backTo(c, from);
 });
 
-/** Settings from a form or the editor script's fields "settings.<name>". */
-function settingsFrom(form: FormData, prefix = ""): SyncSettings {
-  const days = Number(form.get(`${prefix}daysAhead`) ?? 90);
+/**
+ * Settings from a form or the editor script's fields "settings.<name>". An empty block title
+ * becomes `defaultTitle`, the one of the user's language.
+ */
+function settingsFrom(form: FormData, defaultTitle: string, prefix = ""): SettingsForm {
+  const days = Number(form.get(`${prefix}daysAhead`));
+  const shown = Number(form.get(`${prefix}daysAheadShown`));
   const text = (name: string) => {
     const value = form.get(`${prefix}${name}`);
     return typeof value === "string" ? value : "";
@@ -346,11 +389,12 @@ function settingsFrom(form: FormData, prefix = ""): SyncSettings {
     .getAll(`${prefix}skipColor`)
     .filter((value): value is string => typeof value === "string" && /^color:\d{1,2}$/.test(value));
   return {
-    daysAhead: [30, 90, 180, 365].includes(days) ? days : 90,
+    ...([30, 90, 180, 365].includes(days) ? { daysAhead: days } : {}),
+    ...(Number.isInteger(shown) && shown >= 1 && shown <= 365 ? { daysAheadShown: shown } : {}),
     skipAllDay: form.has(`${prefix}skipAllDay`),
     skipTentative: form.has(`${prefix}skipTentative`),
     markPrivate: form.has(`${prefix}markPrivate`),
-    blockTitle: text("blockTitle").trim().slice(0, 255) || "Busy",
+    blockTitle: text("blockTitle").trim().slice(0, 255) || defaultTitle,
     skipCategories: [...new Set([...categories, ...colors])].slice(0, 50),
   };
 }
@@ -367,9 +411,32 @@ rules.post("/source-calendar/:calendarId", async (c) => {
 });
 
 rules.post("/settings", async (c) => {
-  await setSettings(c.env, currentUser(c), settingsFrom(await c.req.formData()));
+  const { t } = i18nFromContext(c);
+  await setSettings(
+    c.env,
+    currentUser(c),
+    settingsFrom(await c.req.formData(), t.editor.defaultBlockTitle),
+  );
   return c.redirect("/rules");
 });
+
+/** Token errors after which only a new sign-in helps; the same codes as in AccountSync. */
+const RECONNECT_MESSAGES = [
+  "Account has no tokens",
+  "invalid_grant",
+  "interaction_required",
+  "consent_required",
+];
+
+/**
+ * A failed run or check in the user's words. The error crosses the Durable Object boundary, so
+ * only its message is left. A missing or refused token means the account must connect again.
+ */
+export function runErrorText(t: Messages, error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (RECONNECT_MESSAGES.some((text) => message.includes(text))) return t.editor.checkNoTokens;
+  return t.editor.checkFailed;
+}
 
 // Check one direction with real events: a dry run of every rule of the direction, one per
 // source calendar of the account, summed.
@@ -384,7 +451,8 @@ rules.post("/direction/check", async (c) => {
   const ruleIds = (direction?.slots ?? []).flatMap((slot) =>
     slot.rule?.enabled ? [slot.rule.id] : [],
   );
-  if (ruleIds.length === 0) return c.notFound();
+  // A page from before a change can offer a check for a direction that no longer runs.
+  if (ruleIds.length === 0) return refuse(c, t.editor.checkStale);
   const sum = { create: 0, update: 0, delete: 0, unchanged: 0 };
   try {
     for (const ruleId of ruleIds) {
@@ -395,9 +463,8 @@ rules.post("/direction/check", async (c) => {
       sum.unchanged += result.stats.unchanged;
     }
   } catch (error) {
-    console.error("Direction check failed", from, to, error);
-    const text = (error as Error).message;
-    return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+    console.error("Direction check failed", from, to, ...errorLogFields(error));
+    return refuse(c, runErrorText(t, error));
   }
   const text = t.editor.checkResult(sum.create, sum.update, sum.delete, sum.unchanged);
   return wantsFragment(c) ? c.text(text) : renderPage(c, { kind: "info", text });
@@ -427,9 +494,8 @@ for (const action of ["preview", "run"] as const) {
       }
       return renderPage(c, { kind: "info", text });
     } catch (error) {
-      console.error(`Rule ${action} failed`, ruleId, error);
-      const text = (error as Error).message;
-      return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+      console.error(`Rule ${action} failed`, ruleId, ...errorLogFields(error));
+      return refuse(c, runErrorText(t, error));
     }
   });
 }

@@ -185,12 +185,19 @@ export const en = {
     blockCategoryPlaceholder: "No category",
     blockCategoryHint:
       "Outlook shows a colour if a category with this name exists. Create it in Outlook first.",
+    bufferLabel: "Buffer there:",
+    bufferBefore: "min. before",
+    bufferAfter: "min. after",
+    bufferHint:
+      "Copies start earlier and end later by these minutes, for example for travel time. All-day events get no buffer.",
     blockCategoryComma:
       "A category name cannot contain a comma: Outlook reads the comma as the start of a second category. Nothing was saved.",
     blockCategoryTooLong: (max: number) =>
       `A category name can have at most ${max} characters. Nothing was saved.`,
     blockColorInvalid: "This colour does not fit the calendar. Reload the page. Nothing was saved.",
     choiceInvalid: "This choice is not available. Reload the page. Nothing was saved.",
+    bufferInvalid: (max: number) =>
+      `A buffer is a whole number of minutes from 0 to ${max}. Nothing was saved.`,
     reconnectText: (name: string) =>
       `${name} is no longer connected. Until you connect it again, its calendars do not sync.`,
     reconnect: (name: string) => `Connect ${name} again`,

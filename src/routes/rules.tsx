@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
 import { errorLogFields, latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
-import { ruleOptionsSchema, setupStatus } from "../config";
+import { MAX_BUFFER_MINUTES, ruleOptionsSchema, setupStatus } from "../config";
 import { i18nFromContext, useI18n as i18nForStatus, type Messages } from "../i18n";
 import {
   blockColorProblem,
@@ -12,12 +12,14 @@ import {
   MAX_CATEGORY_LENGTH,
   resetDirection,
   setDirection,
+  setBlockBuffer,
   setBlockColor,
   setDefaultBlockTitle,
   setGroupMembership,
   setGroupMemberships,
   setSettings,
   setSourceCalendar,
+  type BlockBuffer,
   type SettingsForm,
   type Choice,
 } from "../editor";
@@ -113,6 +115,8 @@ rules.post("/", async (c) => {
     markPrivate: form.has("markPrivate"),
     skipAllDay: form.has("skipAllDay"),
     skipTentative: form.has("skipTentative"),
+    bufferBefore: minutes(formText(form, "bufferBefore")),
+    bufferAfter: minutes(formText(form, "bufferAfter")),
   });
   const valid =
     parsed.success &&
@@ -145,6 +149,11 @@ rules.post("/", async (c) => {
 function formText(form: FormData, name: string): string {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
+}
+
+/** Minutes from a number field. An empty field is 0; the options schema refuses the rest. */
+function minutes(value: string): number {
+  return value.trim() === "" ? 0 : Number(value);
 }
 
 /** The editor script asks for fragments with this header; forms without the script do not. */
@@ -209,9 +218,10 @@ rules.post("/direction", async (c) => {
 });
 
 // All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
-// "choice.<from>.<to>", "blockColor.<from>.<to>" and "settings.<name>". Every field is checked
-// before the first write, so that an invalid field refuses the whole save. The writes are not one
-// transaction: a D1 or Durable Object failure can still stop them part-way.
+// "choice.<from>.<to>", "blockColor.<from>.<to>", "bufferBefore.<from>.<to>",
+// "bufferAfter.<from>.<to>" and "settings.<name>". Every field is checked before the first write,
+// so that an invalid field refuses the whole save. The writes are not one transaction: a D1 or
+// Durable Object failure can still stop them part-way.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const { t } = i18nFromContext(c);
@@ -230,7 +240,7 @@ rules.post("/choices", async (c) => {
     changes.push({ from: first, to: second, choice: value as Choice });
   }
   const colors: { from: string; to: string; value: string }[] = [];
-  const { accounts } = await loadEditorState(c.env, user.id);
+  const { accounts, directions } = await loadEditorState(c.env, user.id);
   for (const { first, second, value } of fields("blockColor")) {
     if (!second) continue;
     const error = blockColorError(
@@ -241,6 +251,22 @@ rules.post("/choices", async (c) => {
     if (error) return refuse(c, error);
     colors.push({ from: first, to: second, value });
   }
+  // The two buffers of a direction are one change; both must be valid, for a direction that exists.
+  const buffers = new Map<string, { from: string; to: string; buffer: BlockBuffer }>();
+  for (const kind of ["bufferBefore", "bufferAfter"] as const) {
+    for (const { first, second, value } of fields(kind)) {
+      if (!second) continue;
+      const entry = buffers.get(`${first}>${second}`) ?? { from: first, to: second, buffer: {} };
+      entry.buffer[kind] = minutes(value);
+      buffers.set(`${first}>${second}`, entry);
+    }
+  }
+  for (const { from, to, buffer } of buffers.values()) {
+    const known = directions.some((d) => d.from === from && d.to === to);
+    if (!known || !ruleOptionsSchema.safeParse(buffer).success) {
+      return refuse(c, t.editor.bufferInvalid(MAX_BUFFER_MINUTES));
+    }
+  }
 
   // Source calendars first, so that the choices below also reach newly chosen calendars.
   for (const { first, value } of calendars) {
@@ -249,10 +275,13 @@ rules.post("/choices", async (c) => {
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
-  // Block colours after the choices, so that a direction turned on in the same save has its rules.
-  // A direction that lost its last source in this save has no rules left to colour.
+  // Colours and buffers after the choices, so that a direction turned on in the same save has its
+  // rules. A direction that lost its last source in this save has no rules left to change.
   for (const color of colors) {
     await setBlockColor(c.env, user, color.from, color.to, color.value);
+  }
+  for (const { from, to, buffer } of buffers.values()) {
+    await setBlockBuffer(c.env, user, from, to, buffer);
   }
   if (form.has("settings")) {
     await setSettings(c.env, user, settingsFrom(form, t.editor.defaultBlockTitle, "settings."));
@@ -277,6 +306,17 @@ rules.post("/direction/color", async (c) => {
   if (error) return refuse(c, error);
   if (!(await setBlockColor(c.env, user, from, to, value)))
     return refuse(c, t.editor.blockColorInvalid);
+  return backTo(c, from);
+});
+
+rules.post("/direction/buffer", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const ok = await setBlockBuffer(c.env, currentUser(c), from, formText(form, "to"), {
+    bufferBefore: minutes(formText(form, "bufferBefore")),
+    bufferAfter: minutes(formText(form, "bufferAfter")),
+  });
+  if (!ok) return refuse(c, i18nFromContext(c).t.editor.bufferInvalid(MAX_BUFFER_MINUTES));
   return backTo(c, from);
 });
 

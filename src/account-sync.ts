@@ -10,7 +10,7 @@ import {
 } from "./providers/calendar-client";
 import { clientCredentials, oauthClient } from "./providers/oauth-clients";
 import { TokenError, type TokenResponse } from "./providers/oauth-token";
-import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
+import { claimsFrom, desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
 import {
   cleanupWindow,
   loadRule,
@@ -18,6 +18,7 @@ import {
   rulesRunningFromAlarm,
   rulesTargetingAccount,
   siblingRuleIds,
+  readWindow,
   startsBeyond,
   syncWindow,
   targetReadWindow,
@@ -946,11 +947,13 @@ export class AccountSync extends DurableObject<Env> {
         .level,
     };
     const withBody = ruleOptions.detailLevel === "full";
+    // A buffered rule reads the source wider than the sync window; see `readWindow`.
+    const read = readWindow(window, ruleOptions);
     const sourceEvents =
       rule.source.accountId === this.accountId()
-        ? await this.readSourceEvents(rule.source.remoteCalendarId, window, withBody)
+        ? await this.readSourceEvents(rule.source.remoteCalendarId, read ?? window, withBody)
         : await this.readOtherSource(rule.source.accountId, rule.source.remoteCalendarId, {
-            window,
+            window: read ?? window,
             withBody,
           });
 
@@ -962,22 +965,19 @@ export class AccountSync extends DurableObject<Env> {
       (await siblingRuleIds(this.env.DB, rule.id)).map((id) => ruleTagFor(id)),
     );
     const precedingTags = siblingTags.filter((tag) => tag < ruleTag);
+    // The target read is wider than the source read; see `targetReadWindow` and `planSync`.
     const targetRead = targetReadWindow(window);
     const blocks = await target.existingBlocks(rule.target.remoteCalendarId, targetRead, [
       ruleTag,
       ...precedingTags,
     ]);
     const existing = blocks.filter((block) => block.ruleTag === ruleTag);
-    const claimed = new Set(
-      blocks
-        .filter((block) => block.ruleTag !== ruleTag && block.dedupKey !== "")
-        .map((block) => block.dedupKey),
-    );
+    const claimed = claimsFrom(blocks.filter((block) => block.ruleTag !== ruleTag));
     const desired = await desiredBlocks(rule.id, sourceEvents, ruleOptions, {
       scope: rule.userId,
       claimed,
     });
-    const plan = planSync(desired, existing, { sync: window, target: targetRead });
+    const plan = planSync(desired, existing, { sync: window, target: targetRead, read });
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

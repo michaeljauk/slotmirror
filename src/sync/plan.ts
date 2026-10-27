@@ -38,13 +38,14 @@ function included(
 /**
  * The block content for a source event at the rule's detail level.
  * Events the source marks private never carry more than "busy", whatever the rule says.
+ * The buffers widen timed blocks only; the times of all-day blocks are dates.
  */
 export function blockContent(event: SourceEvent, options: RuleOptions): BlockContent {
   const level = event.isPrivate ? "busy" : options.detailLevel;
   const withTitle = level !== "busy" && event.subject.trim() !== "";
   return {
-    start: event.start,
-    end: event.end,
+    start: event.allDay ? event.start : shifted(event.start, -options.bufferBefore),
+    end: event.allDay ? event.end : shifted(event.end, options.bufferAfter),
     allDay: event.allDay,
     showAs: event.showAs === "unknown" ? "busy" : event.showAs,
     isPrivate: options.markPrivate || event.isPrivate,
@@ -53,6 +54,16 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
     body: level === "full" ? event.body : "",
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
   };
+}
+
+/**
+ * A time moved by some minutes. Without a move the text stays as the source wrote it, so that the
+ * content hash of blocks without a buffer does not change.
+ */
+function shifted(time: string, minutes: number): string {
+  const instant = Date.parse(time);
+  if (minutes === 0 || Number.isNaN(instant)) return time;
+  return new Date(instant + minutes * 60_000).toISOString();
 }
 
 /** Marker for a block: SHA-256 of rule ID and occurrence key, so no source ID leaves the source. */
@@ -86,7 +97,9 @@ export async function inPrecedenceOrder(ruleIds: string[]): Promise<string[]> {
  * Key of a block as people see it: times, title, status and privacy, hashed with a per-user scope.
  * Two blocks with the same key block the same way, so one of them is enough. The same match in two
  * subscribed calendars gets one key; so do two private "Busy" blocks at the same time. A tentative
- * block never stands in for a busy one, and an open block never for a private one.
+ * block never stands in for a busy one, and an open block never for a private one. The times are
+ * those of the event, without buffers, so that rules with different buffers find the same meeting;
+ * see `desiredBlocks` for which block stays.
  */
 export async function dedupKeyFor(scope: string, content: BlockContent): Promise<string> {
   return shortHash(dedupText(scope, content));
@@ -143,28 +156,65 @@ function cachedHash(text: string): string | Promise<string> {
   });
 }
 
+/** Times of the blocks that rules with precedence wrote, by dedup key. */
+export type Claims = ReadonlyMap<string, readonly { start: string; end: string }[]>;
+
+/** The claims of blocks that rules with precedence wrote. Blocks without a dedup key claim nothing. */
+export function claimsFrom(blocks: { dedupKey: string; start: string; end: string }[]): Claims {
+  const claims = new Map<string, { start: string; end: string }[]>();
+  for (const { dedupKey, start, end } of blocks) {
+    if (dedupKey === "") continue;
+    claims.set(dedupKey, [...(claims.get(dedupKey) ?? []), { start, end }]);
+  }
+  return claims;
+}
+
+/**
+ * True if a rule with precedence claimed the event. A rule without buffers leaves out every event
+ * with a claimed dedup key. A rule with buffers leaves it out only if a claimed block covers its
+ * own block, so that a wider buffer is never lost. A set of keys claims by key alone.
+ */
+function isClaimed(
+  content: BlockContent,
+  claimed: ReadonlySet<string> | Claims | undefined,
+  dedupKey: string,
+  buffered: boolean,
+): boolean {
+  if (!claimed?.has(dedupKey)) return false;
+  if (!buffered || !(claimed instanceof Map)) return true;
+  return ((claimed as Claims).get(dedupKey) ?? []).some(
+    (claim) =>
+      Date.parse(claim.start) <= Date.parse(content.start) &&
+      Date.parse(claim.end) >= Date.parse(content.end),
+  );
+}
+
 /**
  * All blocks the target calendar should contain for one rule.
  *
- * `dedup.scope` scopes the dedup keys, normally to the user. `dedup.claimed` holds the dedup keys
- * of blocks that rules with precedence wrote into the same calendar; the rule leaves out events
- * whose block would look the same, so that an event in several source calendars is blocked once.
+ * `dedup.scope` scopes the dedup keys, normally to the user. `dedup.claimed` holds the blocks
+ * that rules with precedence wrote into the same calendar. The rule leaves out an event whose
+ * block would look the same and that such a block covers, buffers included, so that an event in
+ * several source calendars is blocked once. A rule with a wider buffer still writes its own block.
  */
 export async function desiredBlocks(
   ruleId: string,
   events: SourceEvent[],
   options: RuleOptions,
-  dedup: { scope: string; claimed?: ReadonlySet<string> } = { scope: "" },
+  dedup: { scope: string; claimed?: ReadonlySet<string> | Claims } = { scope: "" },
 ): Promise<DesiredBlock[]> {
   const blocks = new Map<string, DesiredBlock>();
+  const buffered = options.bufferBefore > 0 || options.bufferAfter > 0;
   const skipped = skippedCategories(options);
   // Most hashes are cached; the loop awaits only those that are not.
   for (const event of events) {
     if (!included(event, options, skipped)) continue;
     const content = blockContent(event, options);
-    const dedupHash = cachedHash(dedupText(dedup.scope, content));
+    // The dedup key uses the event's times, so that rules with different buffers find one meeting.
+    const keyed = buffered ? { ...content, start: event.start, end: event.end } : content;
+    const dedupHash = cachedHash(dedupText(dedup.scope, keyed));
     const dedupKey = typeof dedupHash === "string" ? dedupHash : await dedupHash;
-    if (dedup.claimed?.has(dedupKey)) continue;
+    if (isClaimed(content, dedup.claimed, dedupKey, buffered)) continue;
     const markerHash = cachedHash(markerText(ruleId, event.occurrenceKey));
     const marker = typeof markerHash === "string" ? markerHash : await markerHash;
     const contentText = JSON.stringify(content);
@@ -202,6 +252,14 @@ export interface TimeWindow {
   end: Date;
 }
 
+/** The windows of one run: sync window, target read and source read; see `planSync`. */
+export interface PlanWindows {
+  sync: TimeWindow;
+  target?: TimeWindow;
+  /** The wider source read of a buffered rule; a rule without a buffer reads `sync`. */
+  read?: TimeWindow | undefined;
+}
+
 /** True if a block overlaps a window. All-day dates count from midnight UTC. */
 function overlaps(block: { start: string; end: string }, window: TimeWindow): boolean {
   return (
@@ -227,10 +285,26 @@ function isInEveryRead(block: DesiredBlock, read: TimeWindow): boolean {
 /**
  * True if an existing block can be the block of a desired one. A timed block outside the sync
  * window only stands in for a desired block outside it too, so that the wider target read changes
- * nothing for timed blocks inside the window.
+ * nothing for timed blocks inside the window. A buffered rule reads the source in `windows.read`,
+ * so a timed block in that read stands in too: it moves with its buffer, in and out of the window.
  */
-function standsIn(existing: ExistingBlock, desired: DesiredBlock, sync: TimeWindow): boolean {
-  return existing.allDay || overlaps(existing, sync) || !overlaps(desired, sync);
+function standsIn(existing: ExistingBlock, desired: DesiredBlock, windows: PlanWindows): boolean {
+  if (existing.allDay || overlaps(existing, windows.sync) || !overlaps(desired, windows.sync)) {
+    return true;
+  }
+  return windows.read !== undefined && overlaps(existing, windows.read);
+}
+
+/**
+ * True if a timed block lies in the margin of the source read only: in the read window, at its
+ * edges included, but outside the sync window. Its event reached the read through a buffer.
+ */
+function isInMarginOnly(block: DesiredBlock, windows: PlanWindows): boolean {
+  if (block.allDay || !windows.read || overlaps(block, windows.sync)) return false;
+  return (
+    Date.parse(block.start) <= windows.read.end.getTime() &&
+    Date.parse(block.end) >= windows.read.start.getTime()
+  );
 }
 
 /**
@@ -260,11 +334,19 @@ function standsIn(existing: ExistingBlock, desired: DesiredBlock, sync: TimeWind
  * - A block that ends exactly at 00:00 UTC lies outside the sync window and is never deleted.
  * A possible follow-up: read the source one day wider too, and delete an outside block only if
  * the source read returns its date for every time zone.
+ *
+ * `windows.read` is the window of the source read of a buffered rule: the sync window with the
+ * largest buffer added on each side, so that a block that reaches into the sync window has its
+ * event in the read. A rule without a buffer passes no `windows.read`.
+ * The read margin can return an event whose block, with a small buffer, stays outside the sync
+ * window. The plan writes no such block, as if the read had not returned the event. The one
+ * exception: its block reaches into the sync window now, for example before a lower buffer. Then
+ * the block moves with its event, so that it is not deleted while the event exists.
  */
 export function planSync(
   desired: DesiredBlock[],
   existing: ExistingBlock[],
-  windows?: { sync: TimeWindow; target?: TimeWindow },
+  windows?: PlanWindows,
 ): SyncPlan {
   const actions: SyncAction[] = [];
   let unchanged = 0;
@@ -281,8 +363,12 @@ export function planSync(
     existingByMarker.delete(block.marker);
     // Blocks that cannot stand in stay untouched, as if the target read had not returned them.
     const [current, ...duplicates] = windows
-      ? found.filter((candidate) => standsIn(candidate, block, windows.sync))
+      ? found.filter((candidate) => standsIn(candidate, block, windows))
       : found;
+    if (windows && isInMarginOnly(block, windows)) {
+      // As if the read had not returned the event, unless its block reaches into the window now.
+      if (!found.some((candidate) => overlaps(candidate, windows.sync))) continue;
+    }
     for (const duplicate of duplicates) {
       actions.push({ kind: "delete", targetId: duplicate.targetId, marker: duplicate.marker });
     }

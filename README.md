@@ -32,6 +32,11 @@ tokens stay with you and not with a sync service.
 - **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
   colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
+- **A buffer around the blocks.** Per calendar and target, blocks can start up to 240 minutes
+  earlier and end up to 240 minutes later than the event, for example for travel time. The
+  default is 0. All-day events get no buffer. Where buffered blocks overlap, each event keeps its
+  own block. If one event reaches a calendar through two directions with the same buffer, it gets
+  one block. With different buffers it can get two, so that the wider buffer is never lost.
 - **A colour per account.** Each account gets its own colour in the pages, automatically or
   chosen under "Name and colour". It does not change any calendar.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a

@@ -188,6 +188,11 @@ export const de: Messages = {
     blockCategoryPlaceholder: "Keine Kategorie",
     blockCategoryHint:
       "Outlook zeigt eine Farbe, wenn es eine Kategorie mit diesem Namen gibt. Lege sie zuerst in Outlook an.",
+    bufferLabel: "Puffer dort:",
+    bufferBefore: "Min. davor",
+    bufferAfter: "Min. danach",
+    bufferHint:
+      "Kopien beginnen um so viele Minuten früher und enden später, zum Beispiel für die Anfahrt. Ganztägige Termine bekommen keinen Puffer.",
     blockCategoryComma:
       "Ein Kategoriename darf kein Komma enthalten: Outlook liest das Komma als Beginn einer zweiten Kategorie. Es wurde nichts gespeichert.",
     blockCategoryTooLong: (max: number) =>
@@ -195,6 +200,8 @@ export const de: Messages = {
     blockColorInvalid:
       "Diese Farbe passt nicht zum Kalender. Lade die Seite neu. Es wurde nichts gespeichert.",
     choiceInvalid: "Diese Auswahl gibt es nicht. Lade die Seite neu. Es wurde nichts gespeichert.",
+    bufferInvalid: (max: number) =>
+      `Ein Puffer ist eine ganze Zahl von Minuten zwischen 0 und ${max}. Es wurde nichts gespeichert.`,
     reconnectText: (name: string) =>
       `${name} ist nicht mehr verbunden. Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.`,
     reconnect: (name: string) => `${name} neu verbinden`,

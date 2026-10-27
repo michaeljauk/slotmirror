@@ -145,6 +145,33 @@ document.addEventListener("click", async (event) => {
     });
   }
 
+  // The buffers of a direction count as one change while they differ from the saved ones.
+  const bufferOf = (form) => {
+    const data = new FormData(form);
+    const minutes = (name) => String(Number(data.get(name) || 0));
+    return `${minutes("bufferBefore")},${minutes("bufferAfter")}`;
+  };
+  const savedBuffers = new Map();
+  for (const form of document.querySelectorAll("form.block-buffer[data-key]")) {
+    const key = `buffer:${form.dataset.key}`;
+    savedBuffers.set(key, bufferOf(form));
+    const onChange = () => {
+      const value = bufferOf(form);
+      if (value === savedBuffers.get(key)) pending.delete(key);
+      else pending.set(key, value);
+      form.classList.toggle("pending", pending.has(key));
+      refreshBar();
+    };
+    form.addEventListener("change", onChange);
+    form.addEventListener("input", onChange);
+    // Enter in a buffer field saves every change of the page, as the bar does.
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      onChange();
+      if (pending.size > 0) void save();
+    });
+  }
+
   // The settings form counts as one change while it differs from the saved settings.
   const settings = document.getElementById("settings");
   const readSettings = () => new URLSearchParams(new FormData(settings)).toString();
@@ -178,6 +205,10 @@ document.addEventListener("click", async (event) => {
         form?.classList.remove("pending");
         // Reset fires no change event; this one restores the example fill.
         form?.dispatchEvent(new Event("change"));
+      } else if (key.startsWith("buffer:")) {
+        const form = document.querySelector(`form.block-buffer[data-key="${key.slice(7)}"]`);
+        form?.reset();
+        form?.classList.remove("pending");
       } else if (key !== "settings") show(key, original.get(key));
     }
     settings?.reset();
@@ -189,6 +220,16 @@ document.addEventListener("click", async (event) => {
   /** Save every change of the page in one request. The server applies all of it or nothing. */
   async function save() {
     if (bar.classList.contains("saving")) return;
+    // A buffer outside its limits, or text in a number field, stops the save with the browser's
+    // own message; the server would refuse the whole save.
+    const invalid = [...document.querySelectorAll("form.block-buffer input")].find(
+      (input) => !input.checkValidity(),
+    );
+    if (invalid) {
+      invalid.closest("details")?.setAttribute("open", "");
+      invalid.reportValidity();
+      return;
+    }
     const body = new URLSearchParams();
     for (const [key, choice] of pending) {
       if (key === "settings") continue;
@@ -199,6 +240,13 @@ document.addEventListener("click", async (event) => {
       if (key.startsWith("blockColor:")) {
         const [from, to] = key.slice(11).split(">");
         body.append(`blockColor.${from}.${to}`, choice);
+        continue;
+      }
+      if (key.startsWith("buffer:")) {
+        const [from, to] = key.slice(7).split(">");
+        const [before, after] = choice.split(",");
+        body.append(`bufferBefore.${from}.${to}`, before);
+        body.append(`bufferAfter.${from}.${to}`, after);
         continue;
       }
       const [from, to] = key.split(">");
@@ -227,7 +275,7 @@ document.addEventListener("click", async (event) => {
         ...new Set(
           [...pending.keys()]
             .filter((key) => key.includes(">"))
-            .map((key) => key.replace(/^blockColor:/, "").split(">")[0]),
+            .map((key) => key.replace(/^(blockColor|buffer):/, "").split(">")[0]),
         ),
       ];
       pending.clear();

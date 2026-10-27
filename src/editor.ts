@@ -593,6 +593,48 @@ export async function setBlockColor(
   return true;
 }
 
+/** Buffers of one direction in minutes. A buffer that is missing keeps its value. */
+export type BlockBuffer = Partial<Pick<RuleOptions, "bufferBefore" | "bufferAfter">>;
+
+/**
+ * Set the buffers around the blocks one direction writes, for every rule of the direction. A
+ * direction without rules ("off") has no blocks, so nothing is stored. Returns false for a buffer
+ * that is not a whole number of minutes from 0 to 240.
+ */
+export async function setBlockBuffer(
+  env: Env,
+  user: CurrentUser,
+  fromId: string,
+  toId: string,
+  buffer: BlockBuffer,
+): Promise<boolean> {
+  if (!ruleOptionsSchema.safeParse(buffer).success) return false;
+  const state = await loadEditorState(env, user.id);
+  const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
+  if (!direction) return false;
+  let changed = false;
+  for (const { rule } of direction.slots) {
+    if (!rule) continue;
+    const options = { ...rule.options, ...buffer };
+    if (
+      options.bufferBefore === rule.options.bufferBefore &&
+      options.bufferAfter === rule.options.bufferAfter
+    ) {
+      continue;
+    }
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND user_id = ?")
+      .bind(JSON.stringify(options), rule.id, user.id)
+      .run();
+    await audit(env, user, toId, rule.id, "rule_updated", {
+      bufferBefore: String(options.bufferBefore),
+      bufferAfter: String(options.bufferAfter),
+    });
+    changed = true;
+  }
+  if (changed) await accountSync(env, toId).requestSync();
+  return true;
+}
+
 /** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */
 export async function deleteRuleWithBlocks(
   env: Env,
@@ -833,8 +875,10 @@ export async function setSourceCalendar(
 
 /**
  * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
- * goes too, because the group writes blocks without a colour. A read-only target stays as it is:
- * `can_edit` can be wrong, so a reset must not remove blocks there. "Off" is the explicit way.
+ * and the buffers go back to none too, so that the direction is the plain default again. A group
+ * direction can still get a colour or a buffer later; that does not make it an exception. A
+ * read-only target stays as it is: `can_edit` can be wrong, so a reset must not remove blocks
+ * there. "Off" is the explicit way.
  */
 export async function resetDirection(
   env: Env,
@@ -848,6 +892,7 @@ export async function resetDirection(
   if (!from || !to?.calendar?.canEdit) return;
   await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
   await setBlockColor(env, user, fromId, toId, "");
+  await setBlockBuffer(env, user, fromId, toId, { bufferBefore: 0, bufferAfter: 0 });
 }
 
 /** A rule that a direction lacks, with the choice for the audit log. */

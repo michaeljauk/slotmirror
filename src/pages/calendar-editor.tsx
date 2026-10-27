@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import { ACCOUNT_COLORS } from "../colors";
+import { MAX_BUFFER_MINUTES } from "../config";
 import {
   CHOICES,
   type Choice,
@@ -317,6 +318,52 @@ function BlockColor(props: {
   );
 }
 
+/**
+ * Minutes the blocks of a direction start earlier and end later, for example for travel time.
+ * With the editor script a change joins the page's unsaved changes.
+ */
+function BlockBuffer(props: {
+  source: EditorAccount;
+  target: EditorAccount;
+  direction: EditorDirection;
+}) {
+  const { t } = useI18n();
+  const { direction, source, target } = props;
+  if (!direction.ruleId || direction.effective === "off") return null;
+  const field = (name: "bufferBefore" | "bufferAfter") => (
+    <label class="buffer-field">
+      <input
+        type="number"
+        name={name}
+        min={0}
+        max={MAX_BUFFER_MINUTES}
+        step={1}
+        inputmode="numeric"
+        value={String(direction.options?.[name] ?? 0)}
+      />
+      <span>{t.editor[name]}</span>
+    </label>
+  );
+  return (
+    <form
+      method="post"
+      action="/rules/direction/buffer"
+      class="dest-note block-buffer"
+      data-key={`${source.id}>${target.id}`}
+    >
+      <input type="hidden" name="from" value={source.id} />
+      <input type="hidden" name="to" value={target.id} />
+      <span class="block-color-label">{t.editor.bufferLabel}</span>
+      {field("bufferBefore")}
+      {field("bufferAfter")}
+      <span class="block-color-hint">{t.editor.bufferHint}</span>
+      <button type="submit" class="button small nojs-only">
+        {t.editor.save}
+      </button>
+    </form>
+  );
+}
+
 function DestinationRow(props: {
   state: EditorState;
   source: EditorAccount;
@@ -370,6 +417,7 @@ function DestinationRow(props: {
         ))}
       </div>
       <BlockColor source={source} target={target} direction={direction} />
+      <BlockBuffer source={source} target={target} direction={direction} />
       {fromGroup ? <div class="dest-note faint">{t.editor.fromGroup}</div> : null}
       {isException && canEdit ? (
         <form method="post" action="/rules/direction/reset" class="dest-note faint card-form">

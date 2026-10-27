@@ -1,4 +1,4 @@
-import { parseRuleOptions, type RuleOptions } from "../config";
+import { MAX_BUFFER_MINUTES, parseRuleOptions, type RuleOptions } from "../config";
 
 /** A rule with everything the runner needs, joined from D1. */
 export interface RuleContext {
@@ -153,6 +153,26 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const end = new Date(start.getTime() + options.daysAhead * 24 * 60 * 60 * 1000);
   return { start, end };
+}
+
+/**
+ * The window of the source read of a buffered rule: the sync window with the largest buffer added
+ * on each side. A block that reaches into the sync window then has its event in the read, whatever
+ * the buffers. The window does not depend on the size of the buffers, so that rules with different
+ * buffers share one source read, and a lower buffer never narrows it. A rule without a buffer
+ * reads the sync window, as before buffers existed: it returns no window then, and its blocks
+ * stay exactly the same. The target read is wider still; see `targetReadWindow`.
+ */
+export function readWindow(
+  window: { start: Date; end: Date },
+  options: { bufferBefore: number; bufferAfter: number },
+): { start: Date; end: Date } | undefined {
+  if (options.bufferBefore === 0 && options.bufferAfter === 0) return undefined;
+  const margin = MAX_BUFFER_MINUTES * 60_000;
+  return {
+    start: new Date(window.start.getTime() - margin),
+    end: new Date(window.end.getTime() + margin),
+  };
 }
 
 /**

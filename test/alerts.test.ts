@@ -44,4 +44,24 @@ describe("reconnect alert", () => {
     expect(logged).not.toContain("network down");
     expect(logged).toContain("TypeError");
   });
+
+  it("does not follow a redirect, and fails like any other failed alert", async () => {
+    // workerd rejects with a TypeError when `redirect` is "error" and the answer is a 3xx.
+    // Any other mode follows the redirect to a second URL, which the mock models as success.
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.redirect === "error") throw new TypeError("redirect at http://evil.example/secret");
+      return new Response("ok", { status: 200 });
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await sendReconnectAlert(
+      { ...env, ALERT_WEBHOOK_URL: "https://hooks.example/secret" },
+      "google",
+    );
+    expect(fetch.mock.calls[0]?.[1]?.redirect).toBe("error");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(logged).toContain("Alert webhook failed");
+    expect(logged).toContain("TypeError");
+    expect(logged).not.toContain("secret");
+    expect(logged).not.toContain("evil.example");
+  });
 });

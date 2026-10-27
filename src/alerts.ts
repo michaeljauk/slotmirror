@@ -25,6 +25,9 @@ export async function sendReconnectAlert(env: Env, provider: Provider): Promise<
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
+      // A redirect could send the secret body to another host or to plain http. In workerd,
+      // "error" rejects the fetch with a TypeError, so it takes the same path as any failure.
+      redirect: "error",
       signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
     });
     if (!response.ok) console.error("Alert webhook answered", response.status);

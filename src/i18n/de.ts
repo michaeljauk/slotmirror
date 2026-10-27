@@ -40,7 +40,11 @@ export const de: Messages = {
       count === 1 ? "1 Änderung fehlgeschlagen" : `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
     disconnect: "Trennen",
-    rename: "Name und Farbe",
+    rename: "Einstellungen",
+    workHoursLabel: "Arbeitszeit",
+    workHoursHint:
+      "Im Sync kannst du Kopien in dieses Konto auf diese Zeit beschränken. Ohne Arbeitszeit zählt der ganze Tag.",
+    workHoursNone: "Keine Arbeitszeit",
     colorLabel: "Farbe",
     colorHint: "Kennzeichnet das Konto auf diesen Seiten. Deine Kalender ändert sie nicht.",
     colorAuto: "Automatisch",
@@ -137,7 +141,7 @@ export const de: Messages = {
     manage: "Bearbeiten",
     choices: { off: "Nicht", busy: "Als belegt", title: "Mit Titel", full: "Alles" },
     short: { off: "nicht", busy: "belegt", title: "Titel", full: "alles" },
-    looksLike: "So sieht es dort aus:",
+    looksLike: "Dort:",
     notThere: "taucht dort nicht auf",
     sampleWork: { title: "Angebot Q4 besprechen", detail: "Teams · Agenda, 3 Teilnehmer" },
     samplePrivate: { title: "Zahnarzt", detail: "Praxis Hauptplatz · Kontrolle" },
@@ -181,7 +185,6 @@ export const de: Messages = {
     skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
     skipCategoriesPlaceholder: "Privat, Fokus",
     skipColorsLabel: "Google-Termine mit diesen Farben auslassen",
-    workHoursLabel: "Nur während:",
     weekdays: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
     weekdayNames: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
     workStart: "Von",
@@ -190,8 +193,14 @@ export const de: Messages = {
     workUntilMidnight: "bis Mitternacht",
     workZoneUnknown: (zone: string) =>
       `Dieser Server kennt die Zeitzone ${zone} nicht. Bis du eine andere wählst, gelten die Zeiten in UTC.`,
-    workHoursHint:
-      "Nur Termine, die diese Tage und Zeiten berühren, werden kopiert, mit ihren vollen Zeiten. Ohne Zeiten: der ganze Tag.",
+    onlyWorkHours: (name: string, hours: string) => `Nur in der Arbeitszeit von ${name} (${hours})`,
+    onlyWorkHoursHint:
+      "Nur Termine, die diese Zeiten berühren, werden kopiert, mit ihren vollen Zeiten.",
+    setWorkHours: "Arbeitszeit festlegen",
+    workHoursMissing: (name: string) =>
+      `${name} hat keine Arbeitszeit. Lege sie in den Kontoeinstellungen fest. Es wurde nichts gespeichert.`,
+    everyDay: "jeden Tag",
+    allDay: "ganztags",
     workHoursErrors: {
       days: "Arbeitszeit: Wähle mindestens einen Wochentag. Es wurde nichts gespeichert.",
       time: "Arbeitszeit: Gib Beginn und Ende an, zum Beispiel 08:00 und 18:00, oder lass beide leer. Es wurde nichts gespeichert.",
@@ -201,18 +210,41 @@ export const de: Messages = {
     },
     workHoursDirection:
       "Diese Arbeitszeit gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
-    googleColor: (id: string) => `Google-Farbe ${id}`,
-    blockColorLabel: "Farbe dort:",
+    googleColor: (id: string) =>
+      [
+        "Lavendel",
+        "Salbei",
+        "Weintraube",
+        "Flamingo",
+        "Banane",
+        "Mandarine",
+        "Pfau",
+        "Graphit",
+        "Heidelbeere",
+        "Basilikum",
+        "Tomate",
+      ][Number(id) - 1] ?? `Google-Farbe ${id}`,
+    blockColorLabel: "Farbe der Kopien",
     blockColorNone: "Keine Farbe",
-    blockCategoryLabel: "Kategorie dort:",
-    blockCategoryPlaceholder: "Keine Kategorie",
+    blockCategoryLabel: "Outlook-Kategorie der Kopien",
+    blockCategoryPlaceholder: "Kategorie",
     blockCategoryHint:
       "Outlook zeigt eine Farbe, wenn es eine Kategorie mit diesem Namen gibt. Lege sie zuerst in Outlook an.",
-    bufferLabel: "Puffer dort:",
+    bufferLabel: "Puffer",
+    bufferNone: "Kein Puffer",
+    bufferSummary: (before: number, after: number) =>
+      before === after
+        ? `${before} Min. davor und danach`
+        : [before > 0 ? `${before} Min. davor` : "", after > 0 ? `${after} Min. danach` : ""]
+            .filter(Boolean)
+            .join(", "),
+    bufferMixed: "unterschiedlich",
+    bufferMixedHint:
+      "Die Ziele dieses Kalenders haben verschiedene Puffer. Speichern setzt einen für alle.",
+    change: "ändern",
     bufferBefore: "Min. davor",
     bufferAfter: "Min. danach",
-    bufferHint:
-      "Kopien beginnen um so viele Minuten früher und enden später, zum Beispiel für die Anfahrt. Ganztägige Termine bekommen keinen Puffer.",
+    bufferHint: "Ganztägige Termine bekommen keinen Puffer.",
     blockCategoryComma:
       "Ein Kategoriename darf kein Komma enthalten: Outlook liest das Komma als Beginn einer zweiten Kategorie. Es wurde nichts gespeichert.",
     blockCategoryTooLong: (max: number) =>
@@ -226,7 +258,7 @@ export const de: Messages = {
       `${name} ist nicht mehr verbunden. Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.`,
     reconnect: (name: string) => `${name} neu verbinden`,
     reconnectShort: "Neu verbinden",
-    calendarsFrom: (name: string) => `Kalender aus ${name}:`,
+    calendarsLabel: "Kalender",
     mainCalendar: "Hauptkalender",
     noSource:
       "Kein Kalender gewählt. Schalte mindestens einen ein, dann gehen seine Termine in die Kalender unten.",

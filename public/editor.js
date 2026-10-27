@@ -16,6 +16,19 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+// Account settings: a zone field without a stored zone gets the browser's zone. Without the
+// script it keeps the server's.
+for (const field of document.querySelectorAll("input[name=workTimeZone][data-browser-zone]")) {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (zone) field.value = zone;
+}
+// "Until midnight" stands for 24:00, which a time field cannot hold; it disables the end field.
+document.addEventListener("change", (event) => {
+  if (event.target.name !== "workUntilMidnight") return;
+  const end = event.target.form?.elements.workEnd;
+  if (end) end.disabled = event.target.checked;
+});
+
 (() => {
   document.documentElement.classList.add("js");
   const bar = document.getElementById("page-bar");
@@ -110,65 +123,58 @@ document.addEventListener("click", async (event) => {
     });
   }
 
-  // The working hours of a direction count as one change while they differ from the saved ones.
-  const hoursOf = (form) => {
-    const data = new FormData(form);
-    const asText = (value) => (typeof value === "string" ? value.trim() : "");
-    const text = (name) => asText(data.get(name));
-    const days = data.getAll("workDays").map(asText).join(",");
-    // A time field cannot hold 24:00; "until midnight" stands for it.
-    const end = data.has("workUntilMidnight") ? "24:00" : text("workEnd");
-    return [days, text("workStart"), end, text("workTimeZone")].join("|");
-  };
-  const savedHours = new Map();
-  for (const form of document.querySelectorAll("form.working-hours[data-key]")) {
-    const key = `hours:${form.dataset.key}`;
-    savedHours.set(key, hoursOf(form));
-    const onChange = () => {
-      form.elements.workEnd.disabled = form.elements.workUntilMidnight.checked;
-      const value = hoursOf(form);
-      if (value === savedHours.get(key)) pending.delete(key);
-      else pending.set(key, value);
-      form.classList.toggle("pending", pending.has(key));
-      refreshBar();
-    };
-    form.addEventListener("change", onChange);
-    form.addEventListener("input", onChange);
-    // Enter in a time field saves every change of the page, as the bar does.
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      onChange();
-      if (pending.size > 0) void save();
-    });
-  }
+  /** A form value as trimmed text; a missing field is empty. */
+  const asText = (value) => (typeof value === "string" ? value.trim() : "");
 
-  // The block colour of a direction counts as one change while it differs from the saved one.
-  const blockColorOf = (form) => new FormData(form).get("blockColor") ?? "";
-  const savedBlockColors = new Map();
-  for (const form of document.querySelectorAll("form.block-color[data-key]")) {
-    const key = `blockColor:${form.dataset.key}`;
-    savedBlockColors.set(key, blockColorOf(form));
-    // Fill the examples of the direction with the chosen Google colour, or clear the fill.
-    const showFill = () => {
-      const dot = form.querySelector("input[name=blockColor]:checked + .color-dot");
-      const fill = dot?.dataset.fill;
-      for (const example of form.closest(".dest").querySelectorAll("[data-example] .ev")) {
+  // The details of a direction, its colour and its working-hours checkbox, count as one change
+  // while they differ from the saved ones. Their fields sit in the row and name the form.
+  const detailsOf = (form) => {
+    const data = new FormData(form);
+    return {
+      blockColor: asText(data.get("blockColor")),
+      workHours: data.has("workHoursShown") ? (data.has("workHours") ? "1" : "0") : null,
+    };
+  };
+  const savedDetails = new Map();
+  for (const form of document.querySelectorAll("form.dest-details[data-key]")) {
+    const key = `details:${form.dataset.key}`;
+    const row = form.closest(".dest");
+    savedDetails.set(key, detailsOf(form));
+    // Show the chosen Google colour on the swatch and in the examples of the direction.
+    const showColor = () => {
+      const input = [...form.elements].find((el) => el.name === "blockColor" && el.checked);
+      if (!input) return;
+      const fill = input.nextElementSibling?.dataset.fill;
+      const swatch = row.querySelector(".swatch");
+      const dot = swatch?.querySelector(".swatch-dot");
+      if (dot) {
+        dot.classList.toggle("none", !fill);
+        dot.style.background = fill ?? "";
+        swatch.querySelector(".swatch-name").textContent = input.dataset.name;
+      }
+      for (const example of row.querySelectorAll("[data-example] .ev")) {
         if (example.classList.contains("none")) continue;
         example.classList.toggle("filled", Boolean(fill));
         if (fill) example.style.setProperty("--fill", fill);
         else example.style.removeProperty("--fill");
       }
     };
-    const onChange = () => {
-      showFill();
-      const value = blockColorOf(form);
-      if (value.trim() === savedBlockColors.get(key).trim()) pending.delete(key);
-      else pending.set(key, value);
-      form.classList.toggle("pending", pending.has(key));
+    const onChange = (event) => {
+      if (event && event.target !== row && event.target.form !== form) return;
+      showColor();
+      if (event?.target.name === "blockColor" && event.type === "change") {
+        row.querySelector(".swatch")?.removeAttribute("open");
+      }
+      const value = detailsOf(form);
+      const saved = savedDetails.get(key);
+      if (value.blockColor === saved.blockColor && value.workHours === saved.workHours) {
+        pending.delete(key);
+      } else pending.set(key, value);
+      row.classList.toggle("pending", pending.has(key));
       refreshBar();
     };
-    form.addEventListener("change", onChange);
-    form.addEventListener("input", onChange);
+    row.addEventListener("change", onChange);
+    row.addEventListener("input", onChange);
     // Enter in the category field saves every change of the page, as the bar does.
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -176,16 +182,22 @@ document.addEventListener("click", async (event) => {
       if (pending.size > 0) void save();
     });
   }
+  // A click outside an open palette closes it.
+  document.addEventListener("click", (event) => {
+    for (const swatch of document.querySelectorAll("details.swatch[open]")) {
+      if (!swatch.contains(event.target)) swatch.removeAttribute("open");
+    }
+  });
 
-  // The buffers of a direction count as one change while they differ from the saved ones.
+  // The buffer of a source counts as one change while it differs from the saved one.
   const bufferOf = (form) => {
     const data = new FormData(form);
-    const minutes = (name) => String(Number(data.get(name) || 0));
+    const minutes = (name) => asText(data.get(name));
     return `${minutes("bufferBefore")},${minutes("bufferAfter")}`;
   };
   const savedBuffers = new Map();
-  for (const form of document.querySelectorAll("form.block-buffer[data-key]")) {
-    const key = `buffer:${form.dataset.key}`;
+  for (const form of document.querySelectorAll("form.source-buffer[data-source]")) {
+    const key = `buffer:${form.dataset.source}`;
     savedBuffers.set(key, bufferOf(form));
     const onChange = () => {
       const value = bufferOf(form);
@@ -226,25 +238,19 @@ document.addEventListener("click", async (event) => {
     const keys = [...pending.keys()];
     pending.clear();
     for (const key of keys) {
-      if (key.startsWith("hours:")) {
-        const form = document.querySelector(`form.working-hours[data-key="${key.slice(6)}"]`);
+      if (key.startsWith("details:")) {
+        const form = document.querySelector(`form.dest-details[data-key="${key.slice(8)}"]`);
         form?.reset();
-        form?.classList.remove("pending");
-        // Reset fires no change event; this one restores the end field's state.
-        form?.dispatchEvent(new Event("change"));
+        form?.closest(".dest")?.classList.remove("pending");
+        // Reset fires no change event; this one restores the swatch and the example fill.
+        form?.closest(".dest")?.dispatchEvent(new Event("change"));
       } else if (key.startsWith("calendar:")) {
         const chip = document.querySelector(`.cal-chip[data-calendar="${key.slice(9)}"]`);
         chip?.classList.toggle("out", !savedSources.get(key.slice(9)));
         chip?.setAttribute("aria-pressed", String(savedSources.get(key.slice(9))));
         chip?.classList.remove("pending");
-      } else if (key.startsWith("blockColor:")) {
-        const form = document.querySelector(`form.block-color[data-key="${key.slice(11)}"]`);
-        form?.reset();
-        form?.classList.remove("pending");
-        // Reset fires no change event; this one restores the example fill.
-        form?.dispatchEvent(new Event("change"));
       } else if (key.startsWith("buffer:")) {
-        const form = document.querySelector(`form.block-buffer[data-key="${key.slice(7)}"]`);
+        const form = document.querySelector(`form.source-buffer[data-source="${key.slice(7)}"]`);
         form?.reset();
         form?.classList.remove("pending");
       } else if (key !== "settings") show(key, original.get(key));
@@ -258,42 +264,40 @@ document.addEventListener("click", async (event) => {
   /** Save every change of the page in one request. The server applies all of it or nothing. */
   async function save() {
     if (bar.classList.contains("saving")) return;
-    // A buffer outside its limits, or text in a number field, stops the save with the browser's
-    // own message; the server would refuse the whole save.
-    const invalid = [...document.querySelectorAll("form.block-buffer input")].find(
-      (input) => !input.checkValidity(),
-    );
+    // A changed buffer outside its limits, or text in a number field, stops the save with the
+    // browser's own message; the server would refuse the whole save.
+    const invalid = [...document.querySelectorAll("form.source-buffer")]
+      .filter((form) => pending.has(`buffer:${form.dataset.source}`))
+      .flatMap((form) => [...form.querySelectorAll("input[type=number]")])
+      .find((input) => !input.checkValidity());
     if (invalid) {
-      invalid.closest("details")?.setAttribute("open", "");
+      invalid.closest("details.source")?.setAttribute("open", "");
+      invalid.closest("details.buffer-edit")?.setAttribute("open", "");
       invalid.reportValidity();
       return;
     }
     const body = new URLSearchParams();
     for (const [key, choice] of pending) {
       if (key === "settings") continue;
-      if (key.startsWith("hours:")) {
-        const [from, to] = key.slice(6).split(">");
-        const [days, start, end, zone] = choice.split("|");
-        body.append(`workDays.${from}.${to}`, days);
-        body.append(`workStart.${from}.${to}`, start);
-        body.append(`workEnd.${from}.${to}`, end);
-        body.append(`workTimeZone.${from}.${to}`, zone);
-        continue;
-      }
       if (key.startsWith("calendar:")) {
         body.append(`calendar.${key.slice(9)}`, choice);
         continue;
       }
-      if (key.startsWith("blockColor:")) {
-        const [from, to] = key.slice(11).split(">");
-        body.append(`blockColor.${from}.${to}`, choice);
+      if (key.startsWith("details:")) {
+        const [from, to] = key.slice(8).split(">");
+        const saved = savedDetails.get(key);
+        if (choice.blockColor !== saved.blockColor) {
+          body.append(`blockColor.${from}.${to}`, choice.blockColor);
+        }
+        if (choice.workHours !== saved.workHours && choice.workHours !== null) {
+          body.append(`workHours.${from}.${to}`, choice.workHours);
+        }
         continue;
       }
       if (key.startsWith("buffer:")) {
-        const [from, to] = key.slice(7).split(">");
         const [before, after] = choice.split(",");
-        body.append(`bufferBefore.${from}.${to}`, before);
-        body.append(`bufferAfter.${from}.${to}`, after);
+        body.append(`bufferBefore.${key.slice(7)}`, before);
+        body.append(`bufferAfter.${key.slice(7)}`, after);
         continue;
       }
       const [from, to] = key.split(">");
@@ -321,7 +325,7 @@ document.addEventListener("click", async (event) => {
       const open = [
         ...new Set(
           [...pending.keys()]
-            .filter((key) => key.includes(">"))
+            .filter((key) => key !== "settings" && !key.startsWith("calendar:"))
             .map((key) => key.replace(/^\w+:/, "").split(">")[0]),
         ),
       ];

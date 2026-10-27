@@ -2,15 +2,17 @@ import type { Child } from "hono/jsx";
 import { ACCOUNT_COLORS } from "../colors";
 import { MAX_BUFFER_MINUTES } from "../config";
 import {
+  type AccountWorkHours,
   CHOICES,
   type Choice,
   type EditorAccount,
   type EditorDirection,
   type EditorState,
   MAX_CATEGORY_LENGTH,
+  sourceBuffer,
 } from "../editor";
-import { useI18n } from "../i18n";
-import { ALL_WEEKDAYS, isTimeZone } from "../sync/working-hours";
+import { useI18n, type Messages } from "../i18n";
+import { ALL_WEEKDAYS, hasWorkingHours } from "../sync/working-hours";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { Layout } from "./layout";
@@ -257,196 +259,135 @@ function GroupCard(props: { state: EditorState }) {
 }
 
 /**
- * Working hours of a direction: weekdays, a time range and its time zone. Only events that touch
- * them are copied. With the editor script a change joins the page's unsaved changes.
+ * Working hours in a few words: "Mo–Fr 08:00–18:00". Weekdays in a row join with a dash, other
+ * days are listed. Without times the days stand alone; without a weekday filter, "every day".
  */
-function WorkingHours(props: {
-  source: EditorAccount;
-  target: EditorAccount;
-  direction: EditorDirection;
-}) {
-  const { t, timeZone } = useI18n();
-  const { direction, source, target } = props;
-  if (!direction.ruleId || direction.effective === "off") return null;
-  const days = new Set(direction.options?.workDays ?? ALL_WEEKDAYS);
-  const untilMidnight = direction.options?.workEnd === "24:00";
-  const storedZone = direction.options?.workTimeZone ?? "";
+export function workHoursText(t: Messages, hours: AccountWorkHours): string {
+  const days = [...hours.workDays].sort((a, b) => a - b);
+  const runs: number[][] = [];
+  for (const day of days) {
+    const run = runs.at(-1);
+    if (run && run.at(-1) === day - 1) run.push(day);
+    else runs.push([day]);
+  }
+  const name = (day: number) => t.editor.weekdays[day - 1] ?? "";
+  const dayText =
+    days.length === ALL_WEEKDAYS.length
+      ? t.editor.everyDay
+      : runs
+          .map((run) =>
+            run.length > 2
+              ? `${name(run[0] ?? 1)}–${name(run.at(-1) ?? 1)}`
+              : run.map(name).join(", "),
+          )
+          .join(", ");
+  const timeText = hours.workStart ? `${hours.workStart}–${hours.workEnd}` : t.editor.allDay;
+  return `${dayText} ${timeText}`;
+}
+
+/** The ID of the form that holds the colour and working hours of a direction. */
+function detailsFormId(source: EditorAccount, target: EditorAccount): string {
+  return `details-${source.id}-${target.id}`;
+}
+
+/**
+ * The colour of the blocks in the target. Google: one swatch that opens the palette, without a
+ * script too. Outlook: a category name. The fields belong to the direction's details form.
+ */
+function BlockColor(props: { source: EditorAccount; target: EditorAccount; value: string }) {
+  const { t } = useI18n();
+  const { source, target, value } = props;
+  const form = detailsFormId(source, target);
+  if (target.provider !== "google") {
+    return (
+      <input
+        type="text"
+        class="category-field"
+        name="blockColor"
+        form={form}
+        maxlength={MAX_CATEGORY_LENGTH}
+        value={value}
+        placeholder={t.editor.blockCategoryPlaceholder}
+        aria-label={t.editor.blockCategoryLabel}
+        title={t.editor.blockCategoryHint}
+      />
+    );
+  }
+  const chosen = GOOGLE_COLORS.find((color) => color.id === value);
   return (
-    <form
-      method="post"
-      action="/rules/direction/hours"
-      class="dest-note working-hours"
-      data-key={`${source.id}>${target.id}`}
-    >
-      <input type="hidden" name="from" value={source.id} />
-      <input type="hidden" name="to" value={target.id} />
-      <span class="block-color-label">{t.editor.workHoursLabel}</span>
-      <span class="weekday-row" role="group" aria-label={t.editor.workHoursLabel}>
-        {ALL_WEEKDAYS.map((day) => (
-          <label class="weekday" title={t.editor.weekdayNames[day - 1]}>
+    <details class="swatch">
+      <summary class="swatch-button" title={t.editor.blockColorLabel}>
+        <span
+          class={chosen ? "swatch-dot" : "swatch-dot none"}
+          style={chosen ? `background:${chosen.hex}` : undefined}
+        />
+        <span class="swatch-name">
+          {chosen ? t.editor.googleColor(chosen.id) : t.editor.blockColorNone}
+        </span>
+      </summary>
+      <span class="palette color-row pick" role="radiogroup" aria-label={t.editor.blockColorLabel}>
+        <label class="color-choice" title={t.editor.blockColorNone}>
+          <input
+            type="radio"
+            name="blockColor"
+            form={form}
+            value=""
+            checked={value === ""}
+            aria-label={t.editor.blockColorNone}
+            data-name={t.editor.blockColorNone}
+          />
+          <span class="color-dot none" />
+        </label>
+        {GOOGLE_COLORS.map((color) => (
+          <label class="color-choice" title={t.editor.googleColor(color.id)}>
             <input
-              type="checkbox"
-              name="workDays"
-              value={String(day)}
-              checked={days.has(day)}
-              aria-label={t.editor.weekdayNames[day - 1]}
+              type="radio"
+              name="blockColor"
+              form={form}
+              value={color.id}
+              checked={value === color.id}
+              aria-label={t.editor.googleColor(color.id)}
+              data-name={t.editor.googleColor(color.id)}
             />
-            <span>{t.editor.weekdays[day - 1]}</span>
+            <span class="color-dot" style={`background:${color.hex}`} data-fill={color.hex} />
           </label>
         ))}
       </span>
-      <span class="work-time">
-        <input
-          type="time"
-          name="workStart"
-          value={direction.options?.workStart ?? ""}
-          aria-label={t.editor.workStart}
-          title={t.editor.workStart}
-        />
-        {"–"}
-        {/* A time field cannot hold 24:00; "until midnight" stands for it and disables the field. */}
-        <input
-          type="time"
-          name="workEnd"
-          value={untilMidnight ? "" : (direction.options?.workEnd ?? "")}
-          disabled={untilMidnight}
-          aria-label={t.editor.workEnd}
-          title={t.editor.workEnd}
-        />
-        <label class="work-midnight">
-          <input type="checkbox" name="workUntilMidnight" value="1" checked={untilMidnight} />
-          {t.editor.workUntilMidnight}
-        </label>
-      </span>
-      <input
-        type="text"
-        name="workTimeZone"
-        class="work-zone"
-        maxlength={64}
-        value={storedZone || timeZone}
-        aria-label={t.editor.workTimeZone}
-        title={t.editor.workTimeZone}
-        autocomplete="off"
-      />
-      {storedZone !== "" && !isTimeZone(storedZone) ? (
-        <span class="block-color-hint work-zone-unknown">
-          {t.editor.workZoneUnknown(storedZone)}
-        </span>
-      ) : null}
-      <span class="block-color-hint">{t.editor.workHoursHint}</span>
-      <button type="submit" class="button small nojs-only">
-        {t.editor.save}
-      </button>
-    </form>
+    </details>
   );
 }
 
 /**
- * The colour of the blocks in the target: a Google event colour, or an Outlook category. With the
- * editor script a change joins the page's unsaved changes.
+ * The working hours of a direction: a checkbox that limits the copies to the working hours of
+ * the target account, or a link to set them if the account has none.
  */
-function BlockColor(props: {
+function WorkHoursToggle(props: {
   source: EditorAccount;
   target: EditorAccount;
   direction: EditorDirection;
 }) {
   const { t } = useI18n();
-  const { direction, source, target } = props;
-  if (!direction.ruleId || direction.effective === "off") return null;
-  const value = direction.options?.blockColor ?? "";
+  const { source, target, direction } = props;
+  const on = direction.options !== null && hasWorkingHours(direction.options);
+  // Rules can keep hours from before the account had any; the label then shows the rule's own.
+  const hours = target.workHours ?? (on && direction.options ? direction.options : null);
+  if (!hours) {
+    return (
+      <a
+        class="quiet-link"
+        href={`/?settings=${encodeURIComponent(target.id)}#account-${target.id}`}
+      >
+        {t.editor.setWorkHours}
+      </a>
+    );
+  }
+  const form = detailsFormId(source, target);
   return (
-    <form
-      method="post"
-      action="/rules/direction/color"
-      class="dest-note block-color"
-      data-key={`${source.id}>${target.id}`}
-    >
-      <input type="hidden" name="from" value={source.id} />
-      <input type="hidden" name="to" value={target.id} />
-      {target.provider === "google" ? (
-        <>
-          <span class="block-color-label">{t.editor.blockColorLabel}</span>
-          <span class="color-row pick" role="radiogroup" aria-label={t.editor.blockColorLabel}>
-            <label class="color-choice" title={t.editor.blockColorNone}>
-              <input type="radio" name="blockColor" value="" checked={value === ""} />
-              <span class="color-dot none" />
-            </label>
-            {GOOGLE_COLORS.map((color) => (
-              <label class="color-choice" title={t.editor.googleColor(color.id)}>
-                <input
-                  type="radio"
-                  name="blockColor"
-                  value={color.id}
-                  checked={value === color.id}
-                />
-                <span class="color-dot" style={`background:${color.hex}`} data-fill={color.hex} />
-              </label>
-            ))}
-          </span>
-        </>
-      ) : (
-        <label class="block-category">
-          <span class="block-color-label">{t.editor.blockCategoryLabel}</span>
-          <input
-            type="text"
-            name="blockColor"
-            maxlength={MAX_CATEGORY_LENGTH}
-            value={value}
-            placeholder={t.editor.blockCategoryPlaceholder}
-          />
-          <span class="block-color-hint">{t.editor.blockCategoryHint}</span>
-        </label>
-      )}
-      <button type="submit" class="button small nojs-only">
-        {t.editor.save}
-      </button>
-    </form>
-  );
-}
-
-/**
- * Minutes the blocks of a direction start earlier and end later, for example for travel time.
- * With the editor script a change joins the page's unsaved changes.
- */
-function BlockBuffer(props: {
-  source: EditorAccount;
-  target: EditorAccount;
-  direction: EditorDirection;
-}) {
-  const { t } = useI18n();
-  const { direction, source, target } = props;
-  if (!direction.ruleId || direction.effective === "off") return null;
-  const field = (name: "bufferBefore" | "bufferAfter") => (
-    <label class="buffer-field">
-      <input
-        type="number"
-        name={name}
-        min={0}
-        max={MAX_BUFFER_MINUTES}
-        step={1}
-        inputmode="numeric"
-        value={String(direction.options?.[name] ?? 0)}
-      />
-      <span>{t.editor[name]}</span>
+    <label class="hours-check" title={t.editor.onlyWorkHoursHint}>
+      <input type="hidden" name="workHoursShown" value="1" form={form} />
+      <input type="checkbox" name="workHours" value="1" form={form} checked={on} />
+      {t.editor.onlyWorkHours(target.name, workHoursText(t, hours))}
     </label>
-  );
-  return (
-    <form
-      method="post"
-      action="/rules/direction/buffer"
-      class="dest-note block-buffer"
-      data-key={`${source.id}>${target.id}`}
-    >
-      <input type="hidden" name="from" value={source.id} />
-      <input type="hidden" name="to" value={target.id} />
-      <span class="block-color-label">{t.editor.bufferLabel}</span>
-      {field("bufferBefore")}
-      {field("bufferAfter")}
-      <span class="block-color-hint">{t.editor.bufferHint}</span>
-      <button type="submit" class="button small nojs-only">
-        {t.editor.save}
-      </button>
-    </form>
   );
 }
 
@@ -462,11 +403,20 @@ function DestinationRow(props: {
   const fromGroup = direction.origin === "group";
   const isException = inGroup && direction.origin === "custom";
   const canEdit = target.calendar?.canEdit === true;
+  const active = direction.ruleId !== null && direction.effective !== "off";
+  const key = `${source.id}>${target.id}`;
   return (
-    <div class="dest">
+    <div class="dest" data-key={key}>
       <div class="dest-name">
-        <span class="dest-to">{t.editor.to}</span>
+        <span class="dest-to" aria-label={t.editor.to}>
+          →
+        </span>
         <AccountName account={target} />
+        {fromGroup ? (
+          <span class="dest-tag" title={t.editor.fromGroup}>
+            {t.editor.cellGroup}
+          </span>
+        ) : null}
       </div>
       <form method="post" action="/rules/direction" class="choices" data-to={target.id}>
         <input type="hidden" name="from" value={source.id} />
@@ -487,60 +437,143 @@ function DestinationRow(props: {
           </button>
         ))}
       </form>
-      <div class="dest-note">
-        {`${t.editor.looksLike} `}
-        {/* Every choice is rendered, so that the editor script can switch without a request. */}
-        {CHOICES.map((choice) => (
-          <span data-example={choice} hidden={choice !== direction.effective}>
-            <Example
-              source={source}
-              target={target}
-              direction={direction}
-              choice={choice}
-              settingsTitle={props.state.settings.blockTitle}
-            />
-          </span>
-        ))}
+      <div class="dest-color">
+        {active ? (
+          <BlockColor source={source} target={target} value={direction.options?.blockColor ?? ""} />
+        ) : null}
       </div>
-      <WorkingHours source={source} target={target} direction={direction} />
-      <BlockColor source={source} target={target} direction={direction} />
-      <BlockBuffer source={source} target={target} direction={direction} />
-      {fromGroup ? <div class="dest-note faint">{t.editor.fromGroup}</div> : null}
-      {isException && canEdit ? (
-        <form method="post" action="/rules/direction/reset" class="dest-note faint card-form">
-          <input type="hidden" name="from" value={source.id} />
-          <input type="hidden" name="to" value={target.id} />
-          {`${t.editor.exception} · `}
-          <button type="submit" class="link-button">
-            {t.editor.reset}
-          </button>
-        </form>
-      ) : null}
-      {direction.ruleId && direction.effective !== "off" ? (
-        <form
-          method="post"
-          action="/rules/direction/check"
-          class="dest-note faint preview-form"
-          data-loading={t.editor.checking}
-          data-failed={t.editor.checkFailed}
-        >
-          <input type="hidden" name="from" value={source.id} />
-          <input type="hidden" name="to" value={target.id} />
-          <button type="submit" class="link-button">
-            {t.editor.checkReal}
-          </button>
-          <span class="preview-result" role="status" />
-        </form>
-      ) : null}
-      {canEdit ? null : (
-        <div class="cap-note">
-          {direction.effective === "off" ? t.editor.readOnly : t.editor.readOnlyTurnOff}
+      <div class="dest-extra">
+        <div class="dest-line">
+          <span class="dest-preview">
+            {`${t.editor.looksLike} `}
+            {/* Every choice is rendered, so that the editor script can switch without a request. */}
+            {CHOICES.map((choice) => (
+              <span data-example={choice} hidden={choice !== direction.effective}>
+                <Example
+                  source={source}
+                  target={target}
+                  direction={direction}
+                  choice={choice}
+                  settingsTitle={props.state.settings.blockTitle}
+                />
+              </span>
+            ))}
+          </span>
+          {active ? (
+            <form
+              method="post"
+              action="/rules/direction/check"
+              class="preview-form"
+              data-loading={t.editor.checking}
+              data-failed={t.editor.checkFailed}
+            >
+              <input type="hidden" name="from" value={source.id} />
+              <input type="hidden" name="to" value={target.id} />
+              <button type="submit" class="link-button">
+                {t.editor.checkReal}
+              </button>
+              <span class="preview-result" role="status" />
+            </form>
+          ) : null}
         </div>
-      )}
-      {direction.maxChoice !== "full" ? (
-        <div class="cap-note">{t.editor.capNote(t.editor.choices[direction.maxChoice])}</div>
-      ) : null}
+        {active ? (
+          <div class="dest-line">
+            <WorkHoursToggle source={source} target={target} direction={direction} />
+          </div>
+        ) : null}
+        {isException && canEdit ? (
+          <form method="post" action="/rules/direction/reset" class="dest-line faint">
+            <input type="hidden" name="from" value={source.id} />
+            <input type="hidden" name="to" value={target.id} />
+            {`${t.editor.exception} · `}
+            <button type="submit" class="link-button">
+              {t.editor.reset}
+            </button>
+          </form>
+        ) : null}
+        {canEdit ? null : (
+          <div class="cap-note">
+            {direction.effective === "off" ? t.editor.readOnly : t.editor.readOnlyTurnOff}
+          </div>
+        )}
+        {direction.maxChoice !== "full" ? (
+          <div class="cap-note">{t.editor.capNote(t.editor.choices[direction.maxChoice])}</div>
+        ) : null}
+        {active ? (
+          /* Colour and working hours of the direction; their fields sit in the row above. */
+          <form
+            method="post"
+            action="/rules/direction/details"
+            class="dest-details"
+            id={detailsFormId(source, target)}
+            data-key={key}
+          >
+            <input type="hidden" name="from" value={source.id} />
+            <input type="hidden" name="to" value={target.id} />
+            <button type="submit" class="button small nojs-only">
+              {t.editor.save}
+            </button>
+          </form>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+/**
+ * The buffer of a source: one value for every rule from it, collapsed into a summary line. With
+ * the editor script a change joins the page's unsaved changes.
+ */
+function SourceBuffer(props: { state: EditorState; source: EditorAccount }) {
+  const { t } = useI18n();
+  const { state, source } = props;
+  const buffer = sourceBuffer(state, source.id);
+  if (buffer === null) return null;
+  const mixed = buffer === "mixed";
+  const summary = mixed
+    ? t.editor.bufferMixed
+    : buffer.bufferBefore === 0 && buffer.bufferAfter === 0
+      ? t.editor.bufferNone
+      : t.editor.bufferSummary(buffer.bufferBefore, buffer.bufferAfter);
+  const field = (name: "bufferBefore" | "bufferAfter") => (
+    <label class="buffer-field">
+      <input
+        type="number"
+        name={name}
+        min={0}
+        max={MAX_BUFFER_MINUTES}
+        step={1}
+        inputmode="numeric"
+        required={mixed}
+        value={mixed ? "" : String(buffer[name])}
+      />
+      <span>{t.editor[name]}</span>
+    </label>
+  );
+  return (
+    <form
+      method="post"
+      action="/rules/source/buffer"
+      class="src-row source-buffer"
+      data-source={source.id}
+    >
+      <input type="hidden" name="from" value={source.id} />
+      <span class="src-key">{t.editor.bufferLabel}</span>
+      <details class="buffer-edit">
+        <summary>
+          <span class="buffer-summary">{summary}</span>
+          <span class="edit-link">{t.editor.change}</span>
+        </summary>
+        <div class="buffer-fields">
+          {field("bufferBefore")}
+          {field("bufferAfter")}
+        </div>
+        <p class="src-hint">{mixed ? t.editor.bufferMixedHint : t.editor.bufferHint}</p>
+        <button type="submit" class="button small nojs-only">
+          {t.editor.save}
+        </button>
+      </details>
+    </form>
   );
 }
 
@@ -566,8 +599,8 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
         </span>
         <span class="chevron">›</span>
       </summary>
-      <div class="source-cals">
-        <span class="dest-to">{t.editor.calendarsFrom(source.name)}</span>
+      <div class="src-row">
+        <span class="src-key">{t.editor.calendarsLabel}</span>
         <span class="cal-chips">
           {source.calendars.map((calendar) => (
             <form method="post" action={`/rules/source-calendar/${calendar.id}`}>
@@ -584,8 +617,9 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
           ))}
         </span>
       </div>
+      <SourceBuffer state={state} source={source} />
       {targets.length > 0 && !source.calendars.some((calendar) => calendar.isSource) ? (
-        <div class="dest-note faint none-chosen">{t.editor.noSource}</div>
+        <div class="src-row faint none-chosen">{t.editor.noSource}</div>
       ) : null}
       {targets.map((target) => {
         const direction = directionOf(state, source.id, target.id);

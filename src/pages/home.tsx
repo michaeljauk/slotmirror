@@ -4,9 +4,16 @@ import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
-import { MAX_NAME_LENGTH, type EditorState } from "../editor";
+import { MAX_NAME_LENGTH, type EditorAccount, type EditorState } from "../editor";
 import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
-import { colorStyle, ReconnectNotice, SourcePills } from "./calendar-editor";
+import { ALL_WEEKDAYS, isTimeZone } from "../sync/working-hours";
+import {
+  colorStyle,
+  ReconnectNotice,
+  SourcePills,
+  workHoursText,
+  type Notice,
+} from "./calendar-editor";
 import type { CalendarRow } from "../calendars";
 import type { FeedSummary } from "../feeds";
 import { FeedSection } from "./feeds";
@@ -60,6 +67,85 @@ export function SignInPage(props: { providers: Record<Provider, boolean> }) {
   );
 }
 
+/**
+ * The working hours of an account: weekdays, a time range and its time zone. Without a stored
+ * zone the field shows the deployment's zone; the page script puts in the browser's.
+ */
+function AccountHours(props: { account: EditorAccount }) {
+  const { t, timeZone } = useI18n();
+  const hours = props.account.workHours;
+  // Without hours no day is ticked, so that saving the name does not set hours by accident.
+  const days = new Set<number>(hours?.workDays ?? []);
+  const untilMidnight = hours?.workEnd === "24:00";
+  const storedZone = hours?.workTimeZone ?? "";
+  return (
+    <fieldset class="account-hours">
+      <legend>{t.accounts.workHoursLabel}</legend>
+      <input type="hidden" name="workHoursShown" value="1" />
+      <span class="weekday-row" role="group" aria-label={t.accounts.workHoursLabel}>
+        {ALL_WEEKDAYS.map((day) => (
+          <label class="weekday" title={t.editor.weekdayNames[day - 1]}>
+            <input
+              type="checkbox"
+              name="workDays"
+              value={String(day)}
+              checked={days.has(day)}
+              aria-label={t.editor.weekdayNames[day - 1]}
+            />
+            <span>{t.editor.weekdays[day - 1]}</span>
+          </label>
+        ))}
+      </span>
+      <span class="work-time">
+        <input
+          type="time"
+          name="workStart"
+          value={hours?.workStart ?? ""}
+          aria-label={t.editor.workStart}
+          title={t.editor.workStart}
+        />
+        {"–"}
+        {/* A time field cannot hold 24:00; "until midnight" stands for it and disables the field. */}
+        <input
+          type="time"
+          name="workEnd"
+          value={untilMidnight ? "" : (hours?.workEnd ?? "")}
+          disabled={untilMidnight}
+          aria-label={t.editor.workEnd}
+          title={t.editor.workEnd}
+        />
+        <label class="work-midnight">
+          <input type="checkbox" name="workUntilMidnight" value="1" checked={untilMidnight} />
+          {t.editor.workUntilMidnight}
+        </label>
+      </span>
+      <input
+        type="text"
+        name="workTimeZone"
+        class="work-zone"
+        maxlength={64}
+        value={storedZone || timeZone}
+        data-browser-zone={storedZone ? undefined : "1"}
+        aria-label={t.editor.workTimeZone}
+        title={t.editor.workTimeZone}
+        autocomplete="off"
+      />
+      {storedZone !== "" && !isTimeZone(storedZone) ? (
+        <p class="fineprint work-zone-unknown">{t.editor.workZoneUnknown(storedZone)}</p>
+      ) : null}
+      <p class="fineprint">
+        {hours ? `${workHoursText(t, hours)} · ` : ""}
+        {t.accounts.workHoursHint}
+      </p>
+      {hours ? (
+        <button type="submit" name="workHours" value="none" class="link-button quiet">
+          {t.accounts.workHoursNone}
+        </button>
+      ) : null}
+    </fieldset>
+  );
+}
+
 export function HomePage(props: {
   user: CurrentUser;
   accounts: AccountRow[];
@@ -70,6 +156,9 @@ export function HomePage(props: {
   feeds: FeedSummary[];
   /** Calendars the user can put into a feed: those of their own accounts. */
   calendars: CalendarRow[];
+  notice?: Notice;
+  /** The account whose settings start open. */
+  openSettings?: string;
 }) {
   const { t, formatDate, formatTimestamp, formatRelative } = useI18n();
 
@@ -125,6 +214,7 @@ export function HomePage(props: {
           </div>
         </div>
 
+        {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
         <ReconnectNotice accounts={props.editor.accounts} />
 
         <div class="card">
@@ -138,7 +228,7 @@ export function HomePage(props: {
               {props.accounts.map((account) => {
                 const editor = props.editor.accounts.find((a) => a.id === account.id);
                 return (
-                  <li>
+                  <li id={`account-${account.id}`}>
                     <span
                       class="provider-icon tinted"
                       style={editor ? colorStyle(editor) : undefined}
@@ -164,11 +254,11 @@ export function HomePage(props: {
                     ) : (
                       syncStatus(props.statuses.get(account.id))
                     )}
-                    <details class="rename">
+                    <details class="rename" open={props.openSettings === account.id}>
                       <summary class="link-button quiet">{t.accounts.rename}</summary>
                       <form
                         method="post"
-                        action={`/accounts/${account.id}/name`}
+                        action={`/accounts/${account.id}/settings`}
                         class="rename-form"
                       >
                         <label>
@@ -212,6 +302,7 @@ export function HomePage(props: {
                           </span>
                           <p class="fineprint">{t.accounts.colorHint}</p>
                         </fieldset>
+                        {editor ? <AccountHours account={editor} /> : null}
                         <button type="submit" class="button small">
                           {t.accounts.save}
                         </button>

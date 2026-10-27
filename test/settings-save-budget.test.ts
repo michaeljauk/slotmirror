@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setSettings } from "../src/editor";
+import { loadEditorState, setAccountWorkHours, setRuleDetails, setSettings } from "../src/editor";
 import { signIn } from "./helpers";
 
 /** "Today" lies far in the future, so that no alarm fires while a test runs. */
@@ -216,6 +216,81 @@ describe("saving settings with many rules", () => {
       options: string;
     }>();
     expect(JSON.parse(rule?.options ?? "{}")).toEqual({ daysAhead: 365 });
+  });
+});
+
+describe("saving rule details with many rules", () => {
+  it("writes the buffer, colour and working hours of 60 rules in one batch", async () => {
+    // 30 source calendars on one account, two target accounts: 60 rules in two directions.
+    const sources = Array.from({ length: 30 }, (_, i) => `det-src-${i}`);
+    const user = await setup(
+      "det",
+      [
+        ...sources.map((id): [string, string, number] => [id, "det-s", 1]),
+        ["det-t1", "det-a1", 1],
+        ["det-t2", "det-a2", 1],
+      ],
+      sources.flatMap((source) =>
+        ["det-t1", "det-t2"].map((target) => ({
+          id: `det-${source}-${target}`,
+          source,
+          target,
+          daysAhead: 90,
+        })),
+      ),
+    );
+    await env.DB.batch([
+      env.DB.prepare("UPDATE calendars SET is_source = 1 WHERE account_id = 'det-s'"),
+      env.DB.prepare(
+        "UPDATE calendars SET is_default = 1 WHERE account_id IN ('det-a1', 'det-a2')",
+      ),
+    ]);
+    const office = {
+      workDays: [1, 2, 3, 4, 5],
+      workStart: "08:00",
+      workEnd: "18:00",
+      workTimeZone: "Europe/Vienna",
+    };
+    await setAccountWorkHours(env, user, "det-a1", office);
+    // The first load stores the account colours; count the saves only.
+    await loadEditorState(env, user.id);
+
+    const details = countingEnv();
+    expect(
+      await setRuleDetails(details.env, user, {
+        buffers: [{ from: "det-s", buffer: { bufferBefore: 30, bufferAfter: 30 } }],
+        colors: [{ from: "det-s", to: "det-a1", value: "Focus" }],
+        workHours: [{ from: "det-s", to: "det-a1", on: true }],
+      }),
+    ).toBe(true);
+    // One batch reads the state, one writes 60 rules with their audit events.
+    expect(details.counts.d1).toBe(2);
+    expect(details.counts.batchStatements).toBe(4 + 120);
+    expect(details.counts.durable.sort()).toEqual(["det-a1:requestSync", "det-a2:requestSync"]);
+
+    const late = { ...office, workDays: [6, 7] };
+    const hours = countingEnv();
+    expect(await setAccountWorkHours(hours.env, user, "det-a1", late)).toBe(true);
+    // The account row and 30 rules with their audit events in one batch.
+    expect(hours.counts.d1).toBe(2);
+    expect(hours.counts.batchStatements).toBe(4 + 1 + 60);
+    expect(hours.counts.durable).toEqual(["det-a1:requestSync"]);
+
+    const { results } = await env.DB.prepare(
+      `SELECT r.target_calendar_id AS target, r.options FROM rules r WHERE r.user_id = ?`,
+    )
+      .bind(user.id)
+      .all<{ target: string; options: string }>();
+    expect(results).toHaveLength(60);
+    for (const row of results) {
+      const options = JSON.parse(row.options) as Record<string, unknown>;
+      expect(options).toMatchObject({ bufferBefore: 30, bufferAfter: 30 });
+      if (row.target === "det-t1") {
+        expect(options).toMatchObject({ blockColor: "Focus", workDays: [6, 7] });
+      } else {
+        expect(options).toMatchObject({ blockColor: "", workDays: [1, 2, 3, 4, 5, 6, 7] });
+      }
+    }
   });
 });
 

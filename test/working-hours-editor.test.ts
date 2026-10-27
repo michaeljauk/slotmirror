@@ -1,14 +1,18 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  accountWorkHours,
   loadEditorState,
   resetDirection,
+  setAccountWorkHours,
   setDirection,
   setGroupMembership,
+  setRuleDetails,
   setSettings,
   setSourceCalendar,
-  setWorkingHours,
+  type AccountWorkHours,
 } from "../src/editor";
+import type { CurrentUser } from "../src/users";
 import { BASE, signIn } from "./helpers";
 // @ts-expect-error `?raw` imports are untyped without `vite/client`
 import editorScript from "../public/editor.js?raw";
@@ -38,9 +42,22 @@ async function setup(prefix: string) {
   return { user, cookie, w: `${prefix}-w`, g: `${prefix}-g` };
 }
 
+/** A second source calendar of an account, turned on, so that a direction has two rules. */
+async function addSource(user: CurrentUser, accountId: string) {
+  await env.DB.prepare(
+    "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Side', 1, 0, 0)",
+  )
+    .bind(`${accountId}-side`, accountId, `${accountId}-side-remote`)
+    .run();
+  await setSourceCalendar(env, user, `${accountId}-side`, true);
+}
+
 const optionsOf = async (userId: string, from: string, to: string) =>
   (await loadEditorState(env, userId)).directions.find((d) => d.from === from && d.to === to)
     ?.options;
+
+const accountHoursOf = async (userId: string, accountId: string) =>
+  (await loadEditorState(env, userId)).accounts.find((a) => a.id === accountId)?.workHours;
 
 /** The rules of one direction: origin, enabled, and the stored options. */
 async function rulesOf(userId: string, from: string, to: string) {
@@ -48,7 +65,8 @@ async function rulesOf(userId: string, from: string, to: string) {
     `SELECT r.id, r.origin, r.enabled, r.options FROM rules r
      JOIN calendars sc ON sc.id = r.source_calendar_id
      JOIN calendars tc ON tc.id = r.target_calendar_id
-     WHERE r.user_id = ? AND sc.account_id = ? AND tc.account_id = ?`,
+     WHERE r.user_id = ? AND sc.account_id = ? AND tc.account_id = ?
+     ORDER BY r.source_calendar_id`,
   )
     .bind(userId, from, to)
     .all<{ id: string; origin: string; enabled: number; options: string }>();
@@ -69,7 +87,54 @@ function post(
   });
 }
 
+const save = (cookie: string, fields: Record<string, string>) =>
+  post("/rules/choices", cookie, new URLSearchParams(fields), { "x-fragment": "1" });
+
+const page = async (cookie: string, path: string) =>
+  (await exports.default.fetch(`${BASE}${path}`, { headers: { cookie } })).text();
+
 const OFF = { workDays: [1, 2, 3, 4, 5, 6, 7], workStart: "", workEnd: "", workTimeZone: "" };
+
+const OFFICE: AccountWorkHours = {
+  workDays: [1, 2, 3, 4, 5],
+  workStart: "08:00",
+  workEnd: "18:00",
+  workTimeZone: "Europe/Vienna",
+};
+
+/** The account settings form with working hours, as the home page sends it. */
+function settingsForm(
+  fields: { workStart?: string; workEnd?: string; workTimeZone?: string; name?: string },
+  days: string[],
+  extra: Record<string, string> = {},
+) {
+  const body = new URLSearchParams({
+    name: fields.name ?? "",
+    color: "auto",
+    workHoursShown: "1",
+    workStart: fields.workStart ?? "",
+    workEnd: fields.workEnd ?? "",
+    workTimeZone: fields.workTimeZone ?? "",
+    ...extra,
+  });
+  for (const day of days) body.append("workDays", day);
+  return body;
+}
+
+/** The fieldset of an account's working hours on the home page. */
+function hoursFieldset(html: string, accountId: string): string {
+  const item = html.split(`id="account-${accountId}"`)[1] ?? "";
+  return item.match(/<fieldset class="account-hours">[\s\S]*?<\/fieldset>/)?.[0] ?? "";
+}
+
+/** The target row of a direction in the editor. */
+function targetRow(html: string, from: string, to: string): string {
+  const card = html.split(`id="src-${from}"`)[1]?.split("</details>\n")[0] ?? "";
+  return (
+    card.split('<div class="dest"').find((row) => row.startsWith(` data-key="${from}&gt;${to}"`)) ??
+    ""
+  );
+}
 
 beforeEach(() => {
   // Removing blocks reads the target calendar; it is empty in these tests.
@@ -85,283 +150,241 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("working hours per direction", () => {
-  it("saves the hours from the page, shows them again, and refuses invalid values", async () => {
-    const { user, cookie, w, g } = await setup("hours");
-    await setDirection(env, user, g, w, "busy");
-    await setDirection(env, user, w, g, "busy");
-    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
+describe("working hours of an account", () => {
+  it("saves the hours from the account settings, shows them, and refuses invalid values", async () => {
+    const { user, cookie, w } = await setup("acct");
+    const saved = await post(
+      `/accounts/${w}/settings`,
+      cookie,
+      settingsForm({ workStart: "08:00", workEnd: "18:00", workTimeZone: "europe/vienna" }, [
+        "5",
+        "1",
+        "2",
+        "3",
+        "4",
+      ]),
+    );
+    expect(saved.status).toBe(302);
+    // The account has no rules yet; its hours are stored anyway.
+    expect(await accountHoursOf(user.id, w)).toEqual(OFFICE);
 
-    const save = (fields: Record<string, string>) =>
-      exports.default.fetch(`${BASE}/rules/choices`, {
-        method: "POST",
-        redirect: "manual",
-        headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams(fields),
-      });
-    const hours = (days: string, start: string, end: string, zone: string) => ({
-      [`workDays.${g}.${w}`]: days,
-      [`workStart.${g}.${w}`]: start,
-      [`workEnd.${g}.${w}`]: end,
-      [`workTimeZone.${g}.${w}`]: zone,
-    });
-    const saved = await save(hours("5,1,2,3,4", "08:00", "18:00", "europe/vienna"));
-    expect(saved.status).toBe(204);
-    const office = {
-      workDays: [1, 2, 3, 4, 5],
-      workStart: "08:00",
-      workEnd: "18:00",
-      workTimeZone: "Europe/Vienna",
-    };
-    expect(await optionsOf(user.id, g, w)).toMatchObject(office);
-    // The other direction keeps its defaults.
-    expect(await optionsOf(user.id, w, g)).toMatchObject(OFF);
-
-    const html = await (
-      await exports.default.fetch(`${BASE}/rules?open=${g}`, { headers: { cookie } })
-    ).text();
-    const forms = html.match(/<form[^>]*working-hours[\s\S]*?<\/form>/g) ?? [];
-    const form = forms.find((f) => f.includes(`name="to" value="${w}"`)) ?? "";
-    expect(form).toMatch(/name="workStart"[^>]*value="08:00"/);
-    expect(form).toMatch(/name="workEnd"[^>]*value="18:00"/);
-    expect(form).toMatch(/name="workTimeZone"[^>]*value="Europe\/Vienna"/);
-    const checked = [...form.matchAll(/<input[^>]*name="workDays"[^>]*>/g)]
+    const html = await page(cookie, `/?settings=${w}`);
+    const fieldset = hoursFieldset(html, w);
+    expect(fieldset).toMatch(/name="workStart"[^>]*value="08:00"/);
+    expect(fieldset).toMatch(/name="workEnd"[^>]*value="18:00"/);
+    expect(fieldset).toMatch(/name="workTimeZone"[^>]*value="Europe\/Vienna"/);
+    // A stored zone is not replaced by the browser's.
+    expect(fieldset).not.toContain("data-browser-zone");
+    const checked = [...fieldset.matchAll(/<input[^>]*name="workDays"[^>]*>/g)]
       .filter(([input]) => /checked/.test(input))
       .map(([input]) => input.match(/value="(\d)"/)?.[1]);
     expect(checked).toEqual(["1", "2", "3", "4", "5"]);
-    expect(html).toContain("Only during:");
+    expect(fieldset).toContain("Mo–Fr 08:00–18:00");
+    expect(html).toMatch(/<details class="rename" open/);
 
-    // Settings for all rules keep the hours of each direction.
-    await save({ settings: "1", "settings.daysAhead": "30" });
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ ...office, daysAhead: 30 });
-
-    const invalid = [
-      hours("1,2", "18:00", "08:00", "UTC"), // end before start: no overnight windows
-      hours("1,2", "08:00", "08:00", "UTC"),
-      hours("1,2", "08:00", "", "UTC"),
-      hours("1,2", "8:00", "18:00", "UTC"),
-      hours("1,2", "08:00", "18:00", "Mars/Olympus"),
-      hours("", "08:00", "18:00", "UTC"),
-      hours("0,1", "08:00", "18:00", "UTC"),
-      hours("x", "08:00", "18:00", "UTC"),
-    ];
-    for (const fields of invalid) expect((await save(fields)).status).toBe(400);
-    expect(await optionsOf(user.id, g, w)).toMatchObject(office);
+    const cases = [
+      [{ workStart: "18:00", workEnd: "08:00" }, ["1"], "the end must be after the start"],
+      [{ workStart: "08:00", workEnd: "08:00" }, ["1"], "the end must be after the start"],
+      [{ workStart: "08:00", workEnd: "" }, ["1"], "enter a start and an end"],
+      [{ workStart: "8:00", workEnd: "18:00" }, ["1"], "enter a start and an end"],
+      [{ workStart: "08:00", workEnd: "18:00" }, [], "choose at least one weekday"],
+      [{ workStart: "08:00", workEnd: "18:00" }, ["0", "1"], "choose at least one weekday"],
+      [{ workStart: "08:00", workEnd: "18:00", workTimeZone: "Mars/Olympus" }, ["1"], "zone"],
+    ] as const;
+    for (const [fields, days, message] of cases) {
+      // The name in the same form is not saved either: the form saves all or nothing.
+      const body = settingsForm({ ...fields, name: "Renamed" }, [...days]);
+      const response = await post(`/accounts/${w}/settings`, cookie, body);
+      expect(response.status, message).toBe(400);
+      const text = await response.text();
+      expect(text).toContain(message);
+      expect(text).toContain(`<details class="rename" open`);
+    }
+    const german = await post(
+      `/accounts/${w}/settings`,
+      cookie,
+      settingsForm({ workStart: "08:00", workEnd: "18:00" }, []),
+      { "accept-language": "de" },
+    );
+    expect(await german.text()).toContain("Arbeitszeit: Wähle mindestens einen Wochentag.");
+    expect(await accountHoursOf(user.id, w)).toEqual(OFFICE);
+    const state = await loadEditorState(env, user.id);
+    expect(state.accounts.find((account) => account.id === w)?.customName).toBeNull();
   });
 
-  it("stores the deployment's time zone when the zone is left empty, and none when off", async () => {
-    const { user, w, g } = await setup("hourszone");
-    await setDirection(env, user, g, w, "busy");
-    // The deployment's zone is stored in canonical spelling, like a zone from the page.
-    const vienna = { ...env, TIME_ZONE: "europe/vienna" };
-    expect(
-      await setWorkingHours(vienna, user, g, w, { workDays: [1, 2, 3], workTimeZone: " " }),
-    ).toBe(true);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({
-      workDays: [1, 2, 3],
-      workTimeZone: "Europe/Vienna",
+  it("stores none for no day and no time, and for the button; a name-only form keeps them", async () => {
+    const { user, cookie, w } = await setup("acctnone");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    // The form before the working hours came sends the name only.
+    const nameOnly = new URLSearchParams({ name: "Office" });
+    expect((await post(`/accounts/${w}/name`, cookie, nameOnly)).status).toBe(302);
+    expect(await accountHoursOf(user.id, w)).toEqual(OFFICE);
+
+    const button = settingsForm({ workStart: "08:00", workEnd: "18:00" }, ["1"], {
+      workHours: "none",
     });
-    // The test deployment shows UTC.
-    expect(await setWorkingHours(env, user, g, w, { workTimeZone: "" })).toBe(true);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workTimeZone: "UTC" });
-    // All weekdays and no times filter nothing; the zone goes, and the options are the defaults.
-    expect(await setWorkingHours(env, user, g, w, { workDays: [7, 6, 5, 4, 3, 2, 1] })).toBe(true);
+    expect((await post(`/accounts/${w}/settings`, cookie, button)).status).toBe(302);
+    expect(await accountHoursOf(user.id, w)).toBeNull();
+
+    await setAccountWorkHours(env, user, w, OFFICE);
+    const empty = settingsForm({ workTimeZone: "Europe/Vienna" }, []);
+    expect((await post(`/accounts/${w}/settings`, cookie, empty)).status).toBe(302);
+    expect(await accountHoursOf(user.id, w)).toBeNull();
+    // A form without hours shows no ticked day, so that saving the name sets no hours.
+    const fieldset = hoursFieldset(await page(cookie, "/"), w);
+    expect(fieldset).not.toMatch(/name="workDays"[^>]*checked/);
+    expect(fieldset).not.toContain("No working hours");
+
+    // All seven days and no times filter nothing, so they are none as well.
+    const allDays = settingsForm({}, ["1", "2", "3", "4", "5", "6", "7"]);
+    expect((await post(`/accounts/${w}/settings`, cookie, allDays)).status).toBe(302);
+    expect(await accountHoursOf(user.id, w)).toBeNull();
+  });
+
+  it("uses the deployment's zone without a zone, in canonical spelling, and the browser's in the page", async () => {
+    const vienna = { ...env, TIME_ZONE: "europe/vienna" };
+    expect(accountWorkHours(vienna, { ...OFFICE, workTimeZone: " " })).toEqual({ hours: OFFICE });
+    expect(accountWorkHours(env, { ...OFFICE, workTimeZone: "US/Eastern" })).toEqual({
+      hours: { ...OFFICE, workTimeZone: "America/New_York" },
+    });
+    expect(accountWorkHours(env, { ...OFFICE, workTimeZone: "" })).toEqual({
+      hours: { ...OFFICE, workTimeZone: "UTC" },
+    });
+    // Without a stored zone the field shows the deployment's zone, marked for the browser's.
+    const { cookie, w } = await setup("acctzone");
+    const fieldset = hoursFieldset(await page(cookie, "/"), w);
+    expect(fieldset).toMatch(/name="workTimeZone"[^>]*value="UTC"[^>]*data-browser-zone="1"/);
+    expect(String(editorScript)).toContain("Intl.DateTimeFormat().resolvedOptions().timeZone");
+  });
+
+  it("keeps a stored zone that became unknown and says so on the page", async () => {
+    const { user, cookie, w } = await setup("acctstale");
+    await env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = ?")
+      .bind(JSON.stringify({ ...OFFICE, workTimeZone: "Mars/Olympus" }), w)
+      .run();
+    expect(await accountHoursOf(user.id, w)).toMatchObject({ workTimeZone: "Mars/Olympus" });
+    const html = await page(cookie, "/");
+    expect(html).toContain(
+      "This server does not know the time zone Mars/Olympus. Until you choose another one, the hours are read in UTC.",
+    );
+    expect(hoursFieldset(html, w)).toMatch(/name="workTimeZone"[^>]*value="Mars\/Olympus"/);
+  });
+
+  it("gives the rules that use them the new hours, and takes them away when cleared", async () => {
+    const { user, w, g } = await setup("acctrules");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    await setAccountWorkHours(env, user, g, OFFICE);
+    await setDirection(env, user, g, w, "busy");
+    await setDirection(env, user, w, g, "busy");
+    await addSource(user, g);
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    expect(await rulesOf(user.id, g, w)).toHaveLength(2);
+
+    const late = { ...OFFICE, workDays: [6, 7], workStart: "10:00", workEnd: "24:00" };
+    expect(await setAccountWorkHours(env, user, w, late)).toBe(true);
+    for (const rule of await rulesOf(user.id, g, w)) {
+      expect(JSON.parse(rule.options)).toMatchObject(late);
+    }
+    // The rules into the other account do not use working hours and stay without.
+    expect(await optionsOf(user.id, w, g)).toMatchObject(OFF);
+
+    expect(await setAccountWorkHours(env, user, w, null)).toBe(true);
+    for (const rule of await rulesOf(user.id, g, w)) {
+      expect(JSON.parse(rule.options)).toMatchObject(OFF);
+    }
+    expect(await accountHoursOf(user.id, w)).toBeNull();
+    // An account of another user is refused.
+    const other = await setup("acctrules2");
+    expect(await setAccountWorkHours(env, other.user, w, OFFICE)).toBe(false);
+    expect(await accountHoursOf(user.id, w)).toBeNull();
+  });
+});
+
+describe("working hours per target", () => {
+  it("copies the account's hours into every rule of the direction from the page, and clears them", async () => {
+    const { user, cookie, w, g } = await setup("target");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    await setDirection(env, user, g, w, "busy");
+    await setDirection(env, user, w, g, "busy");
+    await addSource(user, g);
+
+    const html = await page(cookie, `/rules?open=${g}`);
+    const row = targetRow(html, g, w);
+    expect(row).toContain("Only during the working hours of work (Mo–Fr 08:00–18:00)");
+    expect(row).toMatch(/<input type="checkbox" name="workHours" value="1" form="[^"]+"\/?>/);
+
+    expect((await save(cookie, { [`workHours.${g}.${w}`]: "1" })).status).toBe(204);
+    const rules = await rulesOf(user.id, g, w);
+    expect(rules).toHaveLength(2);
+    for (const rule of rules) expect(JSON.parse(rule.options)).toMatchObject(OFFICE);
+    expect(await optionsOf(user.id, w, g)).toMatchObject(OFF);
+    expect(targetRow(await page(cookie, `/rules?open=${g}`), g, w)).toMatch(
+      /name="workHours" value="1"[^>]*checked/,
+    );
+
+    // Settings for all rules keep the hours.
+    await save(cookie, { settings: "1", "settings.daysAhead": "30" });
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFFICE, daysAhead: 30 });
+
+    expect((await save(cookie, { [`workHours.${g}.${w}`]: "0" })).status).toBe(204);
+    for (const rule of await rulesOf(user.id, g, w)) {
+      expect(JSON.parse(rule.options)).toMatchObject(OFF);
+    }
+  });
+
+  it("offers a link for an account without hours, and refuses to turn them on", async () => {
+    const { user, cookie, w, g } = await setup("targetnone");
+    await setDirection(env, user, g, w, "busy");
+    const row = targetRow(await page(cookie, `/rules?open=${g}`), g, w);
+    expect(row).toContain(`href="/?settings=${w}#account-${w}"`);
+    expect(row).toContain("Set working hours");
+    expect(row).not.toContain('name="workHours"');
+
+    const response = await save(cookie, {
+      [`choice.${w}.${g}`]: "title",
+      [`workHours.${g}.${w}`]: "1",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(
+      "work has no working hours. Set them in the account settings. Nothing was saved.",
+    );
+    expect(await rulesOf(user.id, w, g)).toEqual([]);
     expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
   });
 
-  it("saves from the form without the editor script, and the reset clears the hours", async () => {
-    const { user, cookie, w, g } = await setup("hoursform");
-    await setGroupMembership(env, user, w, true);
-    await setGroupMembership(env, user, g, true);
+  it("saves the colour and the checkbox from the form without the editor script", async () => {
+    const { user, cookie, w, g } = await setup("targetform");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setDirection(env, user, g, w, "title");
     const body = new URLSearchParams({
       from: g,
       to: w,
-      workStart: "09:30",
-      workEnd: "17:00",
-      workTimeZone: "Europe/Vienna",
-    });
-    body.append("workDays", "2");
-    body.append("workDays", "4");
-    const response = await exports.default.fetch(`${BASE}/rules/direction/hours`, {
-      method: "POST",
-      redirect: "manual",
-      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    expect(response.status).toBe(302);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({
-      workDays: [2, 4],
-      workStart: "09:30",
-      workEnd: "17:00",
-      workTimeZone: "Europe/Vienna",
-    });
-
-    // No weekday checked: refused, nothing changes.
-    const none = new URLSearchParams({ from: g, to: w, workStart: "", workEnd: "" });
-    const refused = await exports.default.fetch(`${BASE}/rules/direction/hours`, {
-      method: "POST",
-      redirect: "manual",
-      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
-      body: none,
-    });
-    expect(refused.status).toBe(400);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workDays: [2, 4] });
-
-    await resetDirection(env, user, g, w);
-    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
-  });
-
-  it("changes nothing for a direction without rules, but still refuses invalid hours", async () => {
-    const { user, w, g } = await setup("hoursoff");
-    expect(await setWorkingHours(env, user, g, w, { workDays: [1] })).toBe(true);
-    expect(await optionsOf(user.id, g, w)).toBeNull();
-    expect(await setWorkingHours(env, user, g, w, { workDays: [] })).toBe(false);
-    const mars = { workDays: [1], workTimeZone: "Mars/Olympus" };
-    expect(await setWorkingHours(env, user, g, w, mars)).toBe(false);
-    // With rules, an unknown zone as input is refused as well.
-    await setDirection(env, user, g, w, "busy");
-    expect(await setWorkingHours(env, user, g, w, mars)).toBe(false);
-    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
-  });
-
-  it("saves all or nothing: invalid hours stop the choices sent with them", async () => {
-    const { user, cookie, w, g } = await setup("hoursall");
-    const body = new URLSearchParams({
-      [`choice.${w}.${g}`]: "busy",
-      [`calendar.${w}-cal`]: "1",
-      [`workDays.${g}.${w}`]: "1,2",
-      [`workStart.${g}.${w}`]: "18:00",
-      [`workEnd.${g}.${w}`]: "08:00",
-      [`workTimeZone.${g}.${w}`]: "UTC",
-    });
-    const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
-    expect(response.status).toBe(400);
-    // The editor script shows this message in its bar.
-    expect(await response.text()).toBe(
-      "Working hours: the end must be after the start. For the end of the day, choose “until midnight”. Nothing was saved.",
-    );
-    expect(await rulesOf(user.id, w, g)).toEqual([]);
-    expect(await rulesOf(user.id, g, w)).toEqual([]);
-
-    // The same save with valid hours writes both.
-    body.set(`workEnd.${g}.${w}`, "24:00");
-    body.set(`choice.${g}.${w}`, "busy");
-    expect((await post("/rules/choices", cookie, body, { "x-fragment": "1" })).status).toBe(204);
-    expect(await rulesOf(user.id, w, g)).toHaveLength(1);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workStart: "18:00", workEnd: "24:00" });
-  });
-
-  it("names the wrong field in the page language for the form without the script", async () => {
-    const { user, cookie, w, g } = await setup("hoursmsg");
-    await setDirection(env, user, g, w, "busy");
-    const form = (fields: Record<string, string>, days: string[]) => {
-      const body = new URLSearchParams({ from: g, to: w, ...fields });
-      for (const day of days) body.append("workDays", day);
-      return body;
-    };
-    const valid = { workStart: "08:00", workEnd: "18:00", workTimeZone: "Europe/Vienna" };
-    const cases = [
-      [form(valid, []), "Working hours: choose at least one weekday."],
-      [form({ ...valid, workStart: "8:00" }, ["1"]), "Working hours: enter a start and an end"],
-      [form({ ...valid, workEnd: "07:00" }, ["1"]), "Working hours: the end must be after"],
-      [form({ ...valid, workTimeZone: "Mars/Olympus" }, ["1"]), "unknown time zone"],
-    ] as const;
-    for (const [body, message] of cases) {
-      const response = await post("/rules/direction/hours", cookie, body);
-      expect(response.status).toBe(400);
-      expect(await response.text()).toContain(message);
-    }
-    const german = await post("/rules/direction/hours", cookie, form(valid, []), {
-      "accept-language": "de",
-    });
-    expect(await german.text()).toContain("Arbeitszeit: Wähle mindestens einen Wochentag.");
-    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
-  });
-
-  it("stores the canonical name of a zone", async () => {
-    const { user, w, g } = await setup("hourscanon");
-    await setDirection(env, user, g, w, "busy");
-    await setWorkingHours(env, user, g, w, { workDays: [1], workTimeZone: "US/Eastern" });
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workTimeZone: "America/New_York" });
-  });
-
-  it("keeps a stored zone that became unknown, says so on the page, and reads UTC", async () => {
-    const { user, cookie, w, g } = await setup("hoursstale");
-    await setDirection(env, user, g, w, "busy");
-    const [rule] = await rulesOf(user.id, g, w);
-    const stored = {
-      ...JSON.parse(rule?.options ?? "{}"),
-      workDays: [1],
-      workTimeZone: "Mars/Olympus",
-    };
-    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
-      .bind(JSON.stringify(stored), rule?.id)
-      .run();
-    const page = await exports.default.fetch(`${BASE}/rules?open=${g}`, { headers: { cookie } });
-    expect(page.status).toBe(200);
-    const html = await page.text();
-    expect(html).toContain(
-      "This server does not know the time zone Mars/Olympus. Until you choose another one, the hours are read in UTC.",
-    );
-    expect(html).toMatch(/name="workTimeZone"[^>]*value="Mars\/Olympus"/);
-
-    // Saves that do not touch the hours keep the stored zone.
-    const save = (fields: Record<string, string>) =>
-      post("/rules/choices", cookie, new URLSearchParams(fields), { "x-fragment": "1" });
-    expect((await save({ settings: "1", "settings.daysAhead": "30" })).status).toBe(204);
-    expect((await save({ [`blockColor.${g}.${w}`]: "Focus" })).status).toBe(204);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({
-      workDays: [1],
-      workTimeZone: "Mars/Olympus",
-      daysAhead: 30,
       blockColor: "Focus",
+      workHoursShown: "1",
+      workHours: "1",
     });
-    // Sending the unknown zone as input is refused; a known one replaces it.
-    const hours = (zone: string) => ({
-      [`workDays.${g}.${w}`]: "1",
-      [`workStart.${g}.${w}`]: "",
-      [`workEnd.${g}.${w}`]: "",
-      [`workTimeZone.${g}.${w}`]: zone,
-    });
-    expect((await save(hours("Mars/Olympus"))).status).toBe(400);
-    expect((await save(hours("Europe/Vienna"))).status).toBe(204);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workTimeZone: "Europe/Vienna" });
-  });
+    const response = await post("/rules/direction/details", cookie, body);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(`/rules?open=${g}#src-${g}`);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFFICE, blockColor: "Focus" });
 
-  it('shows 24:00 as "until midnight" and saves the checkbox without the script', async () => {
-    const { user, cookie, w, g } = await setup("hoursmidnight");
-    await setDirection(env, user, g, w, "busy");
-    const body = new URLSearchParams({
+    // An unchecked box is not sent; the marker field says that it was on the page.
+    body.delete("workHours");
+    expect((await post("/rules/direction/details", cookie, body)).status).toBe(302);
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFF, blockColor: "Focus" });
+
+    // A refused colour stores nothing, also not the checkbox.
+    const refused = new URLSearchParams({
       from: g,
       to: w,
-      workStart: "18:00",
-      workEnd: "",
-      workUntilMidnight: "1",
-      workTimeZone: "Europe/Vienna",
+      blockColor: "a, b",
+      workHoursShown: "1",
+      workHours: "1",
     });
-    body.append("workDays", "5");
-    expect((await post("/rules/direction/hours", cookie, body)).status).toBe(302);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workStart: "18:00", workEnd: "24:00" });
-
-    const html = await (
-      await exports.default.fetch(`${BASE}/rules?open=${g}`, { headers: { cookie } })
-    ).text();
-    const forms = html.match(/<form[^>]*working-hours[\s\S]*?<\/form>/g) ?? [];
-    const form = forms.find((f) => f.includes(`name="to" value="${w}"`)) ?? "";
-    expect(form).toMatch(/<input[^>]*type="time"[^>]*name="workStart"[^>]*value="18:00"/);
-    const end = form.match(/<input[^>]*name="workEnd"[^>]*>/)?.[0] ?? "";
-    expect(end).toContain('type="time"');
-    expect(end).toContain("disabled");
-    expect(end).not.toContain("24:00");
-    expect(form).toMatch(/<input[^>]*name="workUntilMidnight"[^>]*checked/);
-    expect(form).not.toContain("inputmode");
-
-    // Without the checkbox the end field counts again.
-    body.delete("workUntilMidnight");
-    body.set("workEnd", "22:00");
-    expect((await post("/rules/direction/hours", cookie, body)).status).toBe(302);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workEnd: "22:00" });
+    const answer = await post("/rules/direction/details", cookie, refused);
+    expect(answer.status).toBe(400);
+    expect(await answer.text()).toContain("cannot contain a comma");
+    expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFF, blockColor: "Focus" });
   });
 
   it("refuses a file in any field of the editor, and writes nothing", async () => {
@@ -370,10 +393,9 @@ describe("working hours per direction", () => {
       `calendar.${w}-cal`,
       `choice.${w}.${g}`,
       `blockColor.${g}.${w}`,
-      `workDays.${g}.${w}`,
-      `workStart.${g}.${w}`,
-      `workEnd.${g}.${w}`,
-      `workTimeZone.${g}.${w}`,
+      `workHours.${g}.${w}`,
+      `bufferBefore.${g}`,
+      `bufferAfter.${g}`,
     ];
     for (const field of fields) {
       const body = new FormData();
@@ -391,18 +413,13 @@ describe("working hours per direction", () => {
 
   it("saves the source change and skips the hours of a direction that loses its last source", async () => {
     const { user, cookie, w, g } = await setup("lastsource");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setDirection(env, user, g, w, "busy");
     // The same save turns off the only source calendar of the direction.
-    const body = new URLSearchParams({
+    const response = await save(cookie, {
       [`calendar.${g}-cal`]: "0",
-      [`workDays.${g}.${w}`]: "1",
-      [`workStart.${g}.${w}`]: "",
-      [`workEnd.${g}.${w}`]: "",
-      [`workTimeZone.${g}.${w}`]: "",
+      [`workHours.${g}.${w}`]: "1",
     });
-    const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
-    // The direction has no rules left, so its hours have nothing to change. The save must not
-    // answer 409 after it turned the calendar off.
     expect(response.status).toBe(204);
     const row = await env.DB.prepare("SELECT is_source FROM calendars WHERE id = ?")
       .bind(`${g}-cal`)
@@ -410,20 +427,42 @@ describe("working hours per direction", () => {
     expect(row?.is_source).toBe(0);
     expect(await rulesOf(user.id, g, w)).toEqual([]);
   });
+
+  it("refuses hours for a direction that does not exist, and writes nothing", async () => {
+    const { user, cookie, w, g } = await setup("hoursgone");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    const response = await save(cookie, {
+      [`choice.${g}.${w}`]: "busy",
+      [`workHours.nope.${w}`]: "1",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("direction that no longer exists");
+    expect(await rulesOf(user.id, g, w)).toEqual([]);
+  });
+
+  it("turns a direction on and its hours on in one save", async () => {
+    const { user, cookie, w, g } = await setup("hoursnew");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    const response = await save(cookie, {
+      [`choice.${g}.${w}`]: "busy",
+      [`workHours.${g}.${w}`]: "1",
+    });
+    expect(response.status).toBe(204);
+    expect(await optionsOf(user.id, g, w)).toMatchObject(OFFICE);
+  });
 });
 
 describe("working hours in the block group", () => {
   it("make a group direction an exception, which the reset returns to the group", async () => {
     const { user, cookie, w, g } = await setup("hoursgroup");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
     expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
 
-    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5] });
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
-    const html = await (
-      await exports.default.fetch(`${BASE}/rules?open=${g}`, { headers: { cookie } })
-    ).text();
+    const html = await page(cookie, `/rules?open=${g}`);
     const resets = html.match(/<form[^>]*\/rules\/direction\/reset[\s\S]*?<\/form>/g) ?? [];
     expect(resets.some((form) => form.includes(`name="to" value="${w}"`))).toBe(true);
 
@@ -437,111 +476,86 @@ describe("working hours in the block group", () => {
     expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
   });
 
-  it("return a direction to the group when the hours are cleared", async () => {
+  it("return a direction to the group when the hours are turned off or the account's go", async () => {
     const { user, w, g } = await setup("hoursclear");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
-    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5] });
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
-    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5, 6, 7] });
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: false }] });
+    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
+
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    await setAccountWorkHours(env, user, w, null);
     expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
     // A group rule goes with the group.
     await setGroupMembership(env, user, g, false);
     expect(await rulesOf(user.id, g, w)).toEqual([]);
   });
 
-  it("return to the group when busy and cleared hours are saved together", async () => {
+  it("return to the group when busy and no hours are saved together", async () => {
     const { user, cookie, w, g } = await setup("hoursboth");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
     await setDirection(env, user, g, w, "title");
-    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5] });
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
-    const body = new URLSearchParams({
+    const response = await save(cookie, {
       [`choice.${g}.${w}`]: "busy",
-      [`workDays.${g}.${w}`]: "1,2,3,4,5,6,7",
-      [`workStart.${g}.${w}`]: "",
-      [`workEnd.${g}.${w}`]: "",
-      [`workTimeZone.${g}.${w}`]: "",
+      [`workHours.${g}.${w}`]: "0",
     });
-    expect((await post("/rules/choices", cookie, body, { "x-fragment": "1" })).status).toBe(204);
+    expect(response.status).toBe(204);
     expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
     expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFF, detailLevel: "busy" });
-    await setGroupMembership(env, user, g, false);
-    expect(await rulesOf(user.id, g, w)).toEqual([]);
 
-    // A choice other than busy stays an exception when the hours are cleared.
-    const other = await setup("hoursboth2");
-    await setGroupMembership(env, other.user, other.w, true);
-    await setGroupMembership(env, other.user, other.g, true);
-    await setDirection(env, other.user, other.g, other.w, "title");
-    await setWorkingHours(env, other.user, other.g, other.w, { workDays: [1] });
-    await setWorkingHours(env, other.user, other.g, other.w, { workDays: [1, 2, 3, 4, 5, 6, 7] });
-    expect((await rulesOf(other.user.id, other.g, other.w)).map((rule) => rule.origin)).toEqual([
-      "custom",
-    ]);
+    // A choice other than busy stays an exception when the hours go.
+    await setDirection(env, user, g, w, "title");
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: false }] });
+    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
   });
 
   it("survive leaving the group, like any exception", async () => {
     const { user, w, g } = await setup("hoursleave");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
-    await setWorkingHours(env, user, g, w, { workDays: [1, 2, 3, 4, 5] });
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     await setGroupMembership(env, user, g, false);
-    expect(await optionsOf(user.id, g, w)).toMatchObject({ workDays: [1, 2, 3, 4, 5] });
+    expect(await optionsOf(user.id, g, w)).toMatchObject(OFFICE);
     // The direction without hours was a group rule and goes with the group.
     expect(await rulesOf(user.id, w, g)).toEqual([]);
   });
 });
 
 describe("working hours with copies and parked rules", () => {
-  const office = {
-    workDays: [1, 2, 3, 4, 5],
-    workStart: "08:00",
-    workEnd: "18:00",
-    workTimeZone: "Europe/Vienna",
-  };
-
-  it("refuses hours for a direction that does not exist, and writes nothing", async () => {
-    const { user, cookie, w, g } = await setup("hoursgone");
-    const body = new URLSearchParams({
-      [`choice.${g}.${w}`]: "busy",
-      [`workDays.nope.${w}`]: "1",
-    });
-    const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
-    expect(response.status).toBe(400);
-    expect(await response.text()).toContain("direction that no longer exists");
-    expect(await rulesOf(user.id, g, w)).toEqual([]);
-  });
-
   it("gives a copy of a direction's rule the direction's working hours", async () => {
     const { user, w, g } = await setup("hourscopy");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setDirection(env, user, g, w, "busy");
-    expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
-    await env.DB.prepare(
-      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Side', 1, 0, 0)",
-    )
-      .bind(`${g}-side`, g, `${g}-side-remote`)
-      .run();
-    await setSourceCalendar(env, user, `${g}-side`, true);
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    await addSource(user, g);
     const rules = await rulesOf(user.id, g, w);
     expect(rules).toHaveLength(2);
     for (const rule of rules) {
-      expect(JSON.parse(rule.options)).toMatchObject(office);
+      expect(JSON.parse(rule.options)).toMatchObject(OFFICE);
       expect(rule.origin).toBe("custom");
     }
   });
 
   it("keeps the hours of a parked rule, and the parked mark next to them", async () => {
     const { user, w, g } = await setup("hourspark");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
     await setDirection(env, user, g, w, "off");
-    expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     // Turning the only source calendar off parks the "off" exception.
     await setSourceCalendar(env, user, `${g}-cal`, false);
     const [parked] = await rulesOf(user.id, g, w);
-    expect(JSON.parse(parked?.options ?? "{}")).toMatchObject({ ...office, parked: true });
+    expect(JSON.parse(parked?.options ?? "{}")).toMatchObject({ ...OFFICE, parked: true });
     // Settings keep both.
     await setSettings(env, user, {
       skipAllDay: true,
@@ -551,17 +565,18 @@ describe("working hours with copies and parked rules", () => {
       skipCategories: [],
     });
     const [kept] = await rulesOf(user.id, g, w);
-    expect(JSON.parse(kept?.options ?? "{}")).toMatchObject({ ...office, parked: true });
+    expect(JSON.parse(kept?.options ?? "{}")).toMatchObject({ ...OFFICE, parked: true });
     // Back as a source: the rule is no longer parked, still off, and keeps its hours.
     await setSourceCalendar(env, user, `${g}-cal`, true);
     const [back] = await rulesOf(user.id, g, w);
     expect(back?.enabled).toBe(0);
     expect(JSON.parse(back?.options ?? "{}")).not.toHaveProperty("parked");
-    expect(JSON.parse(back?.options ?? "{}")).toMatchObject(office);
+    expect(JSON.parse(back?.options ?? "{}")).toMatchObject(OFFICE);
   });
 
   it("keeps a parked mark when it stores hours on a marked rule", async () => {
     const { user, w, g } = await setup("hoursmark");
+    await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
     await setDirection(env, user, g, w, "off");
@@ -572,15 +587,15 @@ describe("working hours with copies and parked rules", () => {
     )
       .bind(user.id)
       .run();
-    expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     const [rule] = await rulesOf(user.id, g, w);
-    expect(JSON.parse(rule?.options ?? "{}")).toMatchObject({ ...office, parked: true });
+    expect(JSON.parse(rule?.options ?? "{}")).toMatchObject({ ...OFFICE, parked: true });
   });
 
-  it("saves every change of the page when Enter is pressed in a working-hours form", () => {
-    // The editor script has no DOM test harness. This reads the submit handler of the hours form.
-    const loop = (String(editorScript).split('"form.working-hours[data-key]"')[1] ?? "").split(
-      "block colour of a direction",
+  it("saves every change of the page when Enter is pressed in a details form", () => {
+    // The editor script has no DOM test harness. This reads the submit handler of the details form.
+    const loop = (String(editorScript).split('"form.dest-details[data-key]"')[1] ?? "").split(
+      "A click outside an open palette",
     )[0];
     const handler = /addEventListener\("submit", \(event\) => \{([\s\S]*?)\}\);/.exec(
       loop ?? "",

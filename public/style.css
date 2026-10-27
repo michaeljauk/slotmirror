@@ -841,13 +841,78 @@ details[open] > .source-head .chevron {
   background: #eef2fb;
 }
 
+/* Target rows: name, detail level and colour; under them the preview and the working hours. */
 .dest {
   display: grid;
-  grid-template-columns: 130px 1fr;
-  gap: 6px 14px;
+  grid-template-columns: 130px 1fr auto;
+  gap: 8px 14px;
   align-items: center;
   padding: 12px 16px;
   border-top: 1px solid var(--line);
+}
+
+.dest-extra {
+  display: grid;
+  grid-column: 2 / 4;
+  gap: 4px;
+}
+
+.dest-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dest-line.faint {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.dest-line .link-button {
+  font-size: 12px;
+}
+
+.dest-tag {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* The detail level as one segmented control. */
+.dest .choices {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-self: start;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+}
+
+.dest .choice {
+  padding: 5px 12px;
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  border-radius: 0;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.dest .choice:first-of-type {
+  border-left: 0;
+}
+
+.dest .choice:hover:not(:disabled) {
+  background: #f3f2ef;
+}
+
+.dest .choice.on,
+.dest .choice.on:hover:not(:disabled) {
+  background: var(--text);
+  color: #fff;
 }
 
 .dest-name {
@@ -887,21 +952,6 @@ details[open] > .source-head .chevron {
   opacity: 0.35;
 }
 
-.dest-note {
-  grid-column: 2;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.dest-note.faint {
-  color: var(--faint);
-  font-size: 12px;
-}
-
-.dest-note .link-button {
-  font-size: 12px;
-}
-
 .ev {
   display: inline-flex;
   gap: 6px;
@@ -917,7 +967,7 @@ details[open] > .source-head .chevron {
 }
 
 .cap-note {
-  grid-column: 2;
+  justify-self: start;
   padding: 4px 9px;
   border-radius: 7px;
   background: #fbf3e2;
@@ -1049,9 +1099,13 @@ details.more summary {
     grid-template-columns: 1fr;
   }
 
-  .dest-note,
-  .cap-note {
+  .dest-extra {
     grid-column: 1;
+  }
+
+  .palette.color-row {
+    right: auto;
+    left: 0;
   }
 }
 
@@ -1083,7 +1137,7 @@ details.rename summary::-webkit-details-marker {
   top: 28px;
   display: grid;
   gap: 6px;
-  width: 280px;
+  width: 320px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1499,16 +1553,6 @@ input[role="switch"]:focus-visible {
 
 /* Source calendars */
 
-.source-cals {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 10px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--line);
-  background: #fbfbfa;
-}
-
 .cal-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1853,22 +1897,32 @@ details.source > .source-head .provider-icon,
   margin-top: 2px;
 }
 
-/* Working hours of a direction: weekdays, a time range and its time zone. */
+/* Working hours of an account: weekdays, a time range and its time zone. */
 
-.working-hours {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
+.account-hours {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.account-hours legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .weekday-row {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 3px;
 }
 
-.weekday {
+.rename-form .weekday {
+  display: inline-block;
   position: relative;
+  font-weight: 400;
   cursor: pointer;
 }
 
@@ -1880,8 +1934,8 @@ details.source > .source-head .provider-icon,
 
 .weekday span {
   display: inline-block;
-  min-width: 26px;
-  padding: 2px 4px;
+  min-width: 32px;
+  padding: 3px 4px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   color: var(--muted);
@@ -1890,9 +1944,9 @@ details.source > .source-head .provider-icon,
 }
 
 .weekday input:checked + span {
-  border-color: var(--accent);
-  background: #eef2fb;
-  color: var(--accent);
+  border-color: var(--text);
+  background: var(--text);
+  color: #fff;
 }
 
 .weekday input:focus-visible + span {
@@ -1901,26 +1955,29 @@ details.source > .source-head .provider-icon,
 }
 
 .work-time {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 4px 6px;
 }
 
-.work-time input[type="time"],
-.working-hours .work-zone {
-  padding: 2px 6px;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  font: inherit;
+.rename-form .work-time input[type="time"],
+.rename-form .work-zone {
+  padding: 3px 6px;
   font-size: 13px;
 }
 
-.work-midnight {
+.rename-form .work-midnight {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--muted);
   font-size: 12px;
+  font-weight: 400;
+}
+
+.rename-form .work-midnight input {
+  padding: 0;
 }
 
 .work-time input[type="time"]:disabled {
@@ -1928,82 +1985,83 @@ details.source > .source-head .provider-icon,
   background: var(--bg);
 }
 
-.working-hours .work-zone {
-  width: 140px;
+.account-hours .link-button {
+  justify-self: start;
+  font-size: 12.5px;
 }
 
-.working-hours.pending .block-color-label {
-  color: var(--accent);
+/* Rows of a source card: a label on the left, the content on the right. */
+
+.src-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 6px 14px;
+  align-items: baseline;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
 }
 
-.working-hours.pending .work-time input[type="time"],
-.working-hours.pending .work-zone {
-  border-color: var(--accent);
+.src-row.faint {
+  display: block;
+  color: var(--faint);
+  font-size: 12.5px;
 }
 
-/* Block colour in the target, per direction. */
-
-.block-color {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.block-color .color-row {
-  gap: 6px;
-  margin-top: 0;
-}
-
-.block-color .color-dot {
-  width: 20px;
-  height: 20px;
-}
-
-.block-category {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.block-category input {
-  width: 160px;
-  padding: 3px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  font: inherit;
+.src-key {
+  color: var(--muted);
   font-size: 13px;
 }
 
-.block-color-hint {
-  flex-basis: 100%;
+@media (max-width: 560px) {
+  .src-row {
+    grid-template-columns: 84px 1fr;
+  }
+}
+
+.src-hint {
+  margin: 6px 0 0;
   color: var(--faint);
   font-size: 12px;
 }
 
-.block-color.pending .block-color-label,
-.block-color.pending .block-category input {
-  color: var(--accent);
+/* The buffer of a source: a summary line that opens the two fields. */
+
+.buffer-edit > summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  list-style: none;
+  cursor: pointer;
 }
 
-.block-color.pending .block-category input {
-  border-color: var(--accent);
+.buffer-edit > summary::-webkit-details-marker {
+  display: none;
 }
 
-/* Buffer around the blocks in the target, per direction. */
+.buffer-summary {
+  font-size: 14px;
+}
 
-.block-buffer {
+.edit-link {
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.buffer-fields {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
+  gap: 6px 16px;
+  margin-top: 8px;
 }
 
 .buffer-field {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-size: 13px;
 }
 
 .buffer-field input {
@@ -2015,13 +2073,124 @@ details.source > .source-head .provider-icon,
   font-size: 13px;
 }
 
-.block-buffer.pending .block-color-label,
-.block-buffer.pending .buffer-field input {
+.source-buffer .button {
+  margin-top: 8px;
+}
+
+.source-buffer.pending .buffer-summary {
   color: var(--accent);
 }
 
-.block-buffer.pending .buffer-field input {
+.source-buffer.pending .buffer-field input {
   border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Colour of the copies: one swatch that opens the palette, or an Outlook category. */
+
+details.swatch {
+  position: relative;
+}
+
+details.swatch > summary {
+  list-style: none;
+}
+
+details.swatch > summary::-webkit-details-marker {
+  display: none;
+}
+
+.swatch-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.swatch-button:hover {
+  border-color: var(--faint);
+}
+
+.swatch-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.swatch-dot.none {
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(
+    135deg,
+    var(--surface) calc(50% - 1px),
+    var(--faint) calc(50% - 1px) calc(50% + 1px),
+    var(--surface) calc(50% + 1px)
+  );
+}
+
+.palette.color-row {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 22px);
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(28 28 26 / 10%);
+}
+
+.palette .color-dot {
+  width: 22px;
+  height: 22px;
+}
+
+.category-field {
+  width: 150px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.dest.pending .swatch-button,
+.dest.pending .category-field {
+  border-color: var(--accent);
+}
+
+/* Working hours of a direction: one checkbox, or a link to set them. */
+
+.hours-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.dest.pending .hours-check {
+  color: var(--accent);
+}
+
+.quiet-link {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.js .dest-details {
+  display: none;
 }
 
 /* The overview is narrow: there the colour mark stands for the account, without the logo. */
@@ -2034,7 +2203,7 @@ details.source > .source-head .provider-icon,
   .rename-form {
     right: auto;
     left: 0;
-    width: min(280px, calc(100vw - 78px));
+    width: min(320px, calc(100vw - 78px));
   }
 }
 

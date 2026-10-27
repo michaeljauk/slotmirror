@@ -29,27 +29,30 @@ tokens stay with you and not with a sync service.
   others only as "Busy", marked private.
 - **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
   with title, or everything. An example event shows the result before you save.
-- **Working hours.** Per calendar and target you can mirror only events on chosen weekdays and
-  inside a time range, for example Monday to Friday, 08:00 to 18:00, Europe/Vienna. An event is
-  mirrored if it overlaps the range on one chosen day. Its block keeps the event's real times; it
-  is never cut to the range. An all-day event counts if one of its dates is a chosen weekday. The
-  end must be after the start; "until midnight" ends the range at the end of the day, and a range
-  over midnight is not possible. The default is every day, all day; the time zone defaults to the deployment's
-  `TIME_ZONE`. Working hours make a direction in the block group an exception, with a reset.
-  On the two days a year when clocks change, a range that spans the change is one hour shorter or
-  longer in real time. A start or end in the skipped hour moves forward by an hour; one in the
-  repeated hour means its first occurrence, for the start and the end alike. A range that ends
-  at 02:30 on the night clocks go back therefore ends an hour before the second 02:30.
+- **Working hours.** Each account can have working hours: chosen weekdays and a time range, for
+  example Monday to Friday, 08:00 to 18:00, Europe/Vienna. You set them in the account settings. Per
+  calendar and target you can then mirror only the events inside the working hours of the target
+  account. An event is mirrored if it overlaps the range on one chosen day. Its block keeps the
+  event's real times; it is never cut to the range. An all-day event counts if one of its dates is a
+  chosen weekday. The end must be after the start; "until midnight" ends the range at the end of the
+  day, and a range over midnight is not possible. An account has no working hours until you set
+  them; the time zone field starts with the browser's zone, or the deployment's `TIME_ZONE` without
+  JavaScript. Working hours make a direction in the block group an exception, with a reset. On the
+  two days a year when clocks change, a range that spans the change is one hour shorter or longer in
+  real time. A start or end in the skipped hour moves forward by an hour; one in the repeated hour
+  means its first occurrence, for the start and the end alike. A range that ends at 02:30 on the
+  night clocks go back therefore ends an hour before the second 02:30.
 - **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
   colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
-- **A buffer around the blocks.** Per calendar and target, blocks can start up to 240 minutes
-  earlier and end up to 240 minutes later than the event, for example for travel time. The
-  default is 0. All-day events get no buffer. Where buffered blocks overlap, each event keeps its
-  own block. If one event reaches a calendar through two directions with the same buffer, it gets
-  one block. With different buffers it can get two, so that the wider buffer is never lost.
+- **A buffer around the blocks.** Per source calendar account, blocks can start up to 240 minutes
+  earlier and end up to 240 minutes later than the event, for example for travel time. The buffer
+  applies to every target of that account. The default is 0. All-day events get no buffer. Where
+  buffered blocks overlap, each event keeps its own block. If one event reaches a calendar through
+  two directions with the same buffer, it gets one block. With different buffers it can get two, so
+  that the wider buffer is never lost.
 - **A colour per account.** Each account gets its own colour in the pages, automatically or
-  chosen under "Name and colour". It does not change any calendar.
+  chosen under "Settings". It does not change any calendar.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes within seconds.** Microsoft and Google notify your deployment when a calendar

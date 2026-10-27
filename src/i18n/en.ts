@@ -41,7 +41,11 @@ export const en = {
     lastRunAt: (time: string) => `Last run ${time}`,
     changesFailed: (count: number) => (count === 1 ? "1 change failed" : `${count} changes failed`),
     disconnect: "Disconnect",
-    rename: "Name and colour",
+    rename: "Settings",
+    workHoursLabel: "Working hours",
+    workHoursHint:
+      "In the sync settings you can limit copies into this account to these hours. Without working hours the whole day counts.",
+    workHoursNone: "No working hours",
     colorLabel: "Colour",
     colorHint: "Marks the account on these pages. It does not change your calendars.",
     colorAuto: "Automatic",
@@ -135,7 +139,7 @@ export const en = {
     manage: "Edit",
     choices: { off: "Not", busy: "As busy", title: "With title", full: "Everything" },
     short: { off: "no", busy: "busy", title: "title", full: "all" },
-    looksLike: "Looks like this there:",
+    looksLike: "There:",
     notThere: "does not appear there",
     sampleWork: { title: "Discuss the Q4 offer", detail: "Teams · agenda, 3 attendees" },
     samplePrivate: { title: "Dentist", detail: "Main square practice · check-up" },
@@ -178,7 +182,6 @@ export const en = {
     skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
     skipCategoriesPlaceholder: "Private, Focus",
     skipColorsLabel: "Skip Google events with these colours",
-    workHoursLabel: "Only during:",
     weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
     weekdayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
     workStart: "From",
@@ -187,8 +190,14 @@ export const en = {
     workUntilMidnight: "until midnight",
     workZoneUnknown: (zone: string) =>
       `This server does not know the time zone ${zone}. Until you choose another one, the hours are read in UTC.`,
-    workHoursHint:
-      "Only events that touch these days and times are copied, with their full times. Without times: the whole day.",
+    onlyWorkHours: (name: string, hours: string) =>
+      `Only during the working hours of ${name} (${hours})`,
+    onlyWorkHoursHint: "Only events that touch these hours are copied, with their full times.",
+    setWorkHours: "Set working hours",
+    workHoursMissing: (name: string) =>
+      `${name} has no working hours. Set them in the account settings. Nothing was saved.`,
+    everyDay: "every day",
+    allDay: "all day",
     workHoursErrors: {
       days: "Working hours: choose at least one weekday. Nothing was saved.",
       time: "Working hours: enter a start and an end, for example 08:00 and 18:00, or leave both empty. Nothing was saved.",
@@ -198,18 +207,41 @@ export const en = {
     },
     workHoursDirection:
       "These working hours belong to a direction that no longer exists. Reload the page. Nothing was saved.",
-    googleColor: (id: string) => `Google colour ${id}`,
-    blockColorLabel: "Colour there:",
+    googleColor: (id: string) =>
+      [
+        "Lavender",
+        "Sage",
+        "Grape",
+        "Flamingo",
+        "Banana",
+        "Tangerine",
+        "Peacock",
+        "Graphite",
+        "Blueberry",
+        "Basil",
+        "Tomato",
+      ][Number(id) - 1] ?? `Google colour ${id}`,
+    blockColorLabel: "Colour of the copies",
     blockColorNone: "No colour",
-    blockCategoryLabel: "Category there:",
-    blockCategoryPlaceholder: "No category",
+    blockCategoryLabel: "Outlook category of the copies",
+    blockCategoryPlaceholder: "Category",
     blockCategoryHint:
       "Outlook shows a colour if a category with this name exists. Create it in Outlook first.",
-    bufferLabel: "Buffer there:",
+    bufferLabel: "Buffer",
+    bufferNone: "No buffer",
+    bufferSummary: (before: number, after: number) =>
+      before === after
+        ? `${before} min. before and after`
+        : [before > 0 ? `${before} min. before` : "", after > 0 ? `${after} min. after` : ""]
+            .filter(Boolean)
+            .join(", "),
+    bufferMixed: "differs",
+    bufferMixedHint:
+      "The targets of this calendar have different buffers. A save sets one for all.",
+    change: "change",
     bufferBefore: "min. before",
     bufferAfter: "min. after",
-    bufferHint:
-      "Copies start earlier and end later by these minutes, for example for travel time. All-day events get no buffer.",
+    bufferHint: "All-day events get no buffer.",
     blockCategoryComma:
       "A category name cannot contain a comma: Outlook reads the comma as the start of a second category. Nothing was saved.",
     blockCategoryTooLong: (max: number) =>
@@ -222,7 +254,7 @@ export const en = {
       `${name} is no longer connected. Until you connect it again, its calendars do not sync.`,
     reconnect: (name: string) => `Connect ${name} again`,
     reconnectShort: "Connect again",
-    calendarsFrom: (name: string) => `Calendars from ${name}:`,
+    calendarsLabel: "Calendars",
     mainCalendar: "Main calendar",
     noSource:
       "No calendar chosen. Turn on at least one, then its events go to the calendars below.",

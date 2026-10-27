@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
@@ -20,6 +20,7 @@ import { AdminPage, type AdminUserRow } from "./pages/admin";
 import { DeleteUserPage } from "./pages/delete-user";
 import { DisconnectPage } from "./pages/disconnect";
 import { HomePage, SignInPage, type AccountRow } from "./pages/home";
+import type { Notice } from "./pages/calendar-editor";
 import { MessagePage } from "./pages/message";
 import { PrivacyPage } from "./pages/privacy";
 import { SetupPage } from "./pages/setup";
@@ -28,9 +29,16 @@ import { auth } from "./routes/auth";
 import { dev } from "./routes/dev";
 import { rules } from "./routes/rules";
 import { ACCOUNT_COLOR_KEYS } from "./colors";
-import { loadEditorState, renameAccount, setAccountColor } from "./editor";
+import {
+  accountWorkHours,
+  loadEditorState,
+  renameAccount,
+  setAccountColor,
+  setAccountWorkHours,
+  type AccountWorkHours,
+} from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
-import { loadUser } from "./users";
+import { loadUser, type CurrentUser } from "./users";
 import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
@@ -143,10 +151,20 @@ app.route("/feeds", feeds);
 
 app.get("/", async (c) => {
   const user = c.get("user");
-  const { providers } = setupStatus(c.env);
   if (!user) {
     return render(c, <SignInPage providers={signInProviders(c.env)} />);
   }
+  return renderHome(c, user, { openSettings: c.req.query("settings") });
+});
+
+/** The home page, with a notice and an account's settings open if given. */
+async function renderHome(
+  c: Context<AppEnv>,
+  user: CurrentUser,
+  options: { notice?: Notice; openSettings?: string } = {},
+  status: 200 | 400 = 200,
+) {
+  const { providers } = setupStatus(c.env);
   const { results } = await c.env.DB.prepare(
     `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt,
             needs_reconnect AS needsReconnect
@@ -170,36 +188,65 @@ app.get("/", async (c) => {
       editor={editor}
       feeds={userFeeds}
       calendars={calendars}
+      notice={options.notice}
+      openSettings={options.openSettings}
     />,
+    status,
   );
-});
+}
 
 /** "auto" or a palette key; the form of the account's name and colour sends it. */
 const accountColorField = z.enum(["auto", ...ACCOUNT_COLOR_KEYS]);
 
-app.post("/accounts/:id/name", async (c) => {
-  const user = c.get("user");
-  if (!user) return c.redirect("/");
-  const form = await c.req.formData();
-  const accountId = c.req.param("id");
-  // The colour is optional, so that a form with the name only keeps working.
-  if (form.has("color")) {
-    const color = accountColorField.safeParse(form.get("color"));
-    if (!color.success) return c.text("Bad colour", 400);
-    const owned = await setAccountColor(
-      c.env,
-      user,
-      accountId,
-      color.data === "auto" ? null : color.data,
-    );
+/**
+ * Working hours from the account settings form. No weekday and no time, or the button "No working
+ * hours", mean none. A time field cannot hold 24:00; "until midnight" stands for it.
+ */
+function workHoursFrom(form: FormData): AccountWorkHours | null {
+  if (form.get("workHours") === "none") return null;
+  const text = (name: string) => {
+    const value = form.get(name);
+    return typeof value === "string" ? value.trim() : "";
+  };
+  const workDays = form.getAll("workDays").map((value) => Number(value));
+  const workStart = text("workStart");
+  const workEnd = form.has("workUntilMidnight") ? "24:00" : text("workEnd");
+  if (workDays.length === 0 && workStart === "" && workEnd === "") return null;
+  return { workDays, workStart, workEnd, workTimeZone: text("workTimeZone") };
+}
+
+// The settings of an account: name, colour and working hours. Every field is checked before the
+// first write. "/name" is the address of the form before the working hours came.
+for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
+  app.post(path, async (c) => {
+    const user = c.get("user");
+    if (!user) return c.redirect("/");
+    const { t } = i18nFromContext(c);
+    const form = await c.req.formData();
+    const accountId = c.req.param("id") ?? "";
+    // The colour and the hours are optional, so that a form with the name only keeps working.
+    const color = form.has("color") ? accountColorField.safeParse(form.get("color")) : null;
+    if (color && !color.success) return c.text("Bad colour", 400);
+    const hours = form.has("workHoursShown") ? accountWorkHours(c.env, workHoursFrom(form)) : null;
+    if (hours && "problem" in hours) {
+      const notice = { kind: "error" as const, text: t.editor.workHoursErrors[hours.problem] };
+      return renderHome(c, user, { notice, openSettings: accountId }, 400);
+    }
+    const owned = await c.env.DB.prepare("SELECT 1 FROM accounts WHERE id = ? AND user_id = ?")
+      .bind(accountId, user.id)
+      .first();
     if (!owned) return c.notFound();
-  }
-  const name = form.get("name");
-  if (form.has("name")) {
-    await renameAccount(c.env, user, accountId, typeof name === "string" ? name : "");
-  }
-  return c.redirect("/");
-});
+    if (color) {
+      await setAccountColor(c.env, user, accountId, color.data === "auto" ? null : color.data);
+    }
+    const name = form.get("name");
+    if (form.has("name")) {
+      await renameAccount(c.env, user, accountId, typeof name === "string" ? name : "");
+    }
+    if (hours) await setAccountWorkHours(c.env, user, accountId, hours.hours);
+    return c.redirect(`/#account-${encodeURIComponent(accountId)}`);
+  });
+}
 
 // Ask before disconnecting: it deletes the rules that use the account and their blocks.
 app.get("/accounts/:id/disconnect", async (c) => {

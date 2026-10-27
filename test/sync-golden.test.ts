@@ -952,5 +952,5 @@ const GOLDEN: Record<string, string> = {
 
 const GOLDEN_RUNS = {
   results: "2d7372afef887705a39c70e981b6c6383ee4305b7d713ef79843295ef8f8658f",
-  batches: "ab1a1392a8716a823b6b3d6f14d5e3300a26669aa99aaf1ca826327053233820",
+  batches: "558d521a5f827d3370dffe9227dbb920ed6b9304897a294b98ac42891bc3d524",
 };

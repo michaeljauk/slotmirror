@@ -81,6 +81,25 @@ export async function loadRule(db: D1Database, ruleId: string): Promise<RuleCont
 }
 
 /**
+ * The rules of `ruleIds` that the alarm may run: they exist, are enabled, and their user is active.
+ * A queued rule can be disabled or removed before its turn; the editor then queues the removal of
+ * its blocks.
+ */
+export async function rulesRunningFromAlarm(
+  db: D1Database,
+  ruleIds: string[],
+): Promise<Set<string>> {
+  const { results } = await db
+    .prepare(
+      `SELECT r.id FROM rules r JOIN users u ON u.id = r.user_id
+       WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1 AND u.active = 1`,
+    )
+    .bind(JSON.stringify(ruleIds))
+    .all<{ id: string }>();
+  return new Set(results.map((row) => row.id));
+}
+
+/**
  * Enabled rules whose target calendar belongs to the account; they run in its Durable Object.
  * Rules of a deactivated user do not run.
  */

@@ -178,6 +178,26 @@ export const en = {
     skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
     skipCategoriesPlaceholder: "Private, Focus",
     skipColorsLabel: "Skip Google events with these colours",
+    workHoursLabel: "Only during:",
+    weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+    weekdayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    workStart: "From",
+    workEnd: "Until",
+    workTimeZone: "Time zone",
+    workUntilMidnight: "until midnight",
+    workZoneUnknown: (zone: string) =>
+      `This server does not know the time zone ${zone}. Until you choose another one, the hours are read in UTC.`,
+    workHoursHint:
+      "Only events that touch these days and times are copied, with their full times. Without times: the whole day.",
+    workHoursErrors: {
+      days: "Working hours: choose at least one weekday. Nothing was saved.",
+      time: "Working hours: enter a start and an end, for example 08:00 and 18:00, or leave both empty. Nothing was saved.",
+      order:
+        "Working hours: the end must be after the start. For the end of the day, choose “until midnight”. Nothing was saved.",
+      zone: "Working hours: unknown time zone. Enter a name such as Europe/Vienna. Nothing was saved.",
+    },
+    workHoursDirection:
+      "These working hours belong to a direction that no longer exists. Reload the page. Nothing was saved.",
     googleColor: (id: string) => `Google colour ${id}`,
     blockColorLabel: "Colour there:",
     blockColorNone: "No colour",

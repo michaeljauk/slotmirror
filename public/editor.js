@@ -110,6 +110,38 @@ document.addEventListener("click", async (event) => {
     });
   }
 
+  // The working hours of a direction count as one change while they differ from the saved ones.
+  const hoursOf = (form) => {
+    const data = new FormData(form);
+    const asText = (value) => (typeof value === "string" ? value.trim() : "");
+    const text = (name) => asText(data.get(name));
+    const days = data.getAll("workDays").map(asText).join(",");
+    // A time field cannot hold 24:00; "until midnight" stands for it.
+    const end = data.has("workUntilMidnight") ? "24:00" : text("workEnd");
+    return [days, text("workStart"), end, text("workTimeZone")].join("|");
+  };
+  const savedHours = new Map();
+  for (const form of document.querySelectorAll("form.working-hours[data-key]")) {
+    const key = `hours:${form.dataset.key}`;
+    savedHours.set(key, hoursOf(form));
+    const onChange = () => {
+      form.elements.workEnd.disabled = form.elements.workUntilMidnight.checked;
+      const value = hoursOf(form);
+      if (value === savedHours.get(key)) pending.delete(key);
+      else pending.set(key, value);
+      form.classList.toggle("pending", pending.has(key));
+      refreshBar();
+    };
+    form.addEventListener("change", onChange);
+    form.addEventListener("input", onChange);
+    // Enter in a time field saves every change of the page, as the bar does.
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      onChange();
+      if (pending.size > 0) void save();
+    });
+  }
+
   // The block colour of a direction counts as one change while it differs from the saved one.
   const blockColorOf = (form) => new FormData(form).get("blockColor") ?? "";
   const savedBlockColors = new Map();
@@ -194,7 +226,13 @@ document.addEventListener("click", async (event) => {
     const keys = [...pending.keys()];
     pending.clear();
     for (const key of keys) {
-      if (key.startsWith("calendar:")) {
+      if (key.startsWith("hours:")) {
+        const form = document.querySelector(`form.working-hours[data-key="${key.slice(6)}"]`);
+        form?.reset();
+        form?.classList.remove("pending");
+        // Reset fires no change event; this one restores the end field's state.
+        form?.dispatchEvent(new Event("change"));
+      } else if (key.startsWith("calendar:")) {
         const chip = document.querySelector(`.cal-chip[data-calendar="${key.slice(9)}"]`);
         chip?.classList.toggle("out", !savedSources.get(key.slice(9)));
         chip?.setAttribute("aria-pressed", String(savedSources.get(key.slice(9))));
@@ -233,6 +271,15 @@ document.addEventListener("click", async (event) => {
     const body = new URLSearchParams();
     for (const [key, choice] of pending) {
       if (key === "settings") continue;
+      if (key.startsWith("hours:")) {
+        const [from, to] = key.slice(6).split(">");
+        const [days, start, end, zone] = choice.split("|");
+        body.append(`workDays.${from}.${to}`, days);
+        body.append(`workStart.${from}.${to}`, start);
+        body.append(`workEnd.${from}.${to}`, end);
+        body.append(`workTimeZone.${from}.${to}`, zone);
+        continue;
+      }
       if (key.startsWith("calendar:")) {
         body.append(`calendar.${key.slice(9)}`, choice);
         continue;
@@ -275,7 +322,7 @@ document.addEventListener("click", async (event) => {
         ...new Set(
           [...pending.keys()]
             .filter((key) => key.includes(">"))
-            .map((key) => key.replace(/^(blockColor|buffer):/, "").split(">")[0]),
+            .map((key) => key.replace(/^\w+:/, "").split(">")[0]),
         ),
       ];
       pending.clear();

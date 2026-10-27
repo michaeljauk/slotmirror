@@ -7,6 +7,7 @@ import type {
   SyncAction,
   SyncPlan,
 } from "./types";
+import { inWorkingHours } from "./working-hours";
 
 /** Decide whether a rule mirrors a source event at all. */
 export function isIncluded(event: SourceEvent, options: RuleOptions): boolean {
@@ -32,7 +33,7 @@ function included(
   if (skipped && event.categories.some((name) => skipped.has(name.trim().toLowerCase()))) {
     return false;
   }
-  return true;
+  return inWorkingHours(event, options);
 }
 
 /**

@@ -17,13 +17,17 @@ import {
   setDefaultBlockTitle,
   setGroupMembership,
   setGroupMemberships,
+  setWorkingHours,
   setSettings,
   setSourceCalendar,
   type BlockBuffer,
   type SettingsForm,
   type Choice,
+  type WorkingHours,
+  NO_WORKING_HOURS,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
+import { workingHoursProblem } from "../sync/working-hours";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
@@ -219,13 +223,20 @@ rules.post("/direction", async (c) => {
 
 // All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
 // "choice.<from>.<to>", "blockColor.<from>.<to>", "bufferBefore.<from>.<to>",
-// "bufferAfter.<from>.<to>" and "settings.<name>". Every field is checked before the first write,
-// so that an invalid field refuses the whole save. The writes are not one transaction: a D1 or
-// Durable Object failure can still stop them part-way.
+// "bufferAfter.<from>.<to>", the working hours "workDays.<from>.<to>" and so on, and
+// "settings.<name>". Every field is checked before the first write, so that an invalid field
+// refuses the whole save. The writes are not one transaction: a D1 or Durable Object failure can
+// still stop them part-way.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const { t } = i18nFromContext(c);
   const form = await c.req.formData();
+  // The editor sends text only; a file in one of its fields is a bad request, not a skip.
+  for (const [name, value] of form.entries()) {
+    if (typeof value !== "string" && isEditorField(name.split(".")[0])) {
+      return c.text("Bad field", 400);
+    }
+  }
   const fields = (kind: string) =>
     [...form.entries()].flatMap(([name, value]) => {
       const [prefix, first, second, ...rest] = name.split(".");
@@ -268,6 +279,45 @@ rules.post("/choices", async (c) => {
     }
   }
 
+  // Fields of one direction's hours that are missing get the defaults.
+  const hours = new Map<string, { from: string; to: string; hours: Required<WorkingHours> }>();
+  for (const prefix of WORKING_HOURS_FIELDS) {
+    for (const { first, second, value } of fields(prefix)) {
+      if (!second) continue;
+      const entry = hours.get(`${first}>${second}`) ?? {
+        from: first,
+        to: second,
+        hours: { ...NO_WORKING_HOURS },
+      };
+      if (prefix === "workDays") entry.hours.workDays = weekdays(value.split(","));
+      else entry.hours[prefix] = value.trim();
+      hours.set(`${first}>${second}`, entry);
+    }
+  }
+  for (const entry of hours.values()) {
+    if (!directions.some((d) => d.from === entry.from && d.to === entry.to)) {
+      return refuse(c, t.editor.workHoursDirection);
+    }
+    const problem = workingHoursProblem(entry.hours);
+    if (problem) return refuse(c, t.editor.workHoursErrors[problem]);
+  }
+
+  // A direction that loses its last source calendar in this save has no rules left, so its hours
+  // have nothing to change. Skip them here: `setWorkingHours` would fail after the writes below.
+  const sourcesAfter = new Set(
+    accounts.flatMap((account) =>
+      account.calendars.flatMap((calendar) => (calendar.isSource ? [calendar.id] : [])),
+    ),
+  );
+  for (const { first, value } of calendars) {
+    if (value === "1") sourcesAfter.add(first);
+    else sourcesAfter.delete(first);
+  }
+  for (const [key, entry] of hours) {
+    const account = accounts.find((a) => a.id === entry.from);
+    if (!account?.calendars.some((calendar) => sourcesAfter.has(calendar.id))) hours.delete(key);
+  }
+
   // Source calendars first, so that the choices below also reach newly chosen calendars.
   for (const { first, value } of calendars) {
     await setSourceCalendar(c.env, user, first, value === "1");
@@ -286,8 +336,61 @@ rules.post("/choices", async (c) => {
   if (form.has("settings")) {
     await setSettings(c.env, user, settingsFrom(form, t.editor.defaultBlockTitle, "settings."));
   }
+  // Hours last: each helper reads the state that the writes before it left, so the writes are not
+  // one D1 batch. The checks above cover every refusal. A write still fails on a storage error or
+  // if a concurrent request removed the direction; the earlier writes then stay.
+  for (const entry of hours.values()) {
+    if (!(await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours))) {
+      return c.text("Working hours not saved", 409);
+    }
+  }
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
+});
+
+/** ISO weekdays from form values. Anything else becomes NaN, which the options schema refuses. */
+function weekdays(values: (string | File)[]): number[] {
+  return values
+    .filter((value) => typeof value !== "string" || value.trim() !== "")
+    .map((value) => (typeof value === "string" ? Number(value) : Number.NaN));
+}
+
+const WORKING_HOURS_FIELDS = ["workDays", "workStart", "workEnd", "workTimeZone"] as const;
+
+/** Field prefixes of the editor script whose values must be text. */
+function isEditorField(name: string | undefined): boolean {
+  return (
+    name === "calendar" ||
+    name === "choice" ||
+    name === "blockColor" ||
+    name === "bufferBefore" ||
+    name === "bufferAfter" ||
+    isWorkingHoursField(name)
+  );
+}
+
+function isWorkingHoursField(
+  name: string | undefined,
+): name is (typeof WORKING_HOURS_FIELDS)[number] {
+  return (WORKING_HOURS_FIELDS as readonly (string | undefined)[]).includes(name);
+}
+
+rules.post("/direction/hours", async (c) => {
+  const form = await c.req.formData();
+  const from = formText(form, "from");
+  const hours = {
+    workDays: weekdays(form.getAll("workDays")),
+    workStart: formText(form, "workStart").trim(),
+    // A time field cannot hold 24:00; the checkbox "until midnight" stands for it.
+    workEnd: form.has("workUntilMidnight") ? "24:00" : formText(form, "workEnd").trim(),
+    workTimeZone: formText(form, "workTimeZone").trim(),
+  };
+  const { t } = i18nFromContext(c);
+  const problem = workingHoursProblem(hours);
+  if (problem) return refuse(c, t.editor.workHoursErrors[problem]);
+  const ok = await setWorkingHours(c.env, currentUser(c), from, formText(form, "to"), hours);
+  if (!ok) return refuse(c, t.editor.workHoursDirection);
+  return backTo(c, from);
 });
 
 rules.post("/direction/color", async (c) => {

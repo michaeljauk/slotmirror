@@ -181,6 +181,26 @@ export const de: Messages = {
     skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
     skipCategoriesPlaceholder: "Privat, Fokus",
     skipColorsLabel: "Google-Termine mit diesen Farben auslassen",
+    workHoursLabel: "Nur während:",
+    weekdays: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
+    weekdayNames: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
+    workStart: "Von",
+    workEnd: "Bis",
+    workTimeZone: "Zeitzone",
+    workUntilMidnight: "bis Mitternacht",
+    workZoneUnknown: (zone: string) =>
+      `Dieser Server kennt die Zeitzone ${zone} nicht. Bis du eine andere wählst, gelten die Zeiten in UTC.`,
+    workHoursHint:
+      "Nur Termine, die diese Tage und Zeiten berühren, werden kopiert, mit ihren vollen Zeiten. Ohne Zeiten: der ganze Tag.",
+    workHoursErrors: {
+      days: "Arbeitszeit: Wähle mindestens einen Wochentag. Es wurde nichts gespeichert.",
+      time: "Arbeitszeit: Gib Beginn und Ende an, zum Beispiel 08:00 und 18:00, oder lass beide leer. Es wurde nichts gespeichert.",
+      order:
+        "Arbeitszeit: Das Ende muss nach dem Beginn liegen. Für das Tagesende wähle „bis Mitternacht“. Es wurde nichts gespeichert.",
+      zone: "Arbeitszeit: Unbekannte Zeitzone. Gib einen Namen wie Europe/Vienna ein. Es wurde nichts gespeichert.",
+    },
+    workHoursDirection:
+      "Diese Arbeitszeit gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
     googleColor: (id: string) => `Google-Farbe ${id}`,
     blockColorLabel: "Farbe dort:",
     blockColorNone: "Keine Farbe",

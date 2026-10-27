@@ -3,6 +3,13 @@ import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
+import { displayTimeZone } from "./i18n";
+import {
+  ALL_WEEKDAYS,
+  canonicalTimeZone,
+  hasWorkingHours,
+  workingHoursProblem,
+} from "./sync/working-hours";
 import type { CurrentUser } from "./users";
 
 /**
@@ -520,6 +527,104 @@ export async function setAccountColor(
   return updated.meta.changes > 0;
 }
 
+/** Working hours of one direction. A field that is missing keeps its value. */
+export type WorkingHours = Partial<
+  Pick<RuleOptions, "workDays" | "workStart" | "workEnd" | "workTimeZone">
+>;
+
+/** Working hours that filter nothing: the defaults of every rule. */
+export const NO_WORKING_HOURS: Required<WorkingHours> = {
+  workDays: [...ALL_WEEKDAYS],
+  workStart: "",
+  workEnd: "",
+  workTimeZone: "",
+};
+
+/**
+ * Set the working hours of one direction, for every rule of the direction. A direction without
+ * rules ("off") has no blocks, so nothing is stored. Without a time zone the rules get the
+ * deployment's zone, so that their hours stay put if TIME_ZONE changes later. With the filter off
+ * the zone is cleared, so that the rules have their default options again. Returns false for
+ * invalid hours, for example an end at or before the start.
+ */
+export async function setWorkingHours(
+  env: Env,
+  user: CurrentUser,
+  fromId: string,
+  toId: string,
+  hours: WorkingHours,
+): Promise<boolean> {
+  const input = { ...hours };
+  if (input.workTimeZone !== undefined) input.workTimeZone = input.workTimeZone.trim();
+  if (input.workDays) input.workDays = [...input.workDays].sort((a, b) => a - b);
+  const state = await loadEditorState(env, user.id);
+  const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
+  const from = state.accounts.find((account) => account.id === fromId);
+  const to = state.accounts.find((account) => account.id === toId);
+  if (!direction || !from || !to) return false;
+  // The options schema accepts any stored zone, so that a zone a runtime update dropped does not
+  // break the page. A zone given here is new input and must be known.
+  const invalid = (options: object) =>
+    workingHoursProblem({
+      ...NO_WORKING_HOURS,
+      ...options,
+      workTimeZone: input.workTimeZone ?? "",
+    });
+  const rules = direction.slots.flatMap(({ rule }) => (rule ? [rule] : []));
+  // A direction without rules stores nothing, but invalid hours are still refused.
+  if (rules.length === 0) return invalid(input) === null;
+  const hoursOf = (o: RuleOptions) =>
+    JSON.stringify([o.workDays, o.workStart, o.workEnd, o.workTimeZone]);
+  const updates: {
+    ruleId: string;
+    options: RuleOptions;
+    origin: "group" | "custom";
+    parked: boolean;
+  }[] = [];
+  for (const rule of rules) {
+    const merged = { ...rule.options, ...input };
+    const parsed = ruleOptionsSchema.safeParse(merged);
+    if (!parsed.success || invalid(merged) !== null) return false;
+    const options = parsed.data;
+    if (!hasWorkingHours(options)) options.workTimeZone = "";
+    else if (options.workTimeZone === "") options.workTimeZone = displayTimeZone(env.TIME_ZONE);
+    if (options.workTimeZone) options.workTimeZone = canonicalTimeZone(options.workTimeZone);
+    if (hoursOf(options) === hoursOf(rule.options)) continue;
+    // Hours make a group rule an exception, so that the page offers the reset and leaving the
+    // group keeps them. Without hours a busy rule between group members is a group rule again.
+    const origin = groupOrigin(from.inGroup && to.inGroup, rule.enabled, options);
+    updates.push({ ruleId: rule.id, options, origin, parked: isMarkedParked(rule.optionsJson) });
+  }
+  for (const { ruleId, options, origin, parked } of updates) {
+    // The parked mark lives outside the schema; a parked exception stays parked.
+    const stored = parked ? { ...options, parked: true } : options;
+    await env.DB.prepare("UPDATE rules SET options = ?, origin = ? WHERE id = ? AND user_id = ?")
+      .bind(JSON.stringify(stored), origin, ruleId, user.id)
+      .run();
+    await audit(env, user, toId, ruleId, "rule_updated", {
+      workDays: options.workDays.join(","),
+      workStart: options.workStart,
+      workEnd: options.workEnd,
+      workTimeZone: options.workTimeZone,
+    });
+  }
+  if (updates.length > 0) await accountSync(env, toId).requestSync();
+  return true;
+}
+
+/**
+ * The origin of a rule: "group" for an enabled busy rule between two group members without
+ * working hours, otherwise "custom". Working hours make an exception, like any choice but busy.
+ */
+function groupOrigin(
+  bothInGroup: boolean,
+  enabled: boolean,
+  options: RuleOptions,
+): "group" | "custom" {
+  const busy = choiceOf(options, enabled) === "busy";
+  return bothInGroup && busy && !hasWorkingHours(options) ? "group" : "custom";
+}
+
 /**
  * Store the block title of the user's language as the default, for a user who has neither chosen
  * a title nor has rules. Existing rules keep their title, so that no block is renamed.
@@ -763,7 +868,7 @@ export async function setDirection(
       ...(rule?.options ?? direction.options ?? newRuleOptions(state.settings, choice)),
       detailLevel: choice,
     };
-    const origin = bothInGroup && choice === "busy" ? "group" : "custom";
+    const origin = groupOrigin(bothInGroup, true, options);
     if (rule) {
       await env.DB.prepare(
         "UPDATE rules SET options = ?, enabled = 1, origin = ? WHERE id = ? AND user_id = ?",
@@ -890,6 +995,9 @@ export async function resetDirection(
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to?.calendar?.canEdit) return;
+  // Working hours make a direction an exception, so they go first. Then the direction can rejoin
+  // the group, which mirrors at all times; outside the group the rules go anyway.
+  await setWorkingHours(env, user, fromId, toId, NO_WORKING_HOURS);
   await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
   await setBlockColor(env, user, fromId, toId, "");
   await setBlockBuffer(env, user, fromId, toId, { bufferBefore: 0, bufferAfter: 0 });

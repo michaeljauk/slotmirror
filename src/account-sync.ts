@@ -35,6 +35,7 @@ import { accountSync } from "./durable";
 import type { Watch } from "./providers/calendar-client";
 import { FakeCalendar, fakeCallCounts, seedFakeEvents } from "./providers/fake-calendar";
 import { notifyChange, requestSyncs, SyncRequestError, webhookToken, webhookUrl } from "./webhooks";
+import { sendReconnectAlert } from "./alerts";
 
 export interface StoredTokens {
   refreshToken: string;
@@ -54,6 +55,16 @@ export interface RunResult {
   remaining: number;
   /** Set if the provider throttled the run: wait this long before the next request. */
   retryAfterMs?: number;
+}
+
+export interface RunOptions {
+  /** Plan only and write nothing. */
+  dryRun?: boolean;
+  /**
+   * The alarm runs the rule. It keeps unfinished rules queued itself, and it skips a rule whose
+   * source account needs reconnecting.
+   */
+  fromAlarm?: boolean;
 }
 
 /** Pause between two alarm runs of one queue when nothing is throttled. */
@@ -200,6 +211,28 @@ const REMOVAL_QUEUE_KEY = "removalQueue";
 const RECONNECT_CODES = new Set(["invalid_grant", "interaction_required", "consent_required"]);
 
 /**
+ * Durable Object storage key of the pause after a refused refresh token. While it is set, the
+ * instance asks no provider and its alarm does no sync work. New tokens end it.
+ */
+const PAUSE_KEY = "needsReconnect";
+
+/** While paused, try the refused token again after this long; some refusals end by themselves. */
+const PROBE_EVERY_MS = 24 * 60 * 60_000;
+
+interface Pause {
+  /** The provider's error code. */
+  code: string;
+  /** When the refusal was seen. Tells this pause from a later one. */
+  since: number;
+  /** D1 does not show the account as needing a reconnect yet. */
+  flagPending: boolean;
+  /** The alert to ALERT_WEBHOOK_URL is not sent yet. */
+  alertPending: boolean;
+  /** No token probe before this time. */
+  probeAt: number;
+}
+
+/**
  * How long a source calendar's events are reused. Within one sync cycle, every rule from that
  * calendar reads it; with ten accounts that is nine reads of the same data. A new cycle (cron or a
  * change notification) clears the cache, so a change is never missed.
@@ -337,7 +370,8 @@ export class AccountSync extends DurableObject<Env> {
     const pending = await this.pendingAlarm();
     await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
     await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
-    if (pending === null) {
+    // While paused, the mark waits for the alarm that new tokens start.
+    if (pending === null && !(await this.pause())) {
       await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
     }
   }
@@ -350,6 +384,23 @@ export class AccountSync extends DurableObject<Env> {
   async tick(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
+    // The pages show the D1 flag, so the pause follows it. A flag without a pause pauses and
+    // probes; a pause whose flag is gone, after its own D1 write, is stale and ends.
+    const row = await this.env.DB.prepare(
+      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
+    )
+      .bind(accountId)
+      .first<{ flag: number }>();
+    let pause = await this.pause();
+    if (pause && !pause.flagPending && row?.flag === 0) {
+      await this.unpause();
+      return;
+    }
+    if (!pause && row?.flag === 1) pause = await this.pauseForStaleFlag();
+    if (pause) {
+      await this.whilePaused(accountId, pause);
+      return;
+    }
     const lastFull = (await this.ctx.storage.get<number>(FULL_CYCLE_KEY)) ?? 0;
     if (Date.now() - lastFull >= FULL_CYCLE_EVERY_MS) {
       await this.requestSync();
@@ -365,9 +416,10 @@ export class AccountSync extends DurableObject<Env> {
     const { results } = await this.env.DB.prepare(
       `SELECT r.id FROM rules r
        JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN accounts sa ON sa.id = sc.account_id
        JOIN calendars tc ON tc.id = r.target_calendar_id
        JOIN users u ON u.id = r.user_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1
+       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
          AND (sc.watched_until IS NULL OR sc.watched_until < ?
               OR tc.watched_until IS NULL OR tc.watched_until < ?)
        ORDER BY r.id`,
@@ -701,11 +753,24 @@ export class AccountSync extends DurableObject<Env> {
     await this.ctx.storage.put(RECENT_WRITES_KEY, Object.fromEntries(entries));
   }
 
-  /** Replace the stored tokens. Called after an OAuth connect and after every refresh. */
+  /**
+   * Store the tokens of an OAuth connect. They end any pause, also one that a refusal stored while
+   * this call ran.
+   */
   async storeTokens(
     accountId: string,
     tokens: StoredTokens,
     provider: Provider = "microsoft",
+  ): Promise<void> {
+    await this.writeTokens(accountId, tokens, provider);
+    await this.unpause();
+  }
+
+  /** Replace the stored tokens. */
+  private async writeTokens(
+    accountId: string,
+    tokens: StoredTokens,
+    provider: Provider,
   ): Promise<void> {
     const blob = await encryptJson(tokens, this.env.TOKEN_ENCRYPTION_KEY, accountId);
     this.ctx.storage.sql.exec(
@@ -723,6 +788,160 @@ export class AccountSync extends DurableObject<Env> {
       blob.iv,
       tokens.accessExpiresAt,
     );
+  }
+
+  private async pause(): Promise<Pause | null> {
+    return (await this.ctx.storage.get<Pause>(PAUSE_KEY)) ?? null;
+  }
+
+  /** Change the pause that started at `since`. Returns null if that pause is over. */
+  private updatePause(since: number, change: (pause: Pause) => Pause): Promise<Pause | null> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const pause = await this.pause();
+      if (pause?.since !== since) return null;
+      const next = change(pause);
+      await this.ctx.storage.put(PAUSE_KEY, next);
+      return next;
+    });
+  }
+
+  /**
+   * End a pause, if any. Its rule queue is stale, so a full cycle starts. A refusal cannot store a
+   * pause after this: it compares the refused token with the stored one first, in one step.
+   */
+  private async unpause(): Promise<void> {
+    if (!(await this.pause())) return;
+    await this.ctx.storage.delete([PAUSE_KEY, RULE_QUEUE_KEY, FULL_CYCLE_KEY]);
+    // Removals that wait after attempts with the refused token may run now.
+    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) =>
+      queue.map(({ notBefore: _wait, ...job }) => job),
+    );
+    // Other accounts skip rules from this one while the flag is set.
+    const accountId = this.accountId();
+    await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
+      .bind(accountId)
+      .run();
+    await this.requestSync();
+    // The accounts that read from this one skipped its rules; they sync now too. A failed request
+    // is retried by a later alarm.
+    await this.requestSyncAfterChange(accountId);
+  }
+
+  /**
+   * Pause after the provider refused `refusedToken`. The pause is stored first, so that an
+   * eviction cannot lose it; the D1 flag and the alert follow and are finished by a later tick if
+   * needed. A reconnect while the refresh waited on the network replaced the refused token; then
+   * nothing changes.
+   */
+  private async pauseAfterRefusal(
+    accountId: string,
+    refusedToken: string,
+    code: string,
+  ): Promise<void> {
+    const before = await this.env.DB.prepare(
+      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
+    )
+      .bind(accountId)
+      .first<{ flag: number }>();
+    // A disconnected account is on its way out; it needs no pause and no alert.
+    if (!before) return;
+    const since = Date.now();
+    const started = await this.ctx.blockConcurrencyWhile(async () => {
+      const current = await this.readTokens().catch(() => null);
+      if (current?.tokens.refreshToken !== refusedToken || (await this.pause())) return false;
+      const pause: Pause = {
+        code,
+        since,
+        flagPending: true,
+        // An account that the pages already show as needing a reconnect had its alert.
+        alertPending: before.flag !== 1,
+        probeAt: since + PROBE_EVERY_MS,
+      };
+      await this.ctx.storage.put(PAUSE_KEY, pause);
+      return true;
+    });
+    if (started) await this.finishPause(accountId, since);
+  }
+
+  /**
+   * D1 shows the account as needing a reconnect, but this instance has no pause. Older versions
+   * set only the flag, and a late flag write can outlive a reconnect. Pause and probe at once:
+   * if the token works, the probe ends the pause and clears the flag. No alert; the flag was set
+   * before.
+   */
+  private async pauseForStaleFlag(): Promise<Pause> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const current = await this.pause();
+      if (current) return current;
+      const now = Date.now();
+      const pause: Pause = {
+        code: "needs_reconnect",
+        since: now,
+        flagPending: false,
+        alertPending: false,
+        probeAt: now,
+      };
+      await this.ctx.storage.put(PAUSE_KEY, pause);
+      return pause;
+    });
+  }
+
+  /** Set the D1 flag and send the alert of a pause, each at most once. */
+  private async finishPause(accountId: string, since: number): Promise<void> {
+    let pause = await this.pause();
+    if (pause?.since !== since) return;
+    if (pause.flagPending) {
+      await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
+        .bind(accountId)
+        .run();
+      pause = await this.updatePause(since, (current) => ({ ...current, flagPending: false }));
+      if (!pause) {
+        // New tokens ended the pause during the write, which may have landed after their reset.
+        if (!(await this.pause())) {
+          await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
+            .bind(accountId)
+            .run();
+        }
+        return;
+      }
+    }
+    // Claimed before the request, so that the alert goes out at most once. A failed post is lost.
+    let claimed = false;
+    await this.updatePause(since, (current) => {
+      claimed = current.alertPending;
+      return { ...current, alertPending: false };
+    });
+    if (claimed) await sendReconnectAlert(this.env, this.providerOrDefault());
+  }
+
+  /** The alarm's and the tick's work while paused: finish the pause, and probe once a day. */
+  private async whilePaused(accountId: string, pause: Pause): Promise<void> {
+    await this.finishPause(accountId, pause.since);
+    await this.probe(pause.since);
+  }
+
+  /**
+   * Try the refused token again. Some refusals end by themselves, such as a user who was disabled
+   * for a while. If the provider accepts it, the pause ends and a sync starts.
+   */
+  private async probe(since: number): Promise<void> {
+    // Claimed in one step: an overlapping tick or alarm finds the next probe a day away. The next
+    // probe also waits a day if this one fails or the instance goes away during it.
+    let due = false;
+    await this.updatePause(since, (current) => {
+      const now = Date.now();
+      due = now >= current.probeAt;
+      return due ? { ...current, probeAt: now + PROBE_EVERY_MS } : current;
+    });
+    if (!due) return;
+    const stored = await this.readTokens();
+    try {
+      await this.refresh(stored.accountId, stored.provider, stored.tokens.refreshToken);
+    } catch (error) {
+      console.error("Token probe failed", ...errorLogFields(error));
+      return;
+    }
+    await this.unpause();
   }
 
   async hasTokens(): Promise<boolean> {
@@ -906,7 +1125,7 @@ export class AccountSync extends DurableObject<Env> {
     return this.startRun(ruleId, { fromAlarm: true });
   }
 
-  private startRun(ruleId: string, options: { fromAlarm?: boolean } = {}): Promise<RunResult> {
+  private startRun(ruleId: string, options: RunOptions = {}): Promise<RunResult> {
     const run: Promise<RunResult> = this.runRuleOnce(ruleId, options).finally(() => {
       if (this.runningRules.get(ruleId) === run) this.runningRules.delete(ruleId);
     });
@@ -914,10 +1133,7 @@ export class AccountSync extends DurableObject<Env> {
     return run;
   }
 
-  private async runRuleOnce(
-    ruleId: string,
-    options: { dryRun?: boolean; fromAlarm?: boolean },
-  ): Promise<RunResult> {
+  private async runRuleOnce(ruleId: string, options: RunOptions): Promise<RunResult> {
     try {
       return await this.executeRule(ruleId, options);
     } catch (error) {
@@ -927,15 +1143,24 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  private async executeRule(
-    ruleId: string,
-    options: { dryRun?: boolean; fromAlarm?: boolean },
-  ): Promise<RunResult> {
+  private async executeRule(ruleId: string, options: RunOptions): Promise<RunResult> {
     const startedAt = Date.now();
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
     if (rule.target.accountId !== this.accountId()) {
       throw new Error("A rule runs in the instance of its target account");
+    }
+    // The rule was queued before its source account needed reconnecting. Its read would only
+    // fail; it runs again in the full cycle after the reconnect. No audit entry.
+    if (options.fromAlarm && rule.source.needsReconnect) {
+      return {
+        ruleId,
+        dryRun: false,
+        stats: { create: 0, update: 0, delete: 0, unchanged: 0 },
+        applied: 0,
+        failed: 0,
+        remaining: 0,
+      };
     }
 
     const window = syncWindow(rule.options);
@@ -1298,6 +1523,9 @@ export class AccountSync extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     await this.runAlarm();
+    // While paused, the alarm runs neither removals nor the retry of a sync request, so an alarm
+    // for them would fire again and again. They wait in storage until new tokens start an alarm.
+    if (await this.pause()) return;
     // After the last rule or check no alarm is left; a waiting removal or retry still needs one.
     await this.keepRemovalAlarm();
     await this.keepRetryAlarm();
@@ -1314,6 +1542,15 @@ export class AccountSync extends DurableObject<Env> {
         );
         await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
       }
+      return;
+    }
+    // Every provider call would fail. The work waits for new tokens, which start a full cycle;
+    // queued removals stay. A retiring account has no row to reconnect, and its refused tokens can
+    // neither remove blocks nor stop watches, so it goes now. Its watches end on their own.
+    const pause = await this.pause();
+    if (pause) {
+      if (await this.retiring()) await this.forget();
+      else await this.whilePaused(accountId, pause);
       return;
     }
     // A retiring account stops its watches in an alarm of their own, so that `retire()` never
@@ -1651,6 +1888,9 @@ export class AccountSync extends DurableObject<Env> {
     if (stored.tokens.accessExpiresAt - REFRESH_MARGIN_MS > Date.now()) {
       return stored.tokens.accessToken;
     }
+    // A refused refresh token stays refused; do not ask the token endpoint again.
+    const pause = await this.pause();
+    if (pause) throw new TokenError(pause.code);
     // Requests interleave while a refresh waits on the network; refresh only once.
     this.refreshing ??= this.refresh(
       stored.accountId,
@@ -1716,9 +1956,7 @@ export class AccountSync extends DurableObject<Env> {
     } catch (error) {
       // A refused refresh token does not recover by itself; the user has to connect again.
       if (error instanceof TokenError && RECONNECT_CODES.has(error.code)) {
-        await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
-          .bind(accountId)
-          .run();
+        await this.pauseAfterRefusal(accountId, refreshToken, error.code);
       }
       const owner = await accountOwner(this.env.DB, accountId);
       if (owner) {
@@ -1731,7 +1969,7 @@ export class AccountSync extends DurableObject<Env> {
       }
       throw error;
     }
-    await this.storeTokens(
+    await this.writeTokens(
       accountId,
       {
         refreshToken: response.refresh_token ?? refreshToken,

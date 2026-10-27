@@ -483,9 +483,9 @@ async function bareAccount(accountId: string, accessExpiresAt = Date.now() + 3_6
  * Fake Graph with one block of the deleted rule `gone-rule` in the target calendar. Deletes answer
  * `deleteStatus`, creates 201. Records the method of every batch request.
  */
-async function stuckBlockGraph(deleteStatus: number) {
+async function stuckBlockGraph(deleteStatus: number, ruleId = "gone-rule") {
   const [template] = fixture.value;
-  const tag = await ruleTagFor("gone-rule");
+  const tag = await ruleTagFor(ruleId);
   const graph = { deleteStatus, methods: [] as string[], downCalendar: "" };
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -654,6 +654,30 @@ describe("alarm queue", () => {
     expect(await removalsOf(stub)).toBeUndefined();
     // One read per attempt; no attempt retries within its own invocation.
     expect(reads.filter((url) => url.includes(TARGET_CAL))).toHaveLength(5);
+  });
+
+  it("drops a waiting removal once its rule runs again, and keeps it while the rule is off", async () => {
+    // A group direction turned off keeps its rule ID; a reset to busy enables the same rule.
+    const { stub, ruleId } = await setupRule("acc-removal-revived");
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+    await stub.storeTokens("acc-removal-revived", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const graph = await stuckBlockGraph(500, ruleId);
+    const deletes = () => graph.methods.filter((method) => method === "DELETE").length;
+
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect(await removalsOf(stub)).toBeUndefined();
   });
 
   it("runs the account's rules while a removal waits for its next attempt", async () => {

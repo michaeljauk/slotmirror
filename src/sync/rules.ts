@@ -96,6 +96,23 @@ export async function rulesTargetingAccount(db: D1Database, accountId: string): 
   return results.map((row) => row.id);
 }
 
+/** True if the rule is enabled, its user is active, and it writes into this calendar. */
+export async function ruleWritesInto(
+  db: D1Database,
+  ruleId: string,
+  remoteCalendarId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS found FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN users u ON u.id = r.user_id
+       WHERE r.id = ? AND tc.remote_id = ? AND r.enabled = 1 AND u.active = 1`,
+    )
+    .bind(ruleId, remoteCalendarId)
+    .first<{ found: number }>();
+  return row !== null;
+}
+
 /**
  * The other enabled rules of the same user that write into the target calendar of a rule. Their
  * blocks can stand in for the rule's own; see `desiredBlocks`.

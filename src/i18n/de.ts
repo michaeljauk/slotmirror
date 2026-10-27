@@ -144,7 +144,8 @@ export const de: Messages = {
     checkReal: "Mit echten Terminen prüfen",
     capNote: (level: string) =>
       `Die Richtlinie dieser Installation erlaubt hier höchstens „${level}“.`,
-    readOnly:
+    readOnly: "slotmirror kann in diesen Kalender nicht schreiben.",
+    readOnlyTurnOff:
       "slotmirror kann in diesen Kalender nicht schreiben. Du kannst diese Richtung nur ausschalten.",
     moreOptions: "Mehr Optionen",
     save: "Speichern",

@@ -596,7 +596,8 @@ export async function setSourceCalendar(
 
 /**
  * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
- * goes too, because the group writes blocks without a colour. A read-only target goes to "off".
+ * goes too, because the group writes blocks without a colour. A read-only target stays as it is:
+ * `can_edit` can be wrong, so a reset must not remove blocks there. "Off" is the explicit way.
  */
 export async function resetDirection(
   env: Env,
@@ -607,9 +608,8 @@ export async function resetDirection(
   const state = await loadEditorState(env, user.id);
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
-  if (!from || !to) return;
-  const busy = from.inGroup && to.inGroup && to.calendar?.canEdit;
-  await setDirection(env, user, fromId, toId, busy ? "busy" : "off");
+  if (!from || !to?.calendar?.canEdit) return;
+  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
   await setBlockColor(env, user, fromId, toId, "");
 }
 

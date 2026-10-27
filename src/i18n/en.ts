@@ -142,7 +142,9 @@ export const en = {
     reset: "reset",
     checkReal: "Check with real events",
     capNote: (level: string) => `This deployment's policy allows at most “${level}” here.`,
-    readOnly: "slotmirror cannot write to this calendar. You can only turn this direction off.",
+    readOnly: "slotmirror cannot write to this calendar.",
+    readOnlyTurnOff:
+      "slotmirror cannot write to this calendar. You can only turn this direction off.",
     moreOptions: "More options",
     save: "Save",
     matrixCorner: "From ↓ · to →",

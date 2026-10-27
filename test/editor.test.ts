@@ -160,7 +160,7 @@ async function makeReadOnly(accountId: string) {
 
 async function removalsOf(accountId: string) {
   return runInDurableObject(env.ACCOUNT_SYNC.getByName(accountId), (_instance, state) =>
-    state.storage.get<{ ruleId: string }[]>("removalQueue"),
+    state.storage.get<{ ruleId: string; remoteCalendarId: string }[]>("removalQueue"),
   );
 }
 
@@ -179,7 +179,9 @@ describe("read-only target", () => {
 
     await setDirection(env, user, w, o, "off");
     expect(await rulesOf(user.id)).toEqual([]);
-    expect(await removalsOf(o)).toHaveLength(1);
+    expect(await removalsOf(o)).toEqual([
+      expect.objectContaining({ remoteCalendarId: `${o}-remote` }),
+    ]);
   });
 
   it("turns a group direction off with a disabled exception, and does not turn it on", async () => {
@@ -193,7 +195,9 @@ describe("read-only target", () => {
       enabled: 0,
       origin: "custom",
     });
-    expect(await removalsOf(g)).toHaveLength(1);
+    expect(await removalsOf(g)).toEqual([
+      expect.objectContaining({ remoteCalendarId: `${g}-remote` }),
+    ]);
 
     await setDirection(env, user, w, g, "busy");
     expect((await rulesOf(user.id)).find((r) => r.source === w && r.target === g)).toMatchObject({
@@ -202,39 +206,54 @@ describe("read-only target", () => {
     });
   });
 
-  it("resets an exception to off, inside and outside the group", async () => {
+  it("leaves a direction unchanged on reset, inside and outside the group", async () => {
+    // can_edit can be wrong, so a reset must not remove working blocks.
     const { user, w, o, g } = await setup("ro-reset");
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
     await setDirection(env, user, w, g, "full");
+    await setBlockColor(env, user, w, g, "3");
     await setDirection(env, user, w, o, "title");
     await makeReadOnly(g);
     await makeReadOnly(o);
+    const before = await rulesOf(user.id);
 
     await resetDirection(env, user, w, g);
     await resetDirection(env, user, w, o);
-    const rules = await rulesOf(user.id);
-    expect(rules.find((r) => r.source === w && r.target === g)).toMatchObject({
-      enabled: 0,
-      origin: "custom",
-    });
-    expect(rules.some((r) => r.source === w && r.target === o)).toBe(false);
+    expect(await rulesOf(user.id)).toEqual(before);
+    const state = await loadEditorState(env, user.id);
+    expect(state.directions.find((d) => d.from === w && d.to === g)?.options?.blockColor).toBe("3");
+    expect(await removalsOf(g)).toBeUndefined();
+    expect(await removalsOf(o)).toBeUndefined();
   });
 
-  it("offers only off on the page", async () => {
-    const { user, cookie, w, o } = await setup("ro-page");
+  it("offers off and the current choice on the page, without a reset", async () => {
+    const { user, cookie, w, o, g } = await setup("ro-page");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, w, g, "full");
     await setDirection(env, user, w, o, "title");
     await makeReadOnly(o);
+    await makeReadOnly(g);
+    const page = async () =>
+      (await exports.default.fetch(`${BASE}/rules?open=${w}`, { headers: { cookie } })).text();
 
-    const html = await (
-      await exports.default.fetch(`${BASE}/rules?open=${w}`, { headers: { cookie } })
-    ).text();
+    let html = await page();
     const form = html.match(new RegExp(`<form[^>]*data-to="${o}"[^>]*>[\\s\\S]*?</form>`))?.[0];
     const button = (choice: string) =>
       form?.match(new RegExp(`<button[^>]*value="${choice}"[^>]*>`))?.[0];
-    expect(button("off")).not.toContain("disabled");
-    for (const choice of ["busy", "title", "full"]) expect(button(choice)).toContain("disabled");
-    expect(html).toContain("slotmirror cannot write to this calendar");
+    for (const choice of ["off", "title"]) expect(button(choice)).not.toContain("disabled");
+    for (const choice of ["busy", "full"]) expect(button(choice)).toContain("disabled");
+    expect(html).toContain("You can only turn this direction off.");
+    expect(html).not.toContain('action="/rules/direction/reset"');
+
+    // Once every direction into the read-only calendars is off, the note no longer says "only off".
+    await setDirection(env, user, w, o, "off");
+    await setDirection(env, user, w, g, "off");
+    html = await page();
+    expect(html).toContain("slotmirror cannot write to this calendar.");
+    expect(html).not.toContain("You can only turn this direction off.");
+    expect(html).not.toContain('action="/rules/direction/reset"');
   });
 });
 

@@ -34,6 +34,13 @@ tokens stay with you and not with a sync service.
   that mailbox; create it in Outlook first.
 - **A colour per account.** Each account gets its own colour in the pages, automatically or
   chosen under "Name and colour". It does not change any calendar.
+- **Origin note.** A rule can name the source account in each block's description, for example
+  "From: Work (Microsoft)", and add a link to the source event. An account without a name shows
+  as "Microsoft account" or "Google account", never with its address. The link needs detail level
+  "title" or more, and a private event never gets one. Where a detail cap lowers the rule's level,
+  neither note nor link is written. The link is the one exception to "no source ID leaves the
+  source": it holds the provider's event ID, and Google's link also encodes the calendar ID, which
+  for a main calendar is the account's address. The settings for this come with the new editor.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes within seconds.** Microsoft and Google notify your deployment when a calendar

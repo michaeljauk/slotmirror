@@ -428,6 +428,7 @@ export const de: Messages = {
   },
   mirror: {
     origin: (account, provider) => `Aus: ${account} (${provider})`,
+    originAccount: (provider) => `Aus: ${provider}-Konto`,
     microsoft: "Microsoft",
     google: "Google",
   },

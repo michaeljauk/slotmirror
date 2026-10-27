@@ -83,14 +83,27 @@ function toContext(row: RuleRow): RuleContext {
 }
 
 /**
- * The first line of the origin note of a rule's blocks, e.g. "From: Work (Microsoft)": the name the
- * user gave the source account, else its address, in the language stored with the option.
+ * The first line of the origin note of a rule's blocks, in the language stored with the option:
+ * "From: Work (Microsoft)" with the name the user gave the source account, else "From: Microsoft
+ * account". Never the address: the target calendar can be visible to other people.
  */
 export function originLine(rule: Pick<RuleContext, "options" | "source">): string {
   const locale = rule.options.originLocale;
   const t = messagesFor(isLocale(locale) ? locale : LOCALES[0]).mirror;
-  const name = (rule.source.name ?? "").replace(/\s+/g, " ").trim() || rule.source.email;
-  return t.origin(name, rule.source.provider === "google" ? t.google : t.microsoft);
+  const provider = rule.source.provider === "google" ? t.google : t.microsoft;
+  const name = noteName(rule.source.name ?? "");
+  return name === "" ? t.originAccount(provider) : t.origin(name, provider);
+}
+
+/** Bidi controls, which can reorder the text around the name. */
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/** An account name for the note: one line, without control or bidi characters. */
+function noteName(name: string): string {
+  return name
+    .replace(BIDI_CONTROLS, "")
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim();
 }
 
 export async function loadRule(db: D1Database, ruleId: string): Promise<RuleContext | null> {

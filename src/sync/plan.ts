@@ -1,6 +1,7 @@
 import type { RuleOptions } from "../config";
 import type {
   BlockContent,
+  DetailLevel,
   DesiredBlock,
   ExistingBlock,
   SourceEvent,
@@ -58,30 +59,37 @@ export function blockContent(
     isPrivate: options.markPrivate || event.isPrivate,
     subject: withTitle ? event.subject : options.blockTitle,
     location: level === "title_location" || level === "full" ? event.location : "",
-    body: blockBody(level === "full" ? event.body : "", event, options, origin),
+    body: blockBody(level === "full" ? event.body : "", level, event, options, origin),
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
   };
 }
 
 /**
  * The description of a block: the copied description, then the origin note after a blank line.
- * The note is the origin line and, with `linkOrigin`, the link to the source event below it. It
- * is part of the content hash, so a run writes it once and the next run finds the block unchanged.
+ * The note is the origin line and, with `linkOrigin`, the link to the source event below it. The
+ * link needs detail level "title" or more, so a private source event never gets one. The note is
+ * part of the content hash, so a run writes it once and the next run finds the block unchanged.
  */
 function blockBody(
   copied: string,
+  level: DetailLevel,
   event: SourceEvent,
   options: RuleOptions,
   origin: string | null,
 ): string {
   if (!options.showOrigin || !origin) return copied;
-  const link = options.linkOrigin ? event.link : undefined;
+  const link = options.linkOrigin && level !== "busy" ? event.link : undefined;
   const note = link ? `${origin}\n${link}` : origin;
   const text = copied.trimEnd();
   return text === "" ? note : `${text}\n\n${note}`;
 }
 
-/** Marker for a block: SHA-256 of rule ID and occurrence key, so no source ID leaves the source. */
+/**
+ * Marker for a block: SHA-256 of rule ID and occurrence key, so the marker carries no source ID.
+ * The one exception to "no source ID leaves the source" is the origin link (`linkOrigin`): the
+ * provider's address of the source event, written only at detail level "title" or more, never for
+ * a private event, and never where a cap of the deployment lowers the rule's level.
+ */
 export async function markerFor(ruleId: string, occurrenceKey: string): Promise<string> {
   return shortHash(markerText(ruleId, occurrenceKey));
 }

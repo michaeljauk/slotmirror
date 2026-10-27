@@ -953,15 +953,14 @@ export class AccountSync extends DurableObject<Env> {
 
     const window = syncWindow(rule.options);
     // The org's caps apply at every run, so lowering a cap also changes the blocks already written.
-    const ruleOptions = {
-      ...rule.options,
-      detailLevel: detailLevelFor(this.env, rule.options.detailLevel, rule.source, rule.target)
-        .level,
-    };
+    const effective = detailLevelFor(this.env, rule.options.detailLevel, rule.source, rule.target);
+    const ruleOptions = { ...rule.options, detailLevel: effective.level };
     const withBody = ruleOptions.detailLevel === "full";
-    // The origin note names the source account; the link needs one more field per occurrence.
-    const origin = ruleOptions.showOrigin ? originLine(rule) : null;
-    const withLink = origin !== null && ruleOptions.linkOrigin;
+    // The origin note names the source account. Where a cap lowers the level, the org limits what
+    // crosses, so the rule writes neither the note nor the link.
+    const origin = ruleOptions.showOrigin && !effective.capped ? originLine(rule) : null;
+    // The link needs one more field per occurrence, and detail level "title" or more.
+    const withLink = origin !== null && ruleOptions.linkOrigin && effective.level !== "busy";
     const sourceEvents =
       rule.source.accountId === this.accountId()
         ? await this.readSourceEvents(rule.source.remoteCalendarId, window, withBody, {

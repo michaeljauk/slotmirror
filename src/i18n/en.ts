@@ -422,6 +422,8 @@ export const en = {
   /** Text that the sync writes into mirrored blocks, in the language of the rule's owner. */
   mirror: {
     origin: (account: string, provider: string) => `From: ${account} (${provider})`,
+    /** For an account without a name: the provider only, never the address. */
+    originAccount: (provider: string) => `From: ${provider} account`,
     microsoft: "Microsoft",
     google: "Google",
   },

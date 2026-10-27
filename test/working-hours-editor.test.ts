@@ -179,7 +179,9 @@ describe("working hours of an account", () => {
       .filter(([input]) => /checked/.test(input))
       .map(([input]) => input.match(/value="(\d)"/)?.[1]);
     expect(checked).toEqual(["1", "2", "3", "4", "5"]);
-    expect(fieldset).toContain("Mo–Fr 08:00–18:00");
+    expect(fieldset).toContain(
+      'title="You turn it on per calendar in the sync settings. Without working hours the whole day counts."',
+    );
     expect(html).toMatch(/<details class="rename" open/);
 
     const cases = [
@@ -450,6 +452,25 @@ describe("working hours per target", () => {
     expect(response.status).toBe(204);
     expect(await optionsOf(user.id, g, w)).toMatchObject(OFFICE);
   });
+});
+
+describe("routes of pages opened before the editor rebuild", () => {
+  const cases = [
+    ["/rules/direction/color", { blockColor: "Focus" }],
+    ["/rules/direction/hours", { workDays: "1", workStart: "08:00", workEnd: "18:00" }],
+    ["/rules/direction/buffer", { bufferBefore: "30", bufferAfter: "30" }],
+  ] as const;
+  for (const [path, fields] of cases) {
+    it(`answers ${path} with a redirect to the editor and writes nothing`, async () => {
+      const { user, cookie, w, g } = await setup(`old${path.split("/").at(-1)}`);
+      await setDirection(env, user, g, w, "busy");
+      const before = await rulesOf(user.id, g, w);
+      const response = await post(path, cookie, new URLSearchParams({ from: g, to: w, ...fields }));
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toBe("/rules");
+      expect(await rulesOf(user.id, g, w)).toEqual(before);
+    });
+  }
 });
 
 describe("working hours in the block group", () => {

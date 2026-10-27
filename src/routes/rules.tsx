@@ -320,6 +320,12 @@ rules.post("/direction/details", async (c) => {
   return backTo(c, from);
 });
 
+// These routes exist only for pages opened before the editor rebuild: their forms posted here
+// without the editor script. They write nothing and send the browser back to the editor.
+for (const path of ["/direction/color", "/direction/hours", "/direction/buffer"]) {
+  rules.post(path, (c) => c.redirect("/rules", 303));
+}
+
 // The buffer of one source from the form without the editor script.
 rules.post("/source/buffer", async (c) => {
   const user = currentUser(c);

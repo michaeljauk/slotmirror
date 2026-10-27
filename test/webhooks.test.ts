@@ -206,8 +206,11 @@ describe("cron ticks", () => {
     expect(await alarmOf(b)).not.toBeNull();
     expect(await queueOf(b)).toBeUndefined();
 
-    // After a recent full cycle, an unwatched source is polled.
-    await runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm());
+    // After a recent full cycle, an unwatched source is polled. The cycle cleared its request.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.deleteAlarm();
+      await state.storage.delete("fullCycleRequested");
+    });
     await setFullCycle(b, Date.now());
     await stub.tick();
     expect(await queueOf(b)).toEqual(["tick-rule"]);
@@ -361,6 +364,61 @@ describe("echo filter", () => {
       await runInDurableObject(target, (_instance, state) => state.storage.get("ruleQueue")),
     ).toBeUndefined();
     expect(await alarmOf(a)).toBeNull();
+  });
+
+  it("runs a requested full cycle after a check that finds only its own writes", async () => {
+    const { a, b } = await setup("emarked");
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    // The alarm is only for the check, but a full cycle is requested as well.
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("recentWrites", { "block-1": Date.now() });
+      await state.storage.put("fullCycleRequested", true);
+    });
+    await notifyGraph(b, "block-1");
+    expect(
+      await runInDurableObject(target, (_instance, state) => state.storage.get("feedOnlyAlarm")),
+    ).toBe(true);
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return Response.json({ value: [] });
+    });
+
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+
+    expect(urls.some((url) => url.includes(`/calendars/${a}-remote/calendarView`))).toBe(true);
+    expect(
+      await runInDurableObject(target, (_instance, state) =>
+        state.storage.get("fullCycleRequested"),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("runs no further cycle for a notification about its own writes during a cycle", async () => {
+    const { b } = await setup("ecycle");
+    const target = env.ACCOUNT_SYNC.getByName(b);
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("recentWrites", { "block-1": Date.now() });
+      await state.storage.put("ruleQueue", ["ecycle-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ value: [] }));
+    const marked = () =>
+      runInDurableObject(target, (_instance, state) => state.storage.get("fullCycleRequested"));
+
+    await notifyGraph(b, "block-1");
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(await marked()).toBeUndefined();
+    expect(await alarmOf(b)).toBeNull();
+
+    // A notification about another change during a cycle asks for one more.
+    await runInDurableObject(target, async (_instance, state) => {
+      await state.storage.put("ruleQueue", ["ecycle-rule"]);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    await notifyGraph(b, "someone-elses-meeting");
+    expect(await runDurableObjectAlarm(target)).toBe(true);
+    expect(await marked()).toBe(true);
   });
 
   /**

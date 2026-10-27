@@ -2,8 +2,9 @@ import * as z from "zod/mini";
 import {
   fromGraphEvent,
   GRAPH_EVENT_SELECT,
-  graphEventSchema,
   graphMarkerValue,
+  graphSourceEvent,
+  parseGraphEvent,
   LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
   markerValueFor,
@@ -137,9 +138,9 @@ export class GraphCalendar implements CalendarClient {
   ): Promise<ExistingBlock[]> {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.calendarView(calendarId, window)) {
-      const event = graphEventSchema.parse(raw);
+      const event = parseGraphEvent(raw);
       const value = graphMarkerValue(event.singleValueExtendedProperties);
-      const source = fromGraphEvent(raw);
+      const source = graphSourceEvent(event);
       if (!value || !source) continue;
       const parsed = parseMarkerValue(value);
       if (!ruleTags.includes(parsed.ruleTag)) continue;

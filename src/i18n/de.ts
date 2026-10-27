@@ -58,7 +58,7 @@ export const de: Messages = {
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
     disconnectText: (email) =>
-      `slotmirror löscht seine Tokens für ${email} und liest und schreibt dessen Kalender nicht mehr.`,
+      `slotmirror entfernt die Blöcke, die es in die Kalender von ${email} geschrieben hat, löscht danach seine Tokens und liest und schreibt diese Kalender nicht mehr.`,
     disconnectRules: (count) =>
       count === 0
         ? "Keine Regel nutzt dieses Konto."
@@ -144,6 +144,9 @@ export const de: Messages = {
     checkReal: "Mit echten Terminen prüfen",
     capNote: (level: string) =>
       `Die Richtlinie dieser Installation erlaubt hier höchstens „${level}“.`,
+    readOnly: "slotmirror kann in diesen Kalender nicht schreiben.",
+    readOnlyTurnOff:
+      "slotmirror kann in diesen Kalender nicht schreiben. Du kannst diese Richtung nur ausschalten.",
     moreOptions: "Mehr Optionen",
     save: "Speichern",
     matrixCorner: "Von ↓ · nach →",
@@ -234,7 +237,7 @@ export const de: Messages = {
       "In Cloudflare Workers, D1 und Durable Objects im Cloudflare-Konto des Betreibers sowie bei Microsoft und Google, wenn Kalender gelesen und geschrieben werden.",
     deleteTitle: "Wie du deine Daten löschst",
     delete:
-      "Trennst du ein Konto, werden seine Tokens und die von slotmirror dafür geschriebenen Blöcke gelöscht. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
+      "Trennst du ein Konto, löscht slotmirror die dafür geschriebenen Blöcke und danach seine Tokens. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
     googleTitle: "Nutzerdaten von Google",
     google:
       "Die Nutzung und Weitergabe von Informationen aus Google APIs durch slotmirror entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",

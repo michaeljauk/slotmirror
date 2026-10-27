@@ -4,7 +4,7 @@ import { ruleOptionsSchema } from "../src/config";
 import { GoogleCalendar, parseBatchStatuses } from "../src/providers/google-calendar";
 import { fromGoogleEvent, toGoogleBlock } from "../src/sync/google-events";
 import { desiredBlocks } from "../src/sync/plan";
-import type { SourceEvent } from "../src/sync/types";
+import type { DesiredBlock, SourceEvent, SyncAction } from "../src/sync/types";
 import fixture from "./fixtures/google/events.json";
 import { base64url } from "../src/session";
 import { OAUTH_COOKIE } from "../src/oauth";
@@ -157,6 +157,81 @@ describe("Google batch", () => {
     });
     expect(sent).toContain("POST /calendar/v3/calendars/primary/events HTTP/1.1");
     expect(sent).toContain("DELETE /calendar/v3/calendars/primary/events/old HTTP/1.1");
+  });
+
+  describe("times of a written block", () => {
+    const block = (allDay: boolean): DesiredBlock => ({
+      marker: "m".repeat(32),
+      contentHash: "h".repeat(32),
+      dedupKey: "d".repeat(32),
+      start: allDay ? "2026-11-02" : "2026-11-02T09:00:00.000Z",
+      end: allDay ? "2026-11-03" : "2026-11-02T10:00:00.000Z",
+      allDay,
+      showAs: "busy",
+      isPrivate: true,
+      subject: "Busy",
+      location: "",
+      body: "",
+    });
+
+    /** Method, start and end of each request in the batch that `actions` send. */
+    async function sentTimes(actions: SyncAction[]) {
+      let sent = "";
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+        sent = init?.body as string;
+        return new Response("--r--", {
+          headers: { "content-type": "multipart/mixed; boundary=r" },
+        });
+      });
+      await new GoogleCalendar("token").applyBatch("primary", "tag123456789", actions);
+      return sent
+        .split(/^--batch_.*$/m)
+        .filter((part) => /^(POST|PATCH) /m.test(part))
+        .map((part) => {
+          const body = JSON.parse(part.slice(part.indexOf("{"))) as {
+            start: unknown;
+            end: unknown;
+          };
+          return { method: /^(POST|PATCH) /m.exec(part)?.[1], start: body.start, end: body.end };
+        });
+    }
+
+    it("clears dateTime and timeZone when an update makes a timed block all-day", async () => {
+      // Google merges an object field on PATCH; only null removes the stored dateTime.
+      expect(await sentTimes([{ kind: "update", targetId: "evt1", block: block(true) }])).toEqual([
+        {
+          method: "PATCH",
+          start: { date: "2026-11-02", dateTime: null, timeZone: null },
+          end: { date: "2026-11-03", dateTime: null, timeZone: null },
+        },
+      ]);
+    });
+
+    it("clears date when an update makes an all-day block timed", async () => {
+      expect(await sentTimes([{ kind: "update", targetId: "evt1", block: block(false) }])).toEqual([
+        {
+          method: "PATCH",
+          start: { dateTime: "2026-11-02T09:00:00.000Z", timeZone: "UTC", date: null },
+          end: { dateTime: "2026-11-02T10:00:00.000Z", timeZone: "UTC", date: null },
+        },
+      ]);
+    });
+
+    it("sends only the fields of the block's kind when it creates a block", async () => {
+      expect(
+        await sentTimes([
+          { kind: "create", block: block(true) },
+          { kind: "create", block: block(false) },
+        ]),
+      ).toEqual([
+        { method: "POST", start: { date: "2026-11-02" }, end: { date: "2026-11-03" } },
+        {
+          method: "POST",
+          start: { dateTime: "2026-11-02T09:00:00.000Z", timeZone: "UTC" },
+          end: { dateTime: "2026-11-02T10:00:00.000Z", timeZone: "UTC" },
+        },
+      ]);
+    });
   });
 });
 

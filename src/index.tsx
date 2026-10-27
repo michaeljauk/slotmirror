@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import * as z from "zod/mini";
@@ -6,6 +7,7 @@ import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
   errorCode,
+  errorLogFields,
   latestRuleOutcomes,
   orgActivity,
   purgeAuditEvents,
@@ -337,6 +339,21 @@ app.get("/admin", async (c) => {
         tenantCount: policyFromEnv(c.env).allowedTenantIds.length,
       }}
     />,
+  );
+});
+
+// An unexpected error gets a page in the user's language, or a short text for the editor
+// script. The log never holds a raw message or stack: a provider description can name the user,
+// and a SyntaxError can quote the input. See `errorLogFields`.
+app.onError((error, c) => {
+  if (error instanceof HTTPException) return error.getResponse();
+  console.error("Request failed", ...errorLogFields(error));
+  const { t } = i18nFromContext(c);
+  if (c.req.header("x-fragment") === "1") return c.text(t.messages.errorText, 500);
+  return render(
+    c,
+    <MessagePage title={t.messages.errorTitle} message={t.messages.errorText} />,
+    500,
   );
 });
 

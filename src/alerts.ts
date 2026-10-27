@@ -1,3 +1,4 @@
+import { errorLogFields } from "./audit";
 import { PROVIDER_LABEL, type Provider } from "./config";
 import { i18nFor, LOCALES } from "./i18n";
 
@@ -28,6 +29,7 @@ export async function sendReconnectAlert(env: Env, provider: Provider): Promise<
     });
     if (!response.ok) console.error("Alert webhook answered", response.status);
   } catch (error) {
-    console.error("Alert webhook failed", error instanceof Error ? error.name : "unknown");
+    // The fields leave out the message, which can quote the URL.
+    console.error("Alert webhook failed", ...errorLogFields(error));
   }
 }

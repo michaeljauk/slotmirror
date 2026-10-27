@@ -39,6 +39,9 @@ describe("reconnect alert", () => {
     expect(JSON.parse(init?.body as string)).toEqual({
       text: expect.stringContaining("a Google account needs reconnecting"),
     });
-    expect(JSON.stringify(error.mock.calls)).not.toContain("secret");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(logged).not.toContain("secret");
+    expect(logged).not.toContain("network down");
+    expect(logged).toContain("TypeError");
   });
 });

@@ -37,7 +37,9 @@ export const en = {
     inSync: (time: string) => `In sync · ${time}`,
     partlySynced: (time: string) => `Partly synced · ${time}`,
     syncFailed: (code: string) => `Sync failed: ${code}`,
-    changesFailed: (count: number) => `${count} changes failed`,
+    syncPaused: "Sync paused",
+    lastRunAt: (time: string) => `Last run ${time}`,
+    changesFailed: (count: number) => (count === 1 ? "1 change failed" : `${count} changes failed`),
     disconnect: "Disconnect",
     rename: "Name and colour",
     colorLabel: "Colour",
@@ -105,10 +107,10 @@ export const en = {
     previewResult: (create: number, update: number, remove: number, unchanged: number) =>
       `Preview: ${create} to create, ${update} to update, ${remove} to delete, ${unchanged} unchanged. Nothing was written.`,
     runResult: (applied: number, failed: number, remaining: number) =>
-      `Run finished: ${applied} changes written, ${failed} failed, ${remaining} left for the next run.`,
+      `Run finished: ${applied === 1 ? "1 change" : `${applied} changes`} written, ${failed} failed, ${remaining} left for the next run.`,
     invalid: "Choose two different calendars. The target calendar must be writable.",
     lastRun: (blocks: number, time: string, changes: number) =>
-      `${blocks} blocks · last run ${time} · ${changes} changes`,
+      `${blocks === 1 ? "1 block" : `${blocks} blocks`} · last run ${time} · ${changes === 1 ? "1 change" : `${changes} changes`}`,
     lastRunFailed: (time: string, code: string) => `last run failed · ${time} · ${code}`,
     privateNote: "Events marked private in the source never carry more than Busy.",
     capped: (level: string) => `Limited to ${level} by this deployment's policy`,
@@ -123,8 +125,8 @@ export const en = {
     viewList: "List",
     viewMatrix: "Overview",
     groupTitle: "Block each other",
-    groupText: (count: number) =>
-      `These ${count} calendars see each other only as busy, marked private. Set more detail per calendar below.`,
+    groupText: (count: number, markPrivate: boolean) =>
+      `These ${count} calendars see each other only as busy${markPrivate ? ", marked private" : ""}. Set more detail per calendar below.`,
     groupTooFew: "Choose at least two calendars.",
     groupAdd: "Add to the group",
     groupRemove: "Remove from the group",
@@ -171,6 +173,7 @@ export const en = {
     window: "Time window",
     blockTitleLabel: "Title of busy blocks",
     blockTitleHint: "Copies at the level “As busy” carry this title.",
+    defaultBlockTitle: "Busy",
     skipCategoriesLabel: "Skip events with these categories",
     skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
     skipCategoriesPlaceholder: "Private, Focus",
@@ -182,6 +185,12 @@ export const en = {
     blockCategoryPlaceholder: "No category",
     blockCategoryHint:
       "Outlook shows a colour if a category with this name exists. Create it in Outlook first.",
+    blockCategoryComma:
+      "A category name cannot contain a comma: Outlook reads the comma as the start of a second category. Nothing was saved.",
+    blockCategoryTooLong: (max: number) =>
+      `A category name can have at most ${max} characters. Nothing was saved.`,
+    blockColorInvalid: "This colour does not fit the calendar. Reload the page. Nothing was saved.",
+    choiceInvalid: "This choice is not available. Reload the page. Nothing was saved.",
     reconnectTitle: (email: string, provider: string) =>
       `The ${provider} account ${email} is no longer connected.`,
     reconnectText: "Its calendars do not sync until you reconnect it.",
@@ -203,9 +212,12 @@ export const en = {
     days: (days: number) => `${days} days`,
     cellChanged: "changed",
     checking: "Checking…",
+    checkFailed: "The check failed. Try again later.",
+    checkStale: "This direction changed in the meantime. Reload the page.",
+    checkNoTokens: "This account is no longer signed in. Connect it again on the accounts page.",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
       create + update + remove === 0
-        ? `Matches the calendar · ${unchanged} blocks`
+        ? `Matches the calendar · ${unchanged === 1 ? "1 block" : `${unchanged} blocks`}`
         : `Next sync: ${create} new, ${update} changed, ${remove} removed`,
     othersTitle: "Other rules",
     othersLead:
@@ -346,6 +358,8 @@ export const en = {
     back: "Back to the start page",
     notAllowed: "Not allowed",
     notAvailable: "Not available yet",
+    errorTitle: "Something went wrong",
+    errorText: "The request failed. Try again in a moment.",
     providerNotConfigured: (provider: string) =>
       `${provider} is not set up for this deployment. Ask the administrator to add its client ID.`,
     signInExpired: "Sign-in expired",

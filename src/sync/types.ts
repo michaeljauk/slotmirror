@@ -25,6 +25,11 @@ export interface SourceEvent {
   body: string;
   /** True if the event is a block that slotmirror wrote itself. Such events are never mirrored. */
   isMirror: boolean;
+  /**
+   * Web address of the occurrence at the provider, only if the read asked for it and the provider
+   * returned an https address. Absent otherwise, so that events read without it keep their shape.
+   */
+  link?: string;
 }
 
 /** The content a block in the target calendar should have. */

@@ -419,6 +419,12 @@ export const en = {
     alreadyConnectedText: (email: string) =>
       `${email} is already connected by another user of this deployment.`,
   },
+  /** Text that the sync writes into mirrored blocks, in the language of the rule's owner. */
+  mirror: {
+    origin: (account: string, provider: string) => `From: ${account} (${provider})`,
+    microsoft: "Microsoft",
+    google: "Google",
+  },
 };
 
 export type Messages = typeof en;

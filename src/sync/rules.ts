@@ -1,4 +1,5 @@
 import { parseRuleOptions, type RuleOptions } from "../config";
+import { isLocale, LOCALES, messagesFor } from "../i18n";
 
 /** A rule with everything the runner needs, joined from D1. */
 export interface RuleContext {
@@ -14,6 +15,8 @@ export interface RuleContext {
 interface RuleEnd {
   accountId: string;
   provider: string;
+  /** The name the user gave the account; null for the name derived from the address. */
+  name: string | null;
   remoteCalendarId: string;
   /** Address and Entra tenant of the account; they decide whether it belongs to the org. */
   email: string;
@@ -28,11 +31,13 @@ interface RuleRow {
   enabled: number;
   sourceAccountId: string;
   sourceProvider: string;
+  sourceName: string | null;
   sourceRemoteId: string;
   sourceEmail: string;
   sourceTenantId: string | null;
   targetAccountId: string;
   targetProvider: string;
+  targetName: string | null;
   targetRemoteId: string;
   targetEmail: string;
   targetTenantId: string | null;
@@ -41,9 +46,9 @@ interface RuleRow {
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
-         sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+         sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId, sa.display_name AS sourceName,
          ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
-         ta.email AS targetEmail, ta.tenant_id AS targetTenantId
+         ta.email AS targetEmail, ta.tenant_id AS targetTenantId, ta.display_name AS targetName
   FROM rules r
   JOIN users u ON u.id = r.user_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
@@ -61,6 +66,7 @@ function toContext(row: RuleRow): RuleContext {
     source: {
       accountId: row.sourceAccountId,
       provider: row.sourceProvider,
+      name: row.sourceName,
       remoteCalendarId: row.sourceRemoteId,
       email: row.sourceEmail,
       tenantId: row.sourceTenantId,
@@ -68,11 +74,23 @@ function toContext(row: RuleRow): RuleContext {
     target: {
       accountId: row.targetAccountId,
       provider: row.targetProvider,
+      name: row.targetName,
       remoteCalendarId: row.targetRemoteId,
       email: row.targetEmail,
       tenantId: row.targetTenantId,
     },
   };
+}
+
+/**
+ * The first line of the origin note of a rule's blocks, e.g. "From: Work (Microsoft)": the name the
+ * user gave the source account, else its address, in the language stored with the option.
+ */
+export function originLine(rule: Pick<RuleContext, "options" | "source">): string {
+  const locale = rule.options.originLocale;
+  const t = messagesFor(isLocale(locale) ? locale : LOCALES[0]).mirror;
+  const name = (rule.source.name ?? "").replace(/\s+/g, " ").trim() || rule.source.email;
+  return t.origin(name, rule.source.provider === "google" ? t.google : t.microsoft);
 }
 
 export async function loadRule(db: D1Database, ruleId: string): Promise<RuleContext | null> {

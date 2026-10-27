@@ -14,6 +14,16 @@ describe("parseRuleOptions", () => {
       skipCategories: [],
       markPrivate: true,
       blockColor: "",
+      showOrigin: false,
+      linkOrigin: false,
+    });
+  });
+
+  it("keeps the origin note options", () => {
+    expect(parseRuleOptions('{"showOrigin": true, "originLocale": "de"}')).toMatchObject({
+      showOrigin: true,
+      linkOrigin: false,
+      originLocale: "de",
     });
   });
 

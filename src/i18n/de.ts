@@ -426,4 +426,9 @@ export const de: Messages = {
     alreadyConnectedText: (email) =>
       `${email} ist bereits von einem anderen Nutzer dieser Installation verbunden.`,
   },
+  mirror: {
+    origin: (account, provider) => `Aus: ${account} (${provider})`,
+    microsoft: "Microsoft",
+    google: "Google",
+  },
 };

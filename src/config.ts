@@ -33,6 +33,22 @@ export const ruleOptionsSchema = z.object({
    * Outlook category name. Empty: no colour, the calendar's default.
    */
   blockColor: z._default(z.string().check(z.maxLength(100)), ""),
+  /**
+   * Add a note to each block that names the source account, e.g. "From: Work (Microsoft)". It is
+   * the whole description up to detail level "title_location"; at "full" it follows the copied
+   * description. The note is the account's name only, never event content.
+   */
+  showOrigin: z._default(z.boolean(), false),
+  /**
+   * Add a link to the source event below the origin note (Graph `webLink`, Google `htmlLink`).
+   * The link holds event IDs only. Without `showOrigin` it has no effect.
+   */
+  linkOrigin: z._default(z.boolean(), false),
+  /**
+   * Language of the origin note: the language of the user who turned it on. Without it, or for a
+   * language this deployment no longer has, the note uses the deployment's default language.
+   */
+  originLocale: z.optional(z.string().check(z.maxLength(16))),
 });
 
 export type RuleOptions = z.infer<typeof ruleOptionsSchema>;

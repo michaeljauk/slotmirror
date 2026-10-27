@@ -695,16 +695,90 @@ describe("origin note and the deployment's caps", () => {
     expect(stats(again.gm)).toEqual(NO_CHANGE);
   });
 
-  it("keeps the note where a cap allows the rule's level", async () => {
+  it("writes no note where any cap applies, even one that does not lower the level", async () => {
     const fake = fakeProviders({});
-    // "busy" into an org calendar: the cap "busy" does not lower it, so the note stays.
+    // "busy" into an org calendar: the cap "busy" does not lower the rule, but the admin limited
+    // what crosses from this source, so its account name does not cross either.
     const { user, run } = await setup("capeq", { gm: {} });
     await env.DB.prepare(
       "UPDATE accounts SET email = 'capeq-dst@org.example' WHERE id = 'capeq-ms-dst'",
     ).run();
     await setOriginNote(env, user, "capeq-g-src", { showOrigin: true, linkOrigin: true }, "en");
+    await setOriginNote(env, user, "capeq-ms-src", { showOrigin: true, linkOrigin: true }, "en");
     await run();
-    expect(new Set(bodies(fake, "capeq").gm)).toEqual(new Set(["From: Private (Google)"]));
+    expect(bodies(fake, "capeq").gm).toHaveLength(G_COPIES.length);
+    expect(new Set(bodies(fake, "capeq").gm)).toEqual(new Set([""]));
+    // Between two external accounts no cap applies: the note and link stay.
+    expect(bodies(fake, "capeq").mg).toEqual(
+      noted("From: Microsoft account", MS_COPIES, graphLink),
+    );
+  });
+});
+
+describe("origin note transitions", () => {
+  it("rewrites each copy once when the level drops to busy and back", async () => {
+    const fake = fakeProviders({});
+    const { user, run } = await setup("level");
+    await setOriginNote(env, user, "level-ms-src", { showOrigin: true, linkOrigin: true }, "en");
+    await run();
+    expect(bodies(fake, "level").mg).toEqual(
+      noted("From: Microsoft account", MS_COPIES, graphLink),
+    );
+    const setLevel = (detailLevel: string) =>
+      env.DB.prepare(
+        "UPDATE rules SET options = json_set(options, '$.detailLevel', ?) WHERE id = 'level-mg'",
+      )
+        .bind(detailLevel)
+        .run();
+    // The private copy shows "Busy" without a link at either level, so it stays as it is.
+    const changed = MS_COPIES.length - 1;
+
+    await setLevel("busy");
+    const down = await run();
+    expect(stats(down.mg)).toEqual({ create: 0, update: changed, delete: 0 });
+    expect(new Set(bodies(fake, "level").mg)).toEqual(new Set(["From: Microsoft account"]));
+    expect(stats((await run()).mg)).toEqual(NO_CHANGE);
+    expect(stats((await run()).mg)).toEqual(NO_CHANGE);
+
+    await setLevel("title");
+    const up = await run();
+    expect(stats(up.mg)).toEqual({ create: 0, update: changed, delete: 0 });
+    expect(bodies(fake, "level").mg).toEqual(
+      noted("From: Microsoft account", MS_COPIES, graphLink),
+    );
+    expect(stats((await run()).mg)).toEqual(NO_CHANGE);
+    expect(stats((await run()).mg)).toEqual(NO_CHANGE);
+  });
+
+  it("rewrites each copy once when a cap starts to apply and when it ends", async () => {
+    const fake = fakeProviders({});
+    const { user, run } = await setup("capstart");
+    await setOriginNote(env, user, "capstart-g-src", { showOrigin: true, linkOrigin: true }, "en");
+    await run();
+    expect(bodies(fake, "capstart").gm).toEqual(
+      noted("From: Private (Google)", G_COPIES, googleLink),
+    );
+    const setTarget = (email: string) =>
+      env.DB.prepare("UPDATE accounts SET email = ? WHERE id = 'capstart-ms-dst'")
+        .bind(email)
+        .run();
+
+    // The target becomes an org account: the cap "busy" from external accounts applies.
+    await setTarget("capstart-dst@org.example");
+    const capped = await run();
+    expect(stats(capped.gm)).toEqual({ create: 0, update: G_COPIES.length, delete: 0 });
+    expect(new Set(bodies(fake, "capstart").gm)).toEqual(new Set([""]));
+    expect(stats((await run()).gm)).toEqual(NO_CHANGE);
+    expect(stats((await run()).gm)).toEqual(NO_CHANGE);
+
+    await setTarget("capstart-dst@work.example");
+    const free = await run();
+    expect(stats(free.gm)).toEqual({ create: 0, update: G_COPIES.length, delete: 0 });
+    expect(bodies(fake, "capstart").gm).toEqual(
+      noted("From: Private (Google)", G_COPIES, googleLink),
+    );
+    expect(stats((await run()).gm)).toEqual(NO_CHANGE);
+    expect(stats((await run()).gm)).toEqual(NO_CHANGE);
   });
 });
 
@@ -746,6 +820,14 @@ describe("origin line", () => {
     expect(originLine(rule("  Work \n\t Team  "))).toBe("From: Work Team (Microsoft)");
     expect(originLine(rule("Work\u202e\u2066Team\u0007\u200f"))).toBe("From: WorkTeam (Microsoft)");
     expect(originLine(rule("\u202e\u0000"))).toBe("From: Microsoft account");
+  });
+
+  it("drops Unicode format characters in the name", () => {
+    // Arabic letter mark, zero-width space and joiner, word joiner, soft hyphen, a tag character.
+    expect(originLine(rule("Wo\u200brk\u061c\u200d\u2060Te\u00adam\u{e0041}"))).toBe(
+      "From: WorkTeam (Microsoft)",
+    );
+    expect(originLine(rule("\u061c\u200b\u00ad\u{e0041}", "google"))).toBe("From: Google account");
   });
 
   it("uses the default locale for a language the deployment does not have", () => {

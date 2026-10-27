@@ -1,5 +1,7 @@
 import type { CalendarInfo } from "./providers/calendar-client";
+import { errorCode } from "./audit";
 import { accountSync } from "./durable";
+import { reconcileRules } from "./editor";
 
 export interface CalendarRow {
   id: string;
@@ -42,10 +44,11 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
 /** Load the calendar list of every account of a user from the provider into the registry. */
 export async function refreshUserCalendars(env: Env, userId: string): Promise<void> {
   const { results: accounts } = await env.DB.prepare(
-    "SELECT id, email FROM accounts WHERE user_id = ?",
+    `SELECT a.id, a.email, u.org_id AS orgId FROM accounts a JOIN users u ON u.id = a.user_id
+     WHERE a.user_id = ?`,
   )
     .bind(userId)
-    .all<{ id: string; email: string }>();
+    .all<{ id: string; email: string; orgId: string }>();
 
   for (const account of accounts) {
     // One account with expired or missing tokens must not block the calendars of the others.
@@ -78,5 +81,13 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
         ),
       ),
     );
+  }
+  const orgId = accounts[0]?.orgId;
+  if (!orgId) return;
+  // A calendar that loaded or became writable can complete a direction, such as a group rule.
+  try {
+    await reconcileRules(env, { id: userId, orgId });
+  } catch (error) {
+    console.error("Adding missing rules failed", errorCode(error));
   }
 }

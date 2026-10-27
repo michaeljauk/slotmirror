@@ -453,7 +453,7 @@ describe("changing daysAhead in the editor", () => {
       });
     const windows = async () => {
       const { results } = await env.DB.prepare(
-        "SELECT json_extract(options, '$.daysAhead') AS days FROM rules WHERE user_id = ?",
+        "SELECT json_extract(options, '$.daysAhead') AS days FROM rules WHERE user_id = ? ORDER BY rowid",
       )
         .bind(user.id)
         .all<{ days: number }>();
@@ -520,6 +520,60 @@ describe("changing daysAhead in the editor", () => {
     expect((await save({ daysAhead: "90", daysAheadShown: "90" })).status).toBe(204);
     expect(await windows()).toEqual([365, 365]);
     expect(await trims()).toEqual([]);
+  });
+
+  it("shows the largest window of mixed rules if none is stored", async () => {
+    const { user, w, into } = await editorSetup("trim-mixed", 90);
+    await setDaysAhead(await into(w), 365);
+    expect((await loadEditorState(env, user.id)).settings.daysAhead).toBe(365);
+  });
+
+  it("changes no window from a page loaded before the shown window was sent", async () => {
+    // That page showed the stored window. Rules can differ from it.
+    const { user, w, save, windows, trims, into } = await editorSetup("trim-old-page", 365);
+    await setDaysAhead(await into(w), 90);
+    await env.DB.prepare("UPDATE users SET sync_settings = '{\"daysAhead\":180}' WHERE id = ?")
+      .bind(user.id)
+      .run();
+    expect((await save({ daysAhead: "180", blockTitle: "Belegt" })).status).toBe(204);
+    expect(await windows()).toEqual([365, 90]);
+    expect(await trims()).toEqual([]);
+  });
+
+  it("changes no window from an old page with nothing stored", async () => {
+    // That page showed the default of 90 while the rules have 365.
+    const { save, windows, trims } = await editorSetup("trim-old-default", 365);
+    expect((await save({ daysAhead: "90", blockTitle: "Belegt" })).status).toBe(204);
+    expect(await windows()).toEqual([365, 365]);
+    expect(await trims()).toEqual([]);
+  });
+
+  it("only raises rules when the user raises the window", async () => {
+    const { user, w, save, windows, trims, into } = await editorSetup("trim-raise", 365);
+    await setDaysAhead(await into(w), 30);
+    await env.DB.prepare("UPDATE users SET sync_settings = '{\"daysAhead\":90}' WHERE id = ?")
+      .bind(user.id)
+      .run();
+    expect((await save({ daysAhead: "180", daysAheadShown: "90" })).status).toBe(204);
+    expect(await windows()).toEqual([365, 180]);
+    expect(await trims()).toEqual([]);
+  });
+
+  it("lowers no rule when an old page with nothing stored raises the window", async () => {
+    // That page showed 90; the user picks 180 while the rules have 365 and 30.
+    const { w, save, windows, trims, into } = await editorSetup("trim-old-raise", 365);
+    await setDaysAhead(await into(w), 30);
+    expect((await save({ daysAhead: "180" })).status).toBe(204);
+    expect(await windows()).toEqual([365, 180]);
+    expect(await trims()).toEqual([]);
+  });
+
+  it("only lowers rules when the user lowers the window", async () => {
+    const { w, o, save, windows, trims, into } = await editorSetup("trim-lower", 365);
+    await setDaysAhead(await into(w), 30);
+    expect((await save({ daysAhead: "90", daysAheadShown: "365" })).status).toBe(204);
+    expect(await windows()).toEqual([90, 30]);
+    expect((await trims()).map((job) => job.ruleId)).toEqual([await into(o)]);
   });
 
   it("trims only rules whose window goes down", async () => {

@@ -302,8 +302,9 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
 /**
  * Store the settings and apply them to every rule of the user. The detail level of each rule
  * stays; it is the choice per direction. The window applies only if the user changed it from the
- * one the form showed; otherwise each rule keeps its own. A smaller window queues the removal of
- * the blocks beyond it, which no run reads any more.
+ * one the form showed, and only in that direction: a higher window raises the rules below it, a
+ * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
+ * removal of the blocks beyond it, which no run reads any more.
  */
 export async function setSettings(env: Env, user: CurrentUser, form: SettingsForm): Promise<void> {
   const { results } = await env.DB.prepare(
@@ -323,13 +324,22 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
   const stored = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
     .bind(user.id)
     .first<{ json: string }>();
+  const json = stored?.json ?? "{}";
   const current = shownDaysAhead(
-    stored?.json ?? "{}",
+    json,
     results.map((row) => parseRuleOptions(row.options)),
   );
   const { daysAhead: chosen, daysAheadShown, ...rest } = form;
-  const windowChanged = chosen !== undefined && chosen !== (daysAheadShown ?? current);
+  // A page from before `daysAheadShown` existed showed the stored window, or the default.
+  const shown = daysAheadShown ?? parseSettings(json).daysAhead;
+  const windowChanged = chosen !== undefined && chosen !== shown;
   const settings: SyncSettings = { ...rest, daysAhead: windowChanged ? chosen : current };
+  const windowOf = (previous: number) =>
+    !windowChanged
+      ? previous
+      : settings.daysAhead > shown
+        ? Math.max(previous, settings.daysAhead)
+        : Math.min(previous, settings.daysAhead);
   await env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?")
     .bind(JSON.stringify(settings), user.id)
     .run();
@@ -339,7 +349,7 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
     const options = ruleOptionsSchema.parse({
       ...previous,
       ...settings,
-      daysAhead: windowChanged ? settings.daysAhead : previous.daysAhead,
+      daysAhead: windowOf(previous.daysAhead),
     });
     await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
       .bind(JSON.stringify(options), row.id)

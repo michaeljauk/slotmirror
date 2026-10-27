@@ -19,6 +19,7 @@ import {
   rulesTargetingAccount,
   siblingRuleIds,
   syncWindow,
+  targetReadWindow,
 } from "./sync/rules";
 import { clampRetryAfter, formatStatuses, throttleDelayMs } from "./sync/throttle";
 import type { SourceEvent, SyncPlan } from "./sync/types";
@@ -855,7 +856,8 @@ export class AccountSync extends DurableObject<Env> {
       (await siblingRuleIds(this.env.DB, rule.id)).map((id) => ruleTagFor(id)),
     );
     const precedingTags = siblingTags.filter((tag) => tag < ruleTag);
-    const blocks = await target.existingBlocks(rule.target.remoteCalendarId, window, [
+    const targetRead = targetReadWindow(window);
+    const blocks = await target.existingBlocks(rule.target.remoteCalendarId, targetRead, [
       ruleTag,
       ...precedingTags,
     ]);
@@ -869,7 +871,7 @@ export class AccountSync extends DurableObject<Env> {
       scope: rule.userId,
       claimed,
     });
-    const plan = planSync(desired, existing);
+    const plan = planSync(desired, existing, { sync: window, target: targetRead });
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

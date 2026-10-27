@@ -91,7 +91,17 @@ function fakeGraph(target: unknown[] = []) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
+
+/**
+ * Run at a time when every fixture event lies in the sync window. The plan never deletes a block
+ * outside the window, so tests that delete fixture blocks must not depend on today's date.
+ */
+function atFixtureTime(): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-22T00:00:00Z"));
+}
 
 describe("AccountSync.runRule", () => {
   it("plans without writing in a dry run", async () => {
@@ -171,6 +181,7 @@ describe("AccountSync.runRule", () => {
   });
 
   it("writes one block where two rules into one calendar would write equal ones", async () => {
+    atFixtureTime();
     const { stub, ruleId } = await setupRule("acc-dedupe");
     await stub.storeTokens("acc-dedupe", {
       refreshToken: "r",
@@ -1149,11 +1160,15 @@ describe("alarm queue", () => {
     const [first, second] = await inPrecedenceOrder([ruleId, "acc-follow-rule-2"]);
     if (!first || !second) throw new Error("no rules");
     const [template] = fixture.value;
-    // A block of the first rule whose source event is gone: the first rule removes it.
+    // A block of the first rule whose source event is gone: the first rule removes it. It lies
+    // in the sync window, because the plan never deletes a block outside it.
+    const tomorrow = new Date(Date.now() + 24 * 3_600_000).toISOString().slice(0, 10);
     fakeGraph([
       {
         ...template,
         id: "stale",
+        start: { dateTime: `${tomorrow}T07:00:00.0000000`, timeZone: "UTC" },
+        end: { dateTime: `${tomorrow}T07:15:00.0000000`, timeZone: "UTC" },
         singleValueExtendedProperties: [
           {
             id: MARKER_PROPERTY_ID,
@@ -1483,6 +1498,25 @@ describe("throttling", () => {
     expect(await alarmIn(stub)).toBeLessThanOrEqual(20_000);
   });
 
+  /**
+   * The fixture moved by whole days, so that its first event lies today or later. The plan never
+   * deletes a block outside the sync window, so a test that deletes them must not depend on today.
+   */
+  function fixtureFromToday(): unknown[] {
+    const first = Date.parse("2026-10-22T00:00:00Z");
+    const days = Math.max(0, Math.ceil((Date.now() - first) / (24 * 3_600_000)));
+    const shift = (text: string) =>
+      new Date(Date.parse(`${text.slice(0, 10)}T00:00:00Z`) + days * 24 * 3_600_000)
+        .toISOString()
+        .slice(0, 10) + text.slice(10);
+    return fixture.value.map((event) => ({
+      ...event,
+      start: { ...event.start, dateTime: shift(event.start.dateTime) },
+      end: { ...event.end, dateTime: shift(event.end.dateTime) },
+      originalStart: event.originalStart === null ? null : shift(event.originalStart),
+    }));
+  }
+
   it.each([
     ["", false],
     [", also after its own mailbox throttled in between", true],
@@ -1506,12 +1540,13 @@ describe("throttling", () => {
       ]);
       vi.spyOn(console, "error").mockImplementation(() => {});
       let throttling = true;
+      const events = fixtureFromToday();
       const store = statefulGraph({
-        [SOURCE_CAL]: fixture.value,
+        [SOURCE_CAL]: events,
         "remote-throttled": () =>
           throttling
             ? new Response("busy", { status: 429, headers: { "Retry-After": "7" } })
-            : Response.json({ value: fixture.value }),
+            : Response.json({ value: events }),
       });
       const stub = env.ACCOUNT_SYNC.getByName(id);
       const queue = () =>

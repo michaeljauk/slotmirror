@@ -350,7 +350,7 @@ const RECONNECT_MESSAGES = [
  * A failed run or check in the user's words. The error crosses the Durable Object boundary, so
  * only its message is left. A missing or refused token means the account must connect again.
  */
-function runErrorText(t: Messages, error: unknown): string {
+export function runErrorText(t: Messages, error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (RECONNECT_MESSAGES.some((text) => message.includes(text))) return t.editor.checkNoTokens;
   return t.editor.checkFailed;

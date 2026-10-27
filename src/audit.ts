@@ -113,24 +113,46 @@ const STATIC_MESSAGES = new Set([
   "Google event time has neither date nor dateTime",
 ]);
 
-/** Static text with IDs, status codes or a time zone name: "Rule <id> not found", "Graph <what> failed: 403 <reason>". */
+/**
+ * Static text with IDs, status codes or a time zone name: "Rule <id> not found",
+ * "Graph <what> failed: 403 <reason>". Also the messages of the runtime and of this app's own
+ * error classes. A V8 TypeError or RangeError can quote values and is not listed.
+ */
 const STATIC_PATTERNS = [
   /^Rule [\w-]{1,64} not found$/,
   // The zone name comes from the provider, not from the user.
   /^Expected UTC times from Graph, got [A-Za-z0-9_/+ .-]{1,64}$/,
-  /^(Graph|Google) [A-Za-z ]{1,40} failed: \d{3}( [A-Za-z0-9_.-]{1,64})?$/,
+  /^(Graph|Google) [A-Za-z $]{1,40} failed: \d{3}( [A-Za-z0-9_.-]{1,64})?$/,
+  /^Requesting a sync failed in \d{1,5} account\(s\)$/,
+  // workerd and the Workers platform. The first six strings are in the workerd binary; the
+  // subrequest and free-tier messages come from the platform and follow its documented wording.
+  /^Network connection lost\.$/,
+  /^Worker exceeded CPU time limit\.?$/,
+  /^internal error; reference = [\w-]{1,64}$/,
+  /^Durable Object storage operation exceeded timeout which caused object to be reset\.$/,
+  /^Durable Object waited for too long\. The call was canceled and the Durable Object was reset\.$/,
+  /^Durable Object storage (deleteAll\(\)|write) caused object to be reset; reference = [\w-]{1,64}$/,
+  /^Durable Object's isolate exceeded its memory limit due to overflowing the storage cache\.[ -~]{0,200}$/,
+  /^Too many subrequests( by single Worker invocation\.[ -~]{0,160}|\.)$/,
+  /^Exceeded allowed (rows read|rows written|duration) in Durable Objects free tier\.$/,
 ];
 
 /**
+ * D1 messages that name tables and columns but quote no bound value: "D1_ERROR: UNIQUE
+ * constraint failed: users.email". D1_TYPE_ERROR can quote a bound value and is left out.
+ */
+const D1_MESSAGE = /^D1_ERROR: [A-Za-z0-9_ .,:()'*-]{1,160}$/;
+
+/**
  * The message of an error, only if it cannot quote provider text or user data: a static message
- * of this app, or a D1 message, which names tables and columns but holds no bound values.
+ * of this app or of the runtime, or a D1 message that holds no bound values.
  */
 export function safeMessage(error: Error): string | undefined {
   const { message } = error;
   if (STATIC_MESSAGES.has(message) || STATIC_PATTERNS.some((pattern) => pattern.test(message))) {
     return message;
   }
-  if (message.startsWith("D1_")) return message.slice(0, 120);
+  if (D1_MESSAGE.test(message)) return message;
   return undefined;
 }
 
@@ -140,12 +162,16 @@ function safeCode(error: Error): string | undefined {
   return typeof code === "string" && /^[a-z0-9_]{1,64}$/i.test(code) ? code : undefined;
 }
 
-/** The "at ..." lines of a stack, without the first line, which repeats the message. */
+const FRAME = /^\s+at (?:[^\n]* \()?[^\s()]+:\d+:\d+\)?$/;
+
+/**
+ * The stack frames, without the message and its extra lines. Only lines of the form
+ * "at <name> (<path>:<line>:<col>)" or "at <path>:<line>:<col>" count as frames.
+ */
 export function stackFrames(error: Error): string {
-  return (error.stack ?? "")
-    .split("\n")
-    .filter((line) => line.trimStart().startsWith("at "))
-    .join("\n");
+  // The stack starts with "name: message". A message of several lines takes several lines.
+  const lines = (error.stack ?? "").split("\n").slice(error.message.split("\n").length);
+  return lines.filter((line) => FRAME.test(line)).join("\n");
 }
 
 /**
@@ -171,7 +197,12 @@ export function errorCode(error: unknown): string {
   if (error instanceof GoogleApiError) return withReason(`google_${error.status}`, error.reason);
   if (error instanceof Error) {
     // Over the Durable Object boundary a subclass becomes a plain Error with its own properties.
-    if (error.name === "Error") return safeMessage(error) ?? safeCode(error) ?? "Error";
+    if (error.name === "Error") {
+      // A TokenError that crossed the boundary: its message is its code.
+      const code = safeCode(error);
+      if (code && error.message.startsWith(code)) return `token_${code}`;
+      return safeMessage(error) ?? code ?? "Error";
+    }
     return error.name;
   }
   return "unknown";

@@ -17,12 +17,14 @@ const tokenErrorSchema = z.object({
   error_description: z.optional(z.string()),
 });
 
+/**
+ * The message is the code and nothing else. The provider's `error_description` can name the user,
+ * and workerd reports an uncaught Durable Object error with its full message, outside any
+ * `console` call. The description is dropped; nothing reads it.
+ */
 export class TokenError extends Error {
-  constructor(
-    readonly code: string,
-    description: string | undefined,
-  ) {
-    super(description ? `${code}: ${description}` : code);
+  constructor(readonly code: string) {
+    super(/^[a-z0-9_]{1,64}$/i.test(code) ? code : "unknown_error");
   }
 }
 
@@ -40,8 +42,8 @@ export async function requestToken(
   if (!response.ok) {
     const error = tokenErrorSchema.safeParse(body);
     throw error.success
-      ? new TokenError(error.data.error, error.data.error_description)
-      : new TokenError(`http_${response.status}`, undefined);
+      ? new TokenError(error.data.error)
+      : new TokenError(`http_${response.status}`);
   }
   return tokenResponseSchema.parse(body);
 }

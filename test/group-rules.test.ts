@@ -470,7 +470,11 @@ describe("unexpected errors", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     for (const error of [
       new SyntaxError("Unexpected token in 'Dentist with Alice'"),
-      new TokenError("invalid_grant", "AADSTS70000 for alice@work.example"),
+      new TokenError("invalid_grant"),
+      // Even a message that holds a description is not logged.
+      Object.assign(new TokenError("invalid_grant"), {
+        message: "AADSTS70000 for alice@work.example",
+      }),
       // A TokenError after the Durable Object boundary: a plain Error with the own `code`.
       Object.assign(new Error("invalid_grant: AADSTS50173 for user alice@work.example"), {
         code: "invalid_grant",

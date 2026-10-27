@@ -4,10 +4,15 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AUDIT_RETENTION_DAYS } from "../src/audit";
 import worker from "../src/index";
 import { SESSION_COOKIE, signSession } from "../src/session";
 import { addAccount, BASE, signIn } from "./helpers";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("worker", () => {
   it("answers the health check", async () => {
@@ -89,6 +94,63 @@ describe("worker", () => {
     await env.DB.prepare(
       "UPDATE accounts SET needs_reconnect = 0 WHERE id = 'acc-cron-broken'",
     ).run();
+  });
+
+  it("ticks the later accounts and purges the audit log when one tick throws", async () => {
+    const { user } = await signIn("owner@example.com");
+    for (const id of ["acc-tick-bad", "acc-tick-good"]) {
+      await addAccount(user.id, id, `${id}@example.com`);
+      await env.ACCOUNT_SYNC.getByName(id).storeTokens(id, {
+        refreshToken: "r",
+        accessToken: "a",
+        accessExpiresAt: Date.now() + 3_600_000,
+      });
+    }
+    await env.DB.prepare(
+      `INSERT INTO audit_events (org_id, kind, created_at)
+       VALUES ('tick-org', 'old', strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?))`,
+    )
+      .bind(`-${AUDIT_RETENTION_DAYS + 1} days`)
+      .run();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // The tick of one account rejects, as on a transient D1 or Durable Object error.
+    const failingEnv = {
+      ...env,
+      ACCOUNT_SYNC: {
+        getByName: (name: string) =>
+          name === "acc-tick-bad"
+            ? { tick: () => Promise.reject(new Error("D1_ERROR: transient")) }
+            : env.ACCOUNT_SYNC.getByName(name),
+      },
+    } as unknown as Env;
+
+    await worker.scheduled(createScheduledController(), failingEnv);
+
+    const good = env.ACCOUNT_SYNC.getByName("acc-tick-good");
+    expect(
+      await runInDurableObject(good, (_instance, state) => state.storage.getAlarm()),
+    ).not.toBeNull();
+    const { results } = await env.DB.prepare(
+      "SELECT kind FROM audit_events WHERE org_id = 'tick-org'",
+    ).all();
+    expect(results).toEqual([]);
+  });
+
+  it("does not throw when the audit purge fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const failingEnv = {
+      ...env,
+      DB: {
+        prepare: (query: string) => {
+          if (query.startsWith("DELETE FROM audit_events")) throw new Error("D1_ERROR: transient");
+          return env.DB.prepare(query);
+        },
+      },
+    } as unknown as Env;
+
+    await expect(
+      worker.scheduled(createScheduledController(), failingEnv),
+    ).resolves.toBeUndefined();
   });
 
   it("creates the account tables in the Durable Object", async () => {

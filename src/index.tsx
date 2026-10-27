@@ -350,7 +350,11 @@ async function scheduled(_controller: ScheduledController, env: Env): Promise<vo
       console.error("Cron tick failed", id, errorCode(error));
     }
   }
-  await purgeAuditEvents(env.DB);
+  try {
+    await purgeAuditEvents(env.DB);
+  } catch (error) {
+    console.error("Audit purge failed", errorCode(error));
+  }
 }
 
 export default { fetch: app.fetch, scheduled } satisfies ExportedHandler<Env>;

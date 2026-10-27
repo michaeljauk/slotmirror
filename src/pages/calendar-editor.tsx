@@ -329,6 +329,7 @@ function DestinationRow(props: {
   const inGroup = source.inGroup && target.inGroup;
   const fromGroup = direction.origin === "group";
   const isException = inGroup && direction.origin === "custom";
+  const canEdit = target.calendar?.canEdit === true;
   return (
     <div class="dest">
       <div class="dest-name">
@@ -344,7 +345,10 @@ function DestinationRow(props: {
             name="choice"
             value={choice}
             class={choice === direction.effective ? "choice on" : "choice"}
-            disabled={RANK[choice] > RANK[direction.maxChoice]}
+            disabled={
+              RANK[choice] > RANK[direction.maxChoice] ||
+              (!canEdit && choice !== "off" && choice !== direction.effective)
+            }
           >
             {t.editor.choices[choice]}
           </button>
@@ -361,7 +365,7 @@ function DestinationRow(props: {
       </div>
       <BlockColor source={source} target={target} direction={direction} />
       {fromGroup ? <div class="dest-note faint">{t.editor.fromGroup}</div> : null}
-      {isException ? (
+      {isException && canEdit ? (
         <form method="post" action="/rules/direction/reset" class="dest-note faint card-form">
           <input type="hidden" name="from" value={source.id} />
           <input type="hidden" name="to" value={target.id} />
@@ -386,6 +390,11 @@ function DestinationRow(props: {
           <span class="preview-result" role="status" />
         </form>
       ) : null}
+      {canEdit ? null : (
+        <div class="cap-note">
+          {direction.effective === "off" ? t.editor.readOnly : t.editor.readOnlyTurnOff}
+        </div>
+      )}
       {direction.maxChoice !== "full" ? (
         <div class="cap-note">{t.editor.capNote(t.editor.choices[direction.maxChoice])}</div>
       ) : null}

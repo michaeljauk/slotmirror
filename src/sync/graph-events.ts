@@ -1,4 +1,6 @@
 import * as z from "zod/mini";
+import { isoInstant } from "./iso-time";
+import { isObject, isOptionalNullableString, isOptionalString, isStringArray } from "./quick-check";
 import type { DesiredBlock, ShowAs, SourceEvent } from "./types";
 
 const MARKER_PROPERTY_SET = "String {6c3e4a1f-6a7d-4f3e-9b8e-2f1d5c7a9e10}";
@@ -22,22 +24,30 @@ export const DEDUP_PROPERTY_ID = `${MARKER_PROPERTY_SET} Name slotmirrorDedupKey
  */
 export const LEGACY_MARKER_PROPERTY_ID = `${MARKER_PROPERTY_SET} Name freebusySyncMarker`;
 
+type ExtendedProperty = { id: string; value?: string | null };
+
+const MARKER_ID = MARKER_PROPERTY_ID.toLowerCase();
+const LEGACY_MARKER_ID = LEGACY_MARKER_PROPERTY_ID.toLowerCase();
+const DEDUP_ID = DEDUP_PROPERTY_ID.toLowerCase();
+
 /** The marker value of an event: the current marker wins over the legacy one. */
-export function graphMarkerValue(
-  properties: { id: string; value?: string | null }[] | undefined,
-): string | undefined {
-  const find = (id: string) =>
-    properties?.find((property) => property.id.toLowerCase() === id.toLowerCase())?.value ??
-    undefined;
-  return find(MARKER_PROPERTY_ID) ?? find(LEGACY_MARKER_PROPERTY_ID);
+export function graphMarkerValue(properties: ExtendedProperty[] | undefined): string | undefined {
+  if (!properties) return undefined;
+  return propertyValue(properties, MARKER_ID) ?? propertyValue(properties, LEGACY_MARKER_ID);
 }
 
 /** The dedup key of a block; empty for blocks written before it existed. */
-export function graphDedupKey(
-  properties: { id: string; value?: string | null }[] | undefined,
-): string {
-  const id = DEDUP_PROPERTY_ID.toLowerCase();
-  return properties?.find((property) => property.id.toLowerCase() === id)?.value ?? "";
+export function graphDedupKey(properties: ExtendedProperty[] | undefined): string {
+  if (!properties) return "";
+  return propertyValue(properties, DEDUP_ID) ?? "";
+}
+
+/** The value of the first property with this ID, compared without case. */
+function propertyValue(properties: ExtendedProperty[], lowerCaseId: string): string | undefined {
+  for (const property of properties) {
+    if (property.id.toLowerCase() === lowerCaseId) return property.value ?? undefined;
+  }
+  return undefined;
 }
 
 const dateTimeTimeZone = z.object({ dateTime: z.string(), timeZone: z.string() });
@@ -66,6 +76,67 @@ export const graphEventSchema = z.object({
 });
 
 export type GraphEvent = z.infer<typeof graphEventSchema>;
+
+/**
+ * Validate a Graph event against `graphEventSchema`. A quick check accepts the usual event without
+ * the schema, which costs more CPU than the conversion; anything else goes to the schema, which
+ * accepts it or throws its usual error.
+ */
+export function parseGraphEvent(raw: unknown): GraphEvent {
+  return isGraphEvent(raw) ? raw : graphEventSchema.parse(raw);
+}
+
+const GRAPH_EVENT_TYPES: ReadonlySet<unknown> = new Set(graphEventSchema.shape.type.options);
+
+/**
+ * True only if `graphEventSchema` accepts the event. It may reject events that the schema accepts,
+ * never the reverse. A test compares both on many variants.
+ */
+function isGraphEvent(raw: unknown): raw is GraphEvent {
+  if (!isObject(raw)) return false;
+  const { location, body, responseStatus } = raw;
+  return (
+    typeof raw.id === "string" &&
+    GRAPH_EVENT_TYPES.has(raw.type) &&
+    isOptionalNullableString(raw.seriesMasterId) &&
+    isOptionalNullableString(raw.originalStart) &&
+    isDateTimeTimeZone(raw.start) &&
+    isDateTimeTimeZone(raw.end) &&
+    typeof raw.isAllDay === "boolean" &&
+    (raw.isCancelled === undefined || typeof raw.isCancelled === "boolean") &&
+    isOptionalString(raw.showAs) &&
+    isOptionalString(raw.sensitivity) &&
+    (raw.categories === undefined || isStringArray(raw.categories)) &&
+    (responseStatus === undefined ||
+      (isObject(responseStatus) && isOptionalString(responseStatus.response))) &&
+    isOptionalNullableString(raw.subject) &&
+    (location === undefined ||
+      location === null ||
+      (isObject(location) && isOptionalNullableString(location.displayName))) &&
+    isOptionalNullableString(raw.bodyPreview) &&
+    (body === undefined ||
+      body === null ||
+      (isObject(body) && isOptionalNullableString(body.content))) &&
+    (raw.singleValueExtendedProperties === undefined ||
+      isPropertyArray(raw.singleValueExtendedProperties))
+  );
+}
+
+function isDateTimeTimeZone(value: unknown): boolean {
+  return (
+    isObject(value) && typeof value.dateTime === "string" && typeof value.timeZone === "string"
+  );
+}
+
+function isPropertyArray(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  for (let i = 0; i < value.length; i++) {
+    const property: unknown = value[i];
+    if (!isObject(property) || typeof property.id !== "string") return false;
+    if (!isOptionalNullableString(property.value)) return false;
+  }
+  return true;
+}
 
 /**
  * `$select` for calendarView requests; the sync needs exactly these fields. Do not shorten it
@@ -124,12 +195,16 @@ const SHOW_AS: Record<string, ShowAs> = {
  * calendarView does not normally return but must never be mirrored.
  */
 export function fromGraphEvent(raw: unknown): SourceEvent | null {
-  const event = graphEventSchema.parse(raw);
+  return graphSourceEvent(parseGraphEvent(raw));
+}
+
+/** `fromGraphEvent` for an event that `parseGraphEvent` returned. */
+export function graphSourceEvent(event: GraphEvent): SourceEvent | null {
   if (event.type === "seriesMaster" || event.isCancelled) return null;
 
   const occurrenceKey =
     event.seriesMasterId && event.originalStart
-      ? `series:${event.seriesMasterId}:${new Date(event.originalStart).toISOString()}`
+      ? `series:${event.seriesMasterId}:${isoInstant(event.originalStart)}`
       : `event:${event.id}`;
 
   const isMirror = graphMarkerValue(event.singleValueExtendedProperties) !== undefined;
@@ -156,5 +231,5 @@ function toTime(value: { dateTime: string; timeZone: string }, allDay: boolean):
   if (value.timeZone !== "UTC") {
     throw new Error(`Expected UTC times from Graph, got ${value.timeZone}`);
   }
-  return new Date(`${value.dateTime.slice(0, 19)}Z`).toISOString();
+  return isoInstant(`${value.dateTime.slice(0, 19)}Z`);
 }

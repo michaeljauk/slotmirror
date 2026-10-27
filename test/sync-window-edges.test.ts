@@ -216,6 +216,23 @@ describe("all-day blocks at the edges of the sync window", () => {
     expect(plan.actions).toEqual([{ kind: "delete", targetId: "t1", marker: block.marker }]);
   });
 
+  it("moves an all-day block from the day before the window to its event's new date", async () => {
+    const target = new Target(0);
+    await run(
+      target,
+      [event("moved", "2026-10-26", "2026-10-27")],
+      0,
+      new Date("2026-10-26T12:00:00Z"),
+    );
+    // The next day the block lies before the window, and its event moves into the window.
+    const moved = [event("moved", "2026-10-29", "2026-10-30")];
+    const { stats } = await run(target, moved, 0, new Date("2026-10-27T12:00:00Z"));
+    expect(stats).toMatchObject({ create: 0, update: 1, delete: 0 });
+    expect([...target.blocks.values()].map((block) => block.start)).toEqual(["2026-10-29"]);
+    const again = await run(target, moved, 0, new Date("2026-10-27T12:00:00Z"));
+    expect(again.stats).toMatchObject({ create: 0, update: 0, delete: 0, unchanged: 1 });
+  });
+
   it("leaves a timed block outside the sync window as the narrow read did", async () => {
     const window = syncWindow(OPTIONS, new Date("2026-10-27T12:00:00Z"));
     const windows = { sync: window, target: targetReadWindow(window) };

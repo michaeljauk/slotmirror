@@ -250,6 +250,16 @@ function standsIn(existing: ExistingBlock, desired: DesiredBlock, sync: TimeWind
  * - It never deletes a block outside the sync window for a missing source event. The source read
  *   may not return the event, whatever its zone.
  * - A timed block outside the sync window stands in for no desired block inside it; see `standsIn`.
+ *
+ * Known limitation: the plan cannot tell "the source read did not return the event" from "the
+ * event is gone". So some blocks outside the sync window stay for good:
+ * - Source and target at UTC-8: if the user deletes today's all-day event between 00:00 and
+ *   08:00 UTC, its block stays. Earlier versions deleted it.
+ * - After a rule is deleted, `cleanupWindow` starts at 00:00 UTC. In a target east of UTC, it
+ *   does not return the all-day block of the day before, so that block stays.
+ * - A block that ends exactly at 00:00 UTC lies outside the sync window and is never deleted.
+ * A possible follow-up: read the source one day wider too, and delete an outside block only if
+ * the source read returns its date for every time zone.
  */
 export function planSync(
   desired: DesiredBlock[],

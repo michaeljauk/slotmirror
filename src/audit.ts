@@ -182,24 +182,35 @@ export interface RuleOutcome {
   accountId: string | null;
   kind: "sync_run" | "sync_failed";
   createdAt: string;
+  /** False if the rule is paused or turned off; its outcome is history, not the current state. */
+  enabled: boolean;
   detail: Partial<SyncRunDetail> & { code?: string };
 }
 
-/** Latest outcome per rule of a user. Dry runs do not count: they write nothing. */
+/**
+ * Latest outcome per rule of a user. Dry runs do not count: they write nothing. Only rules that
+ * still exist count, so that a deleted rule does not keep a failure on the pages until the log
+ * purges it. Outcomes of paused rules carry `enabled: false`.
+ */
 export async function latestRuleOutcomes(db: D1Database, userId: string): Promise<RuleOutcome[]> {
   const { results } = await db
     .prepare(
-      `SELECT rule_id AS ruleId, account_id AS accountId, kind, created_at AS createdAt, detail
-       FROM audit_events
-       WHERE id IN (
+      `SELECT e.rule_id AS ruleId, e.account_id AS accountId, e.kind, e.created_at AS createdAt,
+              e.detail, r.enabled
+       FROM audit_events e JOIN rules r ON r.id = e.rule_id AND r.user_id = ?
+       WHERE e.id IN (
          SELECT MAX(id) FROM audit_events
          WHERE user_id = ? AND rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
            AND COALESCE(json_extract(detail, '$.dryRun'), 0) = 0
          GROUP BY rule_id)`,
     )
-    .bind(userId)
-    .all<Omit<RuleOutcome, "detail"> & { detail: string }>();
-  return results.map((row) => ({ ...row, detail: parseDetail(row.detail) }));
+    .bind(userId, userId)
+    .all<Omit<RuleOutcome, "detail" | "enabled"> & { detail: string; enabled: number }>();
+  return results.map((row) => ({
+    ...row,
+    enabled: row.enabled === 1,
+    detail: parseDetail(row.detail),
+  }));
 }
 
 export function parseDetail(json: string): RuleOutcome["detail"] {
@@ -213,7 +224,8 @@ export function parseDetail(json: string): RuleOutcome["detail"] {
 
 /** What the accounts page shows for one account. */
 export interface AccountSyncStatus {
-  state: "ok" | "partial" | "error";
+  /** "paused": every rule into the account that ever ran is paused or turned off. */
+  state: "ok" | "partial" | "error" | "paused";
   at: string;
   /** Error code of a failed run. */
   code?: string;
@@ -221,16 +233,25 @@ export interface AccountSyncStatus {
   failed?: number;
 }
 
-const STATE_RANK = { ok: 0, partial: 1, error: 2 } as const;
+const STATE_RANK = { paused: -1, ok: 0, partial: 1, error: 2 } as const;
 
 /**
  * The status of each target account from the latest outcome of each of its rules. The worst
- * state wins, so one broken rule is not hidden by a healthy one. Ties go to the newer event.
+ * state wins, so one broken rule is not hidden by a healthy one. Ties go to the newer event. An
+ * account whose rules are all paused shows as paused, with the time of the newest run; the
+ * outcome of a paused rule says nothing about the current state.
  */
 export function accountStatuses(outcomes: RuleOutcome[]): Map<string, AccountSyncStatus> {
   const statuses = new Map<string, AccountSyncStatus>();
   for (const outcome of outcomes) {
     if (!outcome.accountId) continue;
+    if (!outcome.enabled) {
+      const current = statuses.get(outcome.accountId);
+      if (!current || (current.state === "paused" && outcome.createdAt > current.at)) {
+        statuses.set(outcome.accountId, { state: "paused", at: outcome.createdAt });
+      }
+      continue;
+    }
     const status = statusOf(outcome);
     const current = statuses.get(outcome.accountId);
     const worse =

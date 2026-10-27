@@ -28,8 +28,12 @@ export interface EditorAccount {
   inGroup: boolean;
   /** The provider refused the refresh token; nothing syncs until the user connects again. */
   needsReconnect: boolean;
-  /** Short display name, derived from the address. */
+  /** Display name: the one the user gave, or else the derived one. */
   name: string;
+  /** Short name derived from the address. */
+  derivedName: string;
+  /** The name the user gave; null if the account uses the derived name. */
+  customName: string | null;
   /** Colour in the pages: the stored one, or the next unused one. */
   color: AccountColor;
   /** True if the user chose the colour; false if it is automatic. */
@@ -214,6 +218,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
   const accounts: EditorAccount[] = accountRows.map((row, index) => {
     const own = calendarRows.filter((calendar) => calendar.accountId === row.id);
     const main = own.find((calendar) => calendar.isMain === 1);
+    const derivedName = names[index] ?? row.email;
     return {
       id: row.id,
       provider: row.provider,
@@ -221,7 +226,10 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       tenantId: row.tenantId,
       inGroup: row.inGroup === 1,
       needsReconnect: row.needsReconnect === 1,
-      name: row.displayName ?? names[index] ?? row.email,
+      name: row.displayName ?? derivedName,
+      derivedName,
+      // A stored name equal to the derived one came from a form that sent the derived name back.
+      customName: row.displayName === derivedName ? null : row.displayName,
       color: colors[index]?.color ?? "slate",
       colorChosen: colors[index]?.chosen ?? false,
       calendar: main ? { id: main.id, remoteId: main.remoteId, canEdit: main.canEdit === 1 } : null,
@@ -440,20 +448,34 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
 /** Longest name an account can get. */
 export const MAX_NAME_LENGTH = 40;
 
-/** Give an account a name, or go back to the derived one with an empty name. */
+/**
+ * Give an account a name, or go back to the derived one with an empty name. The derived name
+ * itself counts as empty, so that the account keeps following its address. The log records a
+ * rename only if the name on the pages changes.
+ */
 export async function renameAccount(
   env: Env,
   user: CurrentUser,
   accountId: string,
   name: string,
 ): Promise<void> {
-  const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
-  const updated = await env.DB.prepare(
-    "UPDATE accounts SET display_name = ? WHERE id = ? AND user_id = ?",
+  const { results } = await env.DB.prepare(
+    `SELECT id, email, display_name AS displayName FROM accounts WHERE user_id = ?
+     ORDER BY created_at, id`,
   )
-    .bind(trimmed === "" ? null : trimmed, accountId, user.id)
+    .bind(user.id)
+    .all<{ id: string; email: string; displayName: string | null }>();
+  const index = results.findIndex((row) => row.id === accountId);
+  const row = results[index];
+  if (!row) return;
+  const derived = shortNames(results.map((r) => r.email))[index] ?? row.email;
+  const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
+  const stored = trimmed === "" || trimmed === derived ? null : trimmed;
+  if (stored === row.displayName) return;
+  await env.DB.prepare("UPDATE accounts SET display_name = ? WHERE id = ? AND user_id = ?")
+    .bind(stored, accountId, user.id)
     .run();
-  if (updated.meta.changes === 0) return;
+  if ((stored ?? derived) === (row.displayName ?? derived)) return;
   // The name is the user's own label; the log records that it changed, not the name.
   await recordAudit(env.DB, {
     orgId: user.orgId,
@@ -479,12 +501,39 @@ export async function setAccountColor(
   return updated.meta.changes > 0;
 }
 
+/**
+ * Store the block title of the user's language as the default, for a user who has neither chosen
+ * a title nor has rules. Existing rules keep their title, so that no block is renamed.
+ */
+export async function setDefaultBlockTitle(env: Env, userId: string, title: string): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE users SET sync_settings = json_set(sync_settings, '$.blockTitle', ?)
+     WHERE id = ? AND json_type(sync_settings, '$.blockTitle') IS NULL
+       AND NOT EXISTS (SELECT 1 FROM rules WHERE user_id = ?)`,
+  )
+    .bind(title, userId, userId)
+    .run();
+}
+
 /** Longest Outlook category name for blocks. */
 export const MAX_CATEGORY_LENGTH = 100;
 
+/** Why a block colour is not valid for a target provider, or null if it is valid. */
+export function blockColorProblem(
+  provider: Provider,
+  value: string,
+): "comma" | "tooLong" | "invalid" | null {
+  if (blockColorFor(provider, value) !== null) return null;
+  if (provider === "microsoft" && value.includes(",")) return "comma";
+  if (provider === "microsoft" && value.trim().length > MAX_CATEGORY_LENGTH) return "tooLong";
+  return "invalid";
+}
+
 /**
  * The block colour as stored for a target provider, or null if the value is not valid there:
- * a Google event colour "1" to "11", or an Outlook category name. Empty means no colour.
+ * a Google event colour "1" to "11", or an Outlook category name. Empty means no colour. Graph
+ * takes categories as a list, but classic Outlook keeps them as one comma-separated string and
+ * splits a name at its comma, so a name with a comma is refused.
  */
 export function blockColorFor(provider: Provider, value: string): string | null {
   const trimmed = value.trim();

@@ -21,6 +21,7 @@ import type {
   CalendarClient,
   CalendarInfo,
   ChangeFeed,
+  SourceFields,
   TimeWindow,
   Watch,
 } from "./calendar-client";
@@ -119,10 +120,11 @@ export class GoogleCalendar implements CalendarClient {
   async sourceEvents(
     calendarId: string,
     window: TimeWindow,
-    options: { withBody?: boolean } = {},
+    options: SourceFields = {},
   ): Promise<SourceEvent[]> {
     const events: SourceEvent[] = [];
-    for (const raw of await this.listEvents(calendarId, window, options.withBody ?? false)) {
+    const { withBody = false, withLink = false } = options;
+    for (const raw of await this.listEvents(calendarId, window, withBody, withLink)) {
       const event = fromGoogleEvent(raw);
       if (event) events.push(event);
     }
@@ -288,6 +290,7 @@ export class GoogleCalendar implements CalendarClient {
     calendarId: string,
     window: TimeWindow,
     withBody: boolean,
+    withLink = false,
   ): Promise<unknown[]> {
     const items: unknown[] = [];
     let pageToken: string | undefined;
@@ -298,7 +301,7 @@ export class GoogleCalendar implements CalendarClient {
         singleEvents: "true",
         showDeleted: "false",
         maxResults: "2500",
-        fields: googleEventFields(withBody),
+        fields: googleEventFields(withBody, withLink),
       });
       if (pageToken) params.set("pageToken", pageToken);
       const page = eventsPageSchema.parse(

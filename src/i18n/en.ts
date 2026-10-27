@@ -426,6 +426,14 @@ export const en = {
     alreadyConnectedText: (email: string) =>
       `${email} is already connected by another user of this deployment.`,
   },
+  /** Text that the sync writes into mirrored blocks, in the language of the rule's owner. */
+  mirror: {
+    origin: (account: string, provider: string) => `From: ${account} (${provider})`,
+    /** For an account without a name: the provider only, never the address. */
+    originAccount: (provider: string) => `From: ${provider} account`,
+    microsoft: "Microsoft",
+    google: "Google",
+  },
   /** Texts for ALERT_WEBHOOK_URL. They go to the operator, in the first locale. */
   alerts: {
     reconnect: (provider: string, url: string) =>

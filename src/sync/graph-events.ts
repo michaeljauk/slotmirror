@@ -70,6 +70,7 @@ export const graphEventSchema = z.object({
   location: z.optional(z.nullable(z.object({ displayName: z.optional(z.nullable(z.string())) }))),
   bodyPreview: z.optional(z.nullable(z.string())),
   body: z.optional(z.nullable(z.object({ content: z.optional(z.nullable(z.string())) }))),
+  webLink: z.optional(z.nullable(z.string())),
   singleValueExtendedProperties: z.optional(
     z.array(z.object({ id: z.string(), value: z.optional(z.nullable(z.string())) })),
   ),
@@ -117,6 +118,7 @@ function isGraphEvent(raw: unknown): raw is GraphEvent {
     (body === undefined ||
       body === null ||
       (isObject(body) && isOptionalNullableString(body.content))) &&
+    isOptionalNullableString(raw.webLink) &&
     (raw.singleValueExtendedProperties === undefined ||
       isPropertyArray(raw.singleValueExtendedProperties))
   );
@@ -160,6 +162,26 @@ export const GRAPH_EVENT_SELECT = [
   "location",
   "bodyPreview",
 ].join(",");
+
+/**
+ * `$select` for a source read. `body` and `webLink` are added only for the rules that need them.
+ * Both lengthen the list, which keeps the expanded marker property; see `GRAPH_EVENT_SELECT`.
+ */
+export function graphEventSelect(fields: { withBody?: boolean; withLink?: boolean } = {}): string {
+  let select = GRAPH_EVENT_SELECT;
+  if (fields.withBody) select += ",body";
+  if (fields.withLink) select += ",webLink";
+  return select;
+}
+
+/**
+ * The link of a source event, if it is an https address of printable ASCII characters. The
+ * providers return such addresses; anything else is dropped, so that no other scheme reaches a block.
+ */
+export function sourceLink(value: string | null | undefined): string | undefined {
+  if (!value || value.length > 2048 || !value.startsWith("https://")) return undefined;
+  return /[^\x21-\x7e]/.test(value) ? undefined : value;
+}
 
 /** The marker property value of a block, the same for Graph and Google. */
 export function markerValueFor(ruleTag: string, block: DesiredBlock): string {
@@ -209,7 +231,7 @@ export function graphSourceEvent(event: GraphEvent): SourceEvent | null {
 
   const isMirror = graphMarkerValue(event.singleValueExtendedProperties) !== undefined;
 
-  return {
+  const source: SourceEvent = {
     occurrenceKey,
     start: toTime(event.start, event.isAllDay),
     end: toTime(event.end, event.isAllDay),
@@ -223,6 +245,9 @@ export function graphSourceEvent(event: GraphEvent): SourceEvent | null {
     body: event.body?.content ?? event.bodyPreview ?? "",
     isMirror,
   };
+  const link = sourceLink(event.webLink);
+  if (link !== undefined) source.link = link;
+  return source;
 }
 
 /** Graph returns `2026-10-27T13:00:00.0000000` in the requested zone (UTC). */

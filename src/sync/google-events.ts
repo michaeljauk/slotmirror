@@ -1,5 +1,5 @@
 import * as z from "zod/mini";
-import { markerValueFor, parseMarkerValue } from "./graph-events";
+import { markerValueFor, parseMarkerValue, sourceLink } from "./graph-events";
 import { isoInstant } from "./iso-time";
 import { isObject, isOptionalString } from "./quick-check";
 import type { DesiredBlock, SourceEvent } from "./types";
@@ -39,6 +39,7 @@ export const googleEventSchema = z.object({
   transparency: z.optional(z.string()),
   visibility: z.optional(z.string()),
   colorId: z.optional(z.string()),
+  htmlLink: z.optional(z.string()),
   attendees: z.optional(
     z.array(z.object({ self: z.optional(z.boolean()), responseStatus: z.optional(z.string()) })),
   ),
@@ -77,6 +78,7 @@ function isGoogleEvent(raw: unknown): raw is GoogleEvent {
     isOptionalString(raw.transparency) &&
     isOptionalString(raw.visibility) &&
     isOptionalString(raw.colorId) &&
+    isOptionalString(raw.htmlLink) &&
     (raw.attendees === undefined || isAttendeeArray(raw.attendees)) &&
     (extendedProperties === undefined ||
       (isObject(extendedProperties) &&
@@ -114,8 +116,11 @@ function isStringRecord(value: unknown): boolean {
   return true;
 }
 
-/** `fields` for events.list; keeps responses small. `description` only when a rule needs it. */
-export function googleEventFields(withBody: boolean): string {
+/**
+ * `fields` for events.list; keeps responses small. `description` and `htmlLink` only when a rule
+ * needs them.
+ */
+export function googleEventFields(withBody: boolean, withLink = false): string {
   const item = [
     "id",
     "status",
@@ -131,6 +136,7 @@ export function googleEventFields(withBody: boolean): string {
     "colorId",
     "attendees(self,responseStatus)",
     "extendedProperties/private",
+    ...(withLink ? ["htmlLink"] : []),
   ].join(",");
   return `nextPageToken,items(${item})`;
 }
@@ -155,7 +161,7 @@ export function googleSourceEvent(event: GoogleEvent): SourceEvent | null {
       : `event:${event.id}`;
   const self = event.attendees?.find((attendee) => attendee.self);
 
-  return {
+  const source: SourceEvent = {
     occurrenceKey,
     start: toTime(event.start),
     end: toTime(event.end),
@@ -174,6 +180,9 @@ export function googleSourceEvent(event: GoogleEvent): SourceEvent | null {
     body: event.description ?? "",
     isMirror: markerValue(event.extendedProperties?.private) !== undefined,
   };
+  const link = sourceLink(event.htmlLink);
+  if (link !== undefined) source.link = link;
+  return source;
 }
 
 /** Marker value and dedup key of a block, if the event is one of ours. */

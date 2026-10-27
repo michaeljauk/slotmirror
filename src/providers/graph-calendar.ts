@@ -1,7 +1,7 @@
 import * as z from "zod/mini";
 import {
   fromGraphEvent,
-  GRAPH_EVENT_SELECT,
+  graphEventSelect,
   graphMarkerValue,
   graphSourceEvent,
   parseGraphEvent,
@@ -25,6 +25,7 @@ import type {
   CalendarClient,
   CalendarInfo,
   ChangeFeed,
+  SourceFields,
   TimeWindow,
   Watch,
 } from "./calendar-client";
@@ -115,15 +116,15 @@ export class GraphCalendar implements CalendarClient {
 
   /**
    * Every occurrence in the window, with the marker property so that our own blocks are known.
-   * The full body is read only if a rule needs it (detail level "full").
+   * The full body is read only if a rule needs it (detail level "full"), and so is the web link.
    */
   async sourceEvents(
     calendarId: string,
     window: TimeWindow,
-    options: { withBody?: boolean } = {},
+    options: SourceFields = {},
   ): Promise<SourceEvent[]> {
     const events: SourceEvent[] = [];
-    for (const raw of await this.calendarView(calendarId, window, options.withBody)) {
+    for (const raw of await this.calendarView(calendarId, window, options)) {
       const event = fromGraphEvent(raw);
       if (event) events.push(event);
     }
@@ -265,12 +266,12 @@ export class GraphCalendar implements CalendarClient {
   private async calendarView(
     calendarId: string,
     window: TimeWindow,
-    withBody = false,
+    fields: SourceFields = {},
   ): Promise<unknown[]> {
     const params = new URLSearchParams({
       startDateTime: window.start.toISOString(),
       endDateTime: window.end.toISOString(),
-      $select: withBody ? `${GRAPH_EVENT_SELECT},body` : GRAPH_EVENT_SELECT,
+      $select: graphEventSelect(fields),
       $expand: `singleValueExtendedProperties($filter=id eq '${MARKER_PROPERTY_ID}' or id eq '${LEGACY_MARKER_PROPERTY_ID}' or id eq '${DEDUP_PROPERTY_ID}')`,
       $top: String(PAGE_SIZE),
     });

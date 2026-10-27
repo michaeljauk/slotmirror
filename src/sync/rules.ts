@@ -1,4 +1,5 @@
 import { parseRuleOptions, type RuleOptions } from "../config";
+import { isLocale, LOCALES, messagesFor } from "../i18n";
 
 /** A rule with everything the runner needs, joined from D1. */
 export interface RuleContext {
@@ -14,6 +15,8 @@ export interface RuleContext {
 interface RuleEnd {
   accountId: string;
   provider: string;
+  /** The name the user gave the account; null for the name derived from the address. */
+  name: string | null;
   remoteCalendarId: string;
   /** Address and Entra tenant of the account; they decide whether it belongs to the org. */
   email: string;
@@ -30,12 +33,14 @@ interface RuleRow {
   enabled: number;
   sourceAccountId: string;
   sourceProvider: string;
+  sourceName: string | null;
   sourceRemoteId: string;
   sourceEmail: string;
   sourceTenantId: string | null;
   sourceNeedsReconnect: number;
   targetAccountId: string;
   targetProvider: string;
+  targetName: string | null;
   targetRemoteId: string;
   targetEmail: string;
   targetTenantId: string | null;
@@ -45,10 +50,10 @@ interface RuleRow {
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
-         sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+         sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId, sa.display_name AS sourceName,
          sa.needs_reconnect AS sourceNeedsReconnect,
          ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
-         ta.email AS targetEmail, ta.tenant_id AS targetTenantId,
+         ta.email AS targetEmail, ta.tenant_id AS targetTenantId, ta.display_name AS targetName,
          ta.needs_reconnect AS targetNeedsReconnect
   FROM rules r
   JOIN users u ON u.id = r.user_id
@@ -67,6 +72,7 @@ function toContext(row: RuleRow): RuleContext {
     source: {
       accountId: row.sourceAccountId,
       provider: row.sourceProvider,
+      name: row.sourceName,
       remoteCalendarId: row.sourceRemoteId,
       email: row.sourceEmail,
       tenantId: row.sourceTenantId,
@@ -75,12 +81,38 @@ function toContext(row: RuleRow): RuleContext {
     target: {
       accountId: row.targetAccountId,
       provider: row.targetProvider,
+      name: row.targetName,
       remoteCalendarId: row.targetRemoteId,
       email: row.targetEmail,
       tenantId: row.targetTenantId,
       needsReconnect: row.targetNeedsReconnect === 1,
     },
   };
+}
+
+/**
+ * The first line of the origin note of a rule's blocks, in the language stored with the option:
+ * "From: Work (Microsoft)" with the name the user gave the source account, else "From: Microsoft
+ * account". Never the address: the target calendar can be visible to other people.
+ */
+export function originLine(rule: Pick<RuleContext, "options" | "source">): string {
+  const locale = rule.options.originLocale;
+  const t = messagesFor(isLocale(locale) ? locale : LOCALES[0]).mirror;
+  const provider = rule.source.provider === "google" ? t.google : t.microsoft;
+  const name = noteName(rule.source.name ?? "");
+  return name === "" ? t.originAccount(provider) : t.origin(name, provider);
+}
+
+/**
+ * An account name for the note: one line, without control or format characters. Format characters
+ * (`\p{Cf}`) include the bidi controls, which can reorder the text around the name, zero-width
+ * characters, the soft hyphen and tag characters.
+ */
+function noteName(name: string): string {
+  return name
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim();
 }
 
 export async function loadRule(db: D1Database, ruleId: string): Promise<RuleContext | null> {

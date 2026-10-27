@@ -13,6 +13,11 @@ export const LOCALE_NAMES: Record<Locale, string> = { en: "English", de: "Deutsc
 
 const CATALOGS: Record<Locale, Messages> = { en, de };
 
+/** The message catalog of a locale, without the formatters of `i18nFor`. */
+export function messagesFor(locale: Locale): Messages {
+  return CATALOGS[locale];
+}
+
 export function isLocale(value: string | undefined): value is Locale {
   return (LOCALES as readonly string[]).includes(value ?? "");
 }

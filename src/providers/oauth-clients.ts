@@ -11,6 +11,7 @@ export interface OAuthClient {
     state: string;
     codeChallenge: string;
     purpose: "sign-in" | "connect";
+    loginHint?: string;
   }): string;
   exchangeCode(params: {
     clientId: string;

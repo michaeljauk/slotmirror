@@ -20,6 +20,8 @@ export interface AuthorizeParams {
   scopes: string[];
   state: string;
   codeChallenge: string;
+  /** Address to preselect, e.g. the account to connect again. URLSearchParams encodes it. */
+  loginHint?: string;
 }
 
 export function authorizeUrl(params: AuthorizeParams): string {
@@ -34,6 +36,7 @@ export function authorizeUrl(params: AuthorizeParams): string {
     code_challenge: params.codeChallenge,
     code_challenge_method: "S256",
     prompt: "select_account",
+    ...(params.loginHint ? { login_hint: params.loginHint } : {}),
   }).toString();
   return url.toString();
 }

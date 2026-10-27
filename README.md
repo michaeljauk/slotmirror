@@ -131,6 +131,7 @@ and makes their own choices. Nobody sees another user's calendars.
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                       |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                        |
 | `SCIM_TOKEN`                      | secret   | Optional. Bearer token for user provisioning from Entra over SCIM.                         |
+| `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook that hears when an account needs reconnecting. See below.       |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last 12
 hours; signing in again is one click with the provider.
@@ -226,6 +227,33 @@ Each notification carries a token that only your deployment can compute, an HMAC
 with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `SESSION_SECRET`, the
 existing subscriptions no longer match until they expire and are created again, which can take up
 to 7 days. In the meantime the hourly full sync keeps the blocks current.
+
+## When an account needs reconnecting
+
+A provider can refuse an account's refresh token for good. Examples: the user revoked access, an
+admin ended the sessions, or Google's testing mode ended the token after 7 days. slotmirror then
+marks the account and stops its work until the user connects it again:
+
+- The accounts page shows a notice at the top. It names the account's address and provider and
+  has a **Reconnect** button. The button starts the provider's sign-in with that address
+  preselected. The account's row shows the same state, and the sync page shows the notice too.
+- The admin page lists which users have accounts that need reconnecting, without the addresses.
+- The activity log records "Token refresh failed", with the provider's error code.
+- The account asks the provider nothing more. Rules into its calendars pause, and rules that read
+  from it wait.
+- Once a day, slotmirror tries the refused token again. Some refusals end by themselves, for
+  example when an admin enables a disabled user again. If the provider accepts the token, the
+  mark goes and a full sync starts. A refused try adds one more "Token refresh failed" entry.
+- An account that an older version marked tries its token at the next cron tick, without an
+  alert.
+- When the user connects the same account again, the mark goes and a full sync starts.
+
+**Alerts.** If you set the secret `ALERT_WEBHOOK_URL`, slotmirror posts `{"text": "..."}` to it
+at most once each time an account changes to "needs reconnecting". The text names the provider and
+`PUBLIC_URL`, never the account, the user or any event. This is the format of Slack incoming
+webhooks; Google Chat and Mattermost accept it too. Microsoft Teams needs its own card format, so
+use a Teams workflow that takes the `text` field. The URL must start with `https://`. A failed
+post is logged without the URL and is not retried.
 
 ## Free/busy feed
 

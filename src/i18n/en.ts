@@ -250,10 +250,11 @@ export const en = {
     choiceInvalid: "This choice is not available. Reload the page. Nothing was saved.",
     bufferInvalid: (max: number) =>
       `A buffer is a whole number of minutes from 0 to ${max}. Nothing was saved.`,
-    reconnectText: (name: string) =>
-      `${name} is no longer connected. Until you connect it again, its calendars do not sync.`,
-    reconnect: (name: string) => `Connect ${name} again`,
-    reconnectShort: "Connect again",
+    reconnectTitle: (email: string, provider: string) =>
+      `The ${provider} account ${email} is no longer connected.`,
+    reconnectText: "Its calendars do not sync until you reconnect it.",
+    reconnect: (email: string) => `Reconnect ${email}`,
+    reconnectShort: "Reconnect",
     calendarsLabel: "Calendars",
     mainCalendar: "Main calendar",
     noSource:
@@ -323,6 +324,12 @@ export const en = {
     onlyAdmins: "Only admins can open this page.",
     deleteUser: "Delete",
     inactive: "deactivated",
+    needsReconnect: (count: number) =>
+      count === 1 ? "1 needs reconnecting" : `${count} need reconnecting`,
+    reconnectSummary: (count: number) =>
+      count === 1
+        ? "1 user has an account that needs reconnecting. Its calendars do not sync until that user reconnects it on the Accounts page."
+        : `${count} users have accounts that need reconnecting. Their calendars do not sync until each user reconnects them on the Accounts page.`,
     capsTitle: "Privacy limits",
     capsLead:
       "How much of an event may move between work calendars and private calendars. This applies to everyone on this deployment, also if someone sets more in their own sync settings.",
@@ -477,6 +484,11 @@ export const en = {
     alreadyConnected: "Already connected",
     alreadyConnectedText: (email: string) =>
       `${email} is already connected by another user of this deployment.`,
+  },
+  /** Texts for ALERT_WEBHOOK_URL. They go to the operator, in the first locale. */
+  alerts: {
+    reconnect: (provider: string, url: string) =>
+      `slotmirror: a ${provider} account needs reconnecting. Its calendars do not sync until its user reconnects it. The admin page lists the affected users.${url ? ` ${url}` : ""}`,
   },
 };
 

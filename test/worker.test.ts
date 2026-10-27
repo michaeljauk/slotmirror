@@ -60,6 +60,42 @@ describe("worker", () => {
     ).toBeNull();
   });
 
+  it("ticks every account on cron, also after the tick of one account failed", async () => {
+    const { user } = await signIn("owner@example.com");
+    // Inserted first, so that the cron ticks it first.
+    await addAccount(user.id, "acc-cron-broken", "cron-broken@example.com");
+    await addAccount(user.id, "acc-cron-fine", "cron-fine@example.com");
+    const tokens = { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 };
+    const broken = env.ACCOUNT_SYNC.getByName("acc-cron-broken");
+    await broken.storeTokens("acc-cron-broken", tokens);
+    // Tokens that no longer decrypt, e.g. after a key change: its tick probes and throws.
+    await runInDurableObject(broken, (_instance, state) => {
+      state.storage.sql.exec("UPDATE tokens SET ciphertext = x'00'");
+    });
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-cron-broken'",
+    ).run();
+    const fine = env.ACCOUNT_SYNC.getByName("acc-cron-fine");
+    await fine.storeTokens("acc-cron-fine", {
+      ...tokens,
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await worker.scheduled(createScheduledController(), env);
+
+    expect(
+      await runInDurableObject(fine, (_instance, state) => state.storage.getAlarm()),
+    ).not.toBeNull();
+    const logged = JSON.stringify(errors.mock.calls);
+    expect(logged).toContain("acc-cron-broken");
+    expect(logged).not.toContain("cron-broken@example.com");
+    // Later tests in this file share the database.
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 0 WHERE id = 'acc-cron-broken'",
+    ).run();
+  });
+
   it("ticks the later accounts and purges the audit log when one tick throws", async () => {
     const { user } = await signIn("owner@example.com");
     for (const id of ["acc-tick-bad", "acc-tick-good"]) {
@@ -184,6 +220,33 @@ describe("admin page", () => {
     expect(html).toContain("admin@example.com");
     // Metadata only: connected calendar addresses stay private to their user.
     expect(html).not.toContain("calendar-a@example.com");
+  });
+
+  it("shows which users have accounts that need reconnecting, without the addresses", async () => {
+    const member = await signIn("owner@example.com");
+    await addAccount(member.user.id, "acc-admin-ok", "fine@example.com");
+    await addAccount(member.user.id, "acc-admin-broken", "broken@example.com");
+    const admin = await signIn("admin@example.com");
+    const page = async () =>
+      (await exports.default.fetch(`${BASE}/admin`, { headers: { cookie: admin.cookie } })).text();
+
+    const before = await page();
+    expect(before).not.toContain("needs reconnecting");
+    expect(before).not.toContain("need reconnecting");
+    expect(before).not.toContain("badge error");
+
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-admin-broken'",
+    ).run();
+    const html = await page();
+    expect(html).toContain("1 user has an account that needs reconnecting.");
+    const row = html.slice(html.indexOf("<td>owner@example.com</td>"));
+    expect(row.slice(0, row.indexOf("</tr>"))).toContain(
+      '<span class="badge error">1 needs reconnecting</span>',
+    );
+    const adminRow = html.slice(html.indexOf("<td>admin@example.com</td>"));
+    expect(adminRow.slice(0, adminRow.indexOf("</tr>"))).not.toContain("badge error");
+    expect(html).not.toContain("broken@example.com");
   });
 });
 

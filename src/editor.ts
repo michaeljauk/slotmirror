@@ -43,7 +43,16 @@ export interface EditorAccount {
 /** The rule of one source calendar within a direction; null if it has none yet. */
 interface Slot {
   sourceCalendarId: string;
-  rule: { id: string; enabled: boolean; origin: "group" | "custom"; options: RuleOptions } | null;
+  rule: SlotRule | null;
+}
+
+interface SlotRule {
+  id: string;
+  enabled: boolean;
+  origin: "group" | "custom";
+  options: RuleOptions;
+  /** The options as stored, so that a write can require that they did not change meanwhile. */
+  optionsJson: string;
 }
 
 export interface EditorDirection {
@@ -60,6 +69,13 @@ export interface EditorDirection {
   options: RuleOptions | null;
   /** One entry per source calendar. ruleId, choice and options above come from the first rule. */
   slots: Slot[];
+  /**
+   * An "off" exception kept from a calendar that is no longer a source (see `setSourceCalendar`),
+   * so that the group does not replace it when a source comes back.
+   */
+  parked: SlotRule | null;
+  /** The source account has rules into another calendar of the target account, e.g. an old main. */
+  elsewhere: boolean;
 }
 
 /** Settings for all rules of a user. The editor shows them once, not per direction. */
@@ -175,6 +191,13 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
   const calendarRows = (calendarResult?.results ?? []) as CalendarRow[];
   const ruleRows = (ruleResult?.results ?? []) as RuleRow[];
   const settingsRow = settingsResult?.results[0] as { json: string } | undefined;
+  const calendarById = new Map(calendarRows.map((calendar) => [calendar.id, calendar]));
+  // A disabled custom rule from a calendar that is not a source into a main calendar.
+  const isParked = (row: RuleRow) =>
+    row.enabled === 0 &&
+    row.origin === "custom" &&
+    calendarById.get(row.sourceId)?.isSource === 0 &&
+    calendarById.get(row.targetId)?.isMain === 1;
   const names = shortNames(accountRows.map((row) => row.email));
   const colors = resolveAccountColorState(accountRows.map((row) => row.color));
   // Store assigned colours, so that they stay when another account gets a colour later.
@@ -229,10 +252,15 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
                 enabled: row.enabled === 1,
                 origin: row.origin,
                 options: parseRuleOptions(row.options),
+                optionsJson: row.options,
               }
             : null,
         };
       });
+      const parkedRow = ruleRows.find(
+        (row) =>
+          isParked(row) && row.sourceAccountId === from.id && row.targetId === to.calendar?.id,
+      );
       const first = slots.find((slot) => slot.rule)?.rule ?? null;
       const choice = first ? choiceOf(first.options, first.enabled) : "off";
       const max = toChoice(detailLevelFor(env, "full", from, to).level);
@@ -248,13 +276,30 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
         maxChoice: max,
         options: first?.options ?? null,
         slots,
+        parked: parkedRow
+          ? {
+              id: parkedRow.id,
+              enabled: false,
+              origin: "custom",
+              options: parseRuleOptions(parkedRow.options),
+              optionsJson: parkedRow.options,
+            }
+          : null,
+        elsewhere: ruleRows.some(
+          (row) =>
+            row.sourceAccountId === from.id &&
+            row.targetAccountId === to.id &&
+            row.targetId !== to.calendar?.id,
+        ),
       });
     }
   }
   // Every rule the directions above do not cover shows in its own list, so that none hides.
-  const covered = new Set(
-    directions.flatMap((direction) => direction.slots.flatMap((slot) => slot.rule?.id ?? [])),
-  );
+  // Parked exceptions write nothing and come back with their calendar, so they do not show.
+  const covered = new Set([
+    ...directions.flatMap((direction) => direction.slots.flatMap((slot) => slot.rule?.id ?? [])),
+    ...ruleRows.filter(isParked).map((row) => row.id),
+  ]);
   const nameOf = (accountId: string) =>
     accounts.find((account) => account.id === accountId)?.name ?? "?";
   const others = ruleRows
@@ -612,7 +657,8 @@ export async function setDirection(
 /**
  * Turn a calendar on or off as a source of its account. On: it gets a rule for every direction
  * of the account, with that direction's choice, or the group's rule between group members. Off:
- * its rules go, with their blocks.
+ * its rules go, with their blocks. An "off" exception into a main calendar stays as a parked rule,
+ * so that the group does not turn the direction on when the calendar comes back.
  */
 export async function setSourceCalendar(
   env: Env,
@@ -631,14 +677,54 @@ export async function setSourceCalendar(
 
   if (!isSource) {
     const { results } = await env.DB.prepare(
-      "SELECT id FROM rules WHERE source_calendar_id = ? AND user_id = ?",
+      `SELECT r.id, r.enabled, r.origin, tc.is_default AS isMain, tc.account_id AS accountId,
+              tc.remote_id AS remoteCalendarId
+       FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       WHERE r.source_calendar_id = ? AND r.user_id = ?`,
     )
       .bind(calendarId, user.id)
-      .all<{ id: string }>();
-    for (const row of results) await deleteRuleWithBlocks(env, user, row.id);
+      .all<{
+        id: string;
+        enabled: number;
+        origin: string;
+        isMain: number;
+        accountId: string;
+        remoteCalendarId: string;
+      }>();
+    for (const row of results) {
+      if (row.enabled === 0 && row.origin === "custom" && row.isMain === 1) {
+        // A paused rule can still have blocks; an exception has none, and the queue finds none.
+        await queueRemoval(env, row.id, row);
+      } else {
+        await deleteRuleWithBlocks(env, user, row.id);
+      }
+    }
     return;
   }
-  await reconcileRules(env, user);
+
+  // A parked exception is current only if no other source calendar has a rule for the direction.
+  // Otherwise the other calendar holds the choice, and the parked rule gives way to a copy of it.
+  const state = await loadEditorState(env, user.id);
+  const stale: string[] = [];
+  for (const direction of state.directions) {
+    const own = direction.slots.find((slot) => slot.sourceCalendarId === calendarId);
+    const other = direction.slots.some((slot) => slot !== own && slot.rule);
+    if (own?.rule && other) {
+      stale.push(own.rule.id);
+      own.rule = null;
+    }
+  }
+  await addMissingRules(
+    env,
+    user,
+    state,
+    stale.map((id) =>
+      env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0").bind(
+        id,
+        user.id,
+      ),
+    ),
+  );
 }
 
 /**
@@ -675,20 +761,22 @@ interface MissingRule {
 /**
  * The rules that make every direction complete:
  * - A direction with a rule gets a copy of it for each source calendar without one, so that all
- *   its rules have the same choice.
+ *   its rules have the same choice. A parked "off" exception counts as such a rule.
  * - A direction without rules between two group members gets a group rule ("busy") for each
  *   source calendar.
  *
  * A source calendar that has a rule keeps it, so an exception, also a disabled one, wins over the
- * group. A read-only target gets nothing, because turning a direction on needs write access.
+ * group. A read-only target gets nothing, because turning a direction on needs write access. A
+ * direction with rules into another calendar of the target account, such as the main calendar
+ * before it changed, gets nothing either: a second set of rules would write every block twice.
  */
 function missingRules(state: EditorState): MissingRule[] {
   const missing: MissingRule[] = [];
   for (const direction of state.directions) {
     const from = state.accounts.find((account) => account.id === direction.from);
     const to = state.accounts.find((account) => account.id === direction.to);
-    if (!from || !to?.calendar?.canEdit) continue;
-    const model = direction.slots.find((slot) => slot.rule)?.rule;
+    if (!from || !to?.calendar?.canEdit || direction.elsewhere) continue;
+    const model = direction.slots.find((slot) => slot.rule)?.rule ?? direction.parked;
     if (!model && !(from.inGroup && to.inGroup)) continue;
     for (const slot of direction.slots) {
       if (slot.rule) continue;
@@ -769,10 +857,20 @@ export async function reconcileRules(
   env: Env,
   user: Pick<CurrentUser, "id" | "orgId">,
 ): Promise<void> {
-  const missing = missingRules(await loadEditorState(env, user.id));
-  if (missing.length === 0) return;
-  const results = await env.DB.batch(insertStatements(env, user, missing));
-  await requestSyncs(env, syncTargets(missing, results, 0));
+  await addMissingRules(env, user, await loadEditorState(env, user.id));
+}
+
+/** Run `before` and the inserts of the missing rules in one batch, then request the syncs. */
+async function addMissingRules(
+  env: Env,
+  user: Pick<CurrentUser, "id" | "orgId">,
+  state: EditorState,
+  before: D1PreparedStatement[] = [],
+): Promise<void> {
+  const missing = missingRules(state);
+  if (missing.length === 0 && before.length === 0) return;
+  const results = await env.DB.batch([...before, ...insertStatements(env, user, missing)]);
+  await requestSyncs(env, syncTargets(missing, results, before.length));
 }
 
 /** Add an account to the block group or remove it. See `setGroupMemberships`. */
@@ -798,72 +896,118 @@ export async function setGroupMemberships(
   inGroup: boolean,
 ): Promise<void> {
   if (accountIds.length === 0) return;
-  const value = inGroup ? 1 : 0;
-  const updates = await env.DB.batch(
-    accountIds.map((id) =>
-      env.DB.prepare(
-        "UPDATE accounts SET in_block_group = ? WHERE id = ? AND user_id = ? AND in_block_group <> ?",
-      ).bind(value, id, user.id, value),
-    ),
-  );
+  if (!inGroup) {
+    await leaveGroup(env, user, accountIds);
+    return;
+  }
+  const updates = await env.DB.batch(accountIds.map((id) => membershipUpdate(env, user, id, true)));
   const changed = new Set(accountIds.filter((_, i) => (updates[i]?.meta.changes ?? 0) > 0));
   if (changed.size === 0) return;
-  const statements = [...changed].map((accountId) =>
-    auditStatement(env.DB, {
-      orgId: user.orgId,
-      userId: user.id,
-      accountId,
-      kind: "group_changed",
-      detail: { inGroup },
-    }),
-  );
+  const statements = [...changed].map((accountId) => groupChangedAudit(env, user, accountId, true));
 
   const state = await loadEditorState(env, user.id);
   for (const direction of state.directions) {
     if (!changed.has(direction.from) && !changed.has(direction.to)) continue;
     const from = state.accounts.find((account) => account.id === direction.from);
     const to = state.accounts.find((account) => account.id === direction.to);
-    if (!from || !to?.calendar) continue;
+    if (!from?.inGroup || !to?.inGroup || !to.calendar?.canEdit) continue;
     for (const { rule } of direction.slots) {
-      if (!inGroup && rule?.origin === "group") {
-        // Like "off", leaving needs no write access to the target.
-        const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
-        const queued = await queueRemoval(env, rule.id, target);
-        statements.push(
-          env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?").bind(rule.id, user.id),
-          auditStatement(env.DB, {
-            orgId: user.orgId,
-            userId: user.id,
-            accountId: to.id,
-            ruleId: rule.id,
-            kind: "rule_deleted",
-            detail: queued ? { cleanup: "queued" } : { cleanupFailed: true },
-          }),
-        );
-      } else if (
-        inGroup &&
-        from.inGroup &&
-        to.inGroup &&
-        to.calendar.canEdit &&
+      if (
         rule?.origin === "custom" &&
         rule.enabled &&
         choiceOf(rule.options, true) === "busy" &&
         hasDefaultOptions(rule.options, state.settings)
       ) {
+        // Only if the rule is unchanged: a concurrent request may have customised it.
         statements.push(
           env.DB.prepare(
             `UPDATE rules SET origin = 'group'
-             WHERE id = ? AND enabled = 1 AND json_extract(options, '$.detailLevel') = 'busy'`,
-          ).bind(rule.id),
+             WHERE id = ? AND enabled = 1 AND origin = 'custom' AND options = ?`,
+          ).bind(rule.id, rule.optionsJson),
         );
         // Copies for other source calendars of the direction follow the adopted rule.
         rule.origin = "group";
       }
     }
   }
-  const missing = inGroup ? missingRules(state) : [];
-  const results = await env.DB.batch([...statements, ...insertStatements(env, user, missing)]);
-  await requestSyncs(env, syncTargets(missing, results, statements.length));
+  await addMissingRules(env, user, state, statements);
+}
+
+/**
+ * Leave the group: the membership and the deletion of the group rules commit together, and the
+ * removal of the blocks is queued only after that. A call for an account that is out of the group
+ * already still deletes group rules left over from an earlier failure.
+ */
+async function leaveGroup(
+  env: Env,
+  user: CurrentUser,
+  accountIds: readonly string[],
+): Promise<void> {
+  const state = await loadEditorState(env, user.id);
+  const leaving = new Set(accountIds);
+  const deletions: { ruleId: string; accountId: string; remoteCalendarId: string }[] = [];
+  for (const direction of state.directions) {
+    if (!leaving.has(direction.from) && !leaving.has(direction.to)) continue;
+    const to = state.accounts.find((account) => account.id === direction.to);
+    if (!to?.calendar) continue;
+    for (const { rule } of direction.slots) {
+      // Like "off", leaving needs no write access to the target.
+      if (rule?.origin !== "group") continue;
+      deletions.push({ ruleId: rule.id, accountId: to.id, remoteCalendarId: to.calendar.remoteId });
+    }
+  }
+  const results = await env.DB.batch([
+    ...accountIds.map((id) => membershipUpdate(env, user, id, false)),
+    ...deletions.map(({ ruleId }) =>
+      env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ? AND origin = 'group'").bind(
+        ruleId,
+        user.id,
+      ),
+    ),
+  ]);
+  const changed = (index: number) => (results[index]?.meta.changes ?? 0) > 0;
+  const audits = accountIds.flatMap((accountId, index) =>
+    changed(index) ? [groupChangedAudit(env, user, accountId, false)] : [],
+  );
+  for (const [index, deletion] of deletions.entries()) {
+    // A concurrent request deleted the rule first; it queued the removal and wrote the audit.
+    if (!changed(accountIds.length + index)) continue;
+    const queued = await queueRemoval(env, deletion.ruleId, deletion);
+    audits.push(
+      auditStatement(env.DB, {
+        orgId: user.orgId,
+        userId: user.id,
+        accountId: deletion.accountId,
+        ruleId: deletion.ruleId,
+        kind: "rule_deleted",
+        detail: queued ? { cleanup: "queued" } : { cleanupFailed: true },
+      }),
+    );
+  }
+  if (audits.length === 0) return;
+  // The change is done; like `recordAudit`, a broken log must not fail the request.
+  try {
+    await env.DB.batch(audits);
+  } catch (error) {
+    console.error("Audit write failed", "group_changed", error);
+  }
+}
+
+function membershipUpdate(env: Env, user: CurrentUser, accountId: string, inGroup: boolean) {
+  const value = inGroup ? 1 : 0;
+  return env.DB.prepare(
+    "UPDATE accounts SET in_block_group = ? WHERE id = ? AND user_id = ? AND in_block_group <> ?",
+  ).bind(value, accountId, user.id, value);
+}
+
+function groupChangedAudit(env: Env, user: CurrentUser, accountId: string, inGroup: boolean) {
+  return auditStatement(env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    accountId,
+    kind: "group_changed",
+    detail: { inGroup },
+  });
 }
 
 function hasDefaultOptions(options: RuleOptions | null, settings: SyncSettings): boolean {

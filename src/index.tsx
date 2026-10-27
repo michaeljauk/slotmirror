@@ -340,12 +340,14 @@ app.get("/admin", async (c) => {
   );
 });
 
-// An unexpected error gets a page in the user's language. The log keeps the error code only:
-// messages of foreign errors can echo request data.
+// An unexpected error gets a page in the user's language, or a short text for the editor
+// script. The log keeps name, message and stack: this app throws static messages and IDs, and D1
+// messages name tables and columns. Request bodies, tokens and event content never go into it.
 app.onError((error, c) => {
   if (error instanceof HTTPException) return error.getResponse();
-  console.error("Request failed", errorCode(error));
+  console.error("Request failed", error.name, error.message, error.stack);
   const { t } = i18nFromContext(c);
+  if (c.req.header("x-fragment") === "1") return c.text(t.messages.errorText, 500);
   return render(
     c,
     <MessagePage title={t.messages.errorTitle} message={t.messages.errorText} />,

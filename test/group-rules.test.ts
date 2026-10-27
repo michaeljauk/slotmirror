@@ -1,7 +1,12 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { refreshUserCalendars } from "../src/calendars";
-import { setDirection, setGroupMembership, setSourceCalendar } from "../src/editor";
+import {
+  loadEditorState,
+  setDirection,
+  setGroupMembership,
+  setSourceCalendar,
+} from "../src/editor";
 import { BASE, signIn } from "./helpers";
 
 interface Options {
@@ -59,9 +64,12 @@ async function makeReadOnly(accountId: string) {
 
 /** Accounts whose main calendar Graph reports as read-only. */
 const readOnlyInGraph = new Set<string>();
+/** Accounts whose main calendar changed in Graph to a new calendar; the old one stays. */
+const newMainInGraph = new Set<string>();
 
 beforeEach(() => {
   readOnlyInGraph.clear();
+  newMainInGraph.clear();
   // Graph answers per account, identified by its access token. Removals read empty calendars.
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input, init);
@@ -74,9 +82,20 @@ beforeEach(() => {
             id: `${account}-remote`,
             name: "Main",
             canEdit: !readOnlyInGraph.has(account),
-            isDefaultCalendar: true,
+            isDefaultCalendar: !newMainInGraph.has(account),
             owner: { address: `${account}@owner.example` },
           },
+          ...(newMainInGraph.has(account)
+            ? [
+                {
+                  id: `${account}-new-remote`,
+                  name: "New main",
+                  canEdit: true,
+                  isDefaultCalendar: true,
+                  owner: { address: `${account}@owner.example` },
+                },
+              ]
+            : []),
         ],
       });
     }
@@ -92,6 +111,26 @@ afterEach(() => {
 
 const groupBusy = (source: string, target: string) =>
   expect.objectContaining({ source, target, level: "busy", enabled: 1, origin: "group" });
+
+async function auditCount(userId: string, kind: string) {
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM audit_events WHERE user_id = ? AND kind = ?",
+  )
+    .bind(userId, kind)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** A second calendar of an account, not a source yet. */
+async function addCalendar(accountId: string, name: string) {
+  const id = `${accountId}-${name}`;
+  await env.DB.prepare(
+    "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, ?, 1, 0, 0)",
+  )
+    .bind(id, accountId, `${id}-remote`, name)
+    .run();
+  return id;
+}
 
 describe("group rules", () => {
   it("come back when the only source calendar is turned off and on again", async () => {
@@ -163,6 +202,127 @@ describe("group rules", () => {
   });
 });
 
+describe("exceptions and calendar changes", () => {
+  it("keep an explicit off when the only source calendar is turned off and on again", async () => {
+    const { user, ids } = await setup("ex-off", ["a", "b", "c"]);
+    const [a, b, c] = ids as [string, string, string];
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    await setDirection(env, user, a, b, "off");
+
+    await setSourceCalendar(env, user, `${a}-cal`, false);
+    // The kept exception writes nothing and does not show as a separate rule.
+    expect((await loadEditorState(env, user.id)).others).toEqual([]);
+    await setSourceCalendar(env, user, `${a}-cal`, true);
+    const rules = await rulesOf(user.id);
+    expect(rules.find((r) => r.source === a && r.target === b)).toMatchObject({
+      enabled: 0,
+      origin: "custom",
+    });
+    expect(rules.find((r) => r.source === a && r.target === c)).toEqual(groupBusy(a, c));
+  });
+
+  it("give a kept off way to the choice another source calendar got meanwhile", async () => {
+    const { user, ids } = await setup("ex-multi", ["a", "b"]);
+    const [a, b] = ids as [string, string];
+    const extra = await addCalendar(a, "extra");
+    await setSourceCalendar(env, user, extra, true);
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    await setDirection(env, user, a, b, "off");
+    await setSourceCalendar(env, user, `${a}-cal`, false);
+    await setDirection(env, user, a, b, "title");
+
+    await setSourceCalendar(env, user, `${a}-cal`, true);
+    const toB = (await rulesOf(user.id)).filter((r) => r.source === a && r.target === b);
+    expect(toB).toEqual([
+      expect.objectContaining({ level: "title", enabled: 1, origin: "custom" }),
+      expect.objectContaining({ level: "title", enabled: 1, origin: "custom" }),
+    ]);
+  });
+
+  it("add no second set of rules when the main calendar of the target changes", async () => {
+    const { user, ids } = await setup("ex-main", ["w", "o"]);
+    const [w, o] = ids as [string, string];
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+
+    newMainInGraph.add(o);
+    await refreshUserCalendars(env, user.id);
+    const intoO = await env.DB.prepare(
+      `SELECT tc.remote_id AS remote FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       WHERE tc.account_id = ?`,
+    )
+      .bind(o)
+      .all<{ remote: string }>();
+    expect(intoO.results).toEqual([{ remote: `${o}-remote` }]);
+    expect((await rulesOf(user.id)).filter((r) => r.source === w)).toHaveLength(1);
+  });
+
+  it("copy a custom rule outside the group once its target becomes writable", async () => {
+    const { user, ids } = await setup("ex-copy", ["w", "o"]);
+    const [w, o] = ids as [string, string];
+    const extra = await addCalendar(w, "extra");
+    await setDirection(env, user, w, o, "title");
+    await makeReadOnly(o);
+    await setSourceCalendar(env, user, extra, true);
+    expect(await rulesOf(user.id)).toHaveLength(1);
+
+    await refreshUserCalendars(env, user.id);
+    expect(await rulesOf(user.id)).toEqual([
+      expect.objectContaining({ source: w, target: o, level: "title", origin: "custom" }),
+      expect.objectContaining({ source: w, target: o, level: "title", origin: "custom" }),
+    ]);
+  });
+});
+
+describe("joining the group", () => {
+  it("does not adopt a busy rule that a concurrent request customised", async () => {
+    const { user, ids } = await setup("adopt-race", ["w", "o"]);
+    const [w, o] = ids as [string, string];
+    await setGroupMembership(env, user, w, true);
+    await setDirection(env, user, w, o, "busy");
+    // Between the read of the editor state and the write batch, another tab changes its window.
+    const batch = env.DB.batch.bind(env.DB);
+    let calls = 0;
+    vi.spyOn(env.DB, "batch").mockImplementation(async (statements) => {
+      if (++calls === 3) {
+        await env.DB.prepare(
+          "UPDATE rules SET options = json_set(options, '$.daysAhead', 7)",
+        ).run();
+      }
+      return batch(statements);
+    });
+
+    await setGroupMembership(env, user, o, true);
+    expect((await rulesOf(user.id)).find((r) => r.source === w)).toMatchObject({
+      origin: "custom",
+    });
+  });
+});
+
+describe("leaving the group", () => {
+  it("cleans up group rules left over while the account is out of the group", async () => {
+    const { user, ids } = await setup("leave-retry", ["w", "o"]);
+    const [w] = ids as [string, string];
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    await env.DB.prepare("UPDATE accounts SET in_block_group = 0 WHERE id = ?").bind(w).run();
+
+    await setGroupMembership(env, user, w, false);
+    expect(await rulesOf(user.id)).toEqual([]);
+  });
+
+  it("logs each deleted rule once when the same account leaves twice at the same time", async () => {
+    const { user, ids } = await setup("leave-race", ["w", "o"]);
+    const [w] = ids as [string, string];
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+
+    await Promise.all([
+      setGroupMembership(env, user, w, false),
+      setGroupMembership(env, user, w, false),
+    ]);
+    expect(await rulesOf(user.id)).toEqual([]);
+    expect(await auditCount(user.id, "rule_deleted")).toBe(2);
+  });
+});
+
 describe("concurrent requests", () => {
   it("both finish when two accounts join the group at the same time", async () => {
     const { user, ids } = await setup("race-grp", ["w", "o"]);
@@ -172,6 +332,8 @@ describe("concurrent requests", () => {
     );
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
     expect(await rulesOf(user.id)).toEqual([groupBusy(o, w), groupBusy(w, o)]);
+    // The losing request inserted nothing, so it logs nothing.
+    expect(await auditCount(user.id, "rule_created")).toBe(2);
   });
 
   it("both finish when the same direction is saved twice at the same time", async () => {
@@ -189,7 +351,7 @@ describe("concurrent requests", () => {
 });
 
 describe("unexpected errors", () => {
-  it("show a localized error page and log only the error code", async () => {
+  it("show a localized error page, and a short text to the editor script", async () => {
     const { cookie } = await setup("err", ["w", "o"]);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(env.DB, "prepare").mockImplementation(() => {
@@ -203,7 +365,21 @@ describe("unexpected errors", () => {
     const html = await response.text();
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("Etwas ist schiefgelaufen");
-    expect(errors).toHaveBeenCalledWith("Request failed", "D1_ERROR: database is locked");
+    expect(errors).toHaveBeenCalledWith(
+      "Request failed",
+      "Error",
+      "D1_ERROR: database is locked",
+      expect.stringContaining("D1_ERROR"),
+    );
+
+    const fragment = await exports.default.fetch(`${BASE}/rules/direction/check?lang=de`, {
+      method: "POST",
+      headers: { cookie, "x-fragment": "1" },
+    });
+    expect(fragment.status).toBe(500);
+    expect(await fragment.text()).toBe(
+      "Die Anfrage ist fehlgeschlagen. Bitte gleich noch einmal versuchen.",
+    );
   });
 });
 

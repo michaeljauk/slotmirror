@@ -10,6 +10,8 @@ import {
   setWorkingHours,
 } from "../src/editor";
 import { BASE, signIn } from "./helpers";
+// @ts-expect-error `?raw` imports are untyped without `vite/client`
+import editorScript from "../public/editor.js?raw";
 
 /** A user with a Microsoft and a Google account, each with one main calendar and tokens. */
 async function setup(prefix: string) {
@@ -387,8 +389,8 @@ describe("working hours per direction", () => {
     expect(await rulesOf(user.id, g, w)).toEqual([]);
   });
 
-  it("reports hours it could not store, instead of answering success", async () => {
-    const { user, cookie, w, g } = await setup("hourslost");
+  it("saves the source change and skips the hours of a direction that loses its last source", async () => {
+    const { user, cookie, w, g } = await setup("lastsource");
     await setDirection(env, user, g, w, "busy");
     // The same save turns off the only source calendar of the direction.
     const body = new URLSearchParams({
@@ -399,7 +401,13 @@ describe("working hours per direction", () => {
       [`workTimeZone.${g}.${w}`]: "",
     });
     const response = await post("/rules/choices", cookie, body, { "x-fragment": "1" });
-    expect(response.status).toBe(409);
+    // The direction has no rules left, so its hours have nothing to change. The save must not
+    // answer 409 after it turned the calendar off.
+    expect(response.status).toBe(204);
+    const row = await env.DB.prepare("SELECT is_source FROM calendars WHERE id = ?")
+      .bind(`${g}-cal`)
+      .first<{ is_source: number }>();
+    expect(row?.is_source).toBe(0);
     expect(await rulesOf(user.id, g, w)).toEqual([]);
   });
 });
@@ -567,5 +575,18 @@ describe("working hours with copies and parked rules", () => {
     expect(await setWorkingHours(env, user, g, w, office)).toBe(true);
     const [rule] = await rulesOf(user.id, g, w);
     expect(JSON.parse(rule?.options ?? "{}")).toMatchObject({ ...office, parked: true });
+  });
+
+  it("saves every change of the page when Enter is pressed in a working-hours form", () => {
+    // The editor script has no DOM test harness. This reads the submit handler of the hours form.
+    const loop = (String(editorScript).split('"form.working-hours[data-key]"')[1] ?? "").split(
+      "block colour of a direction",
+    )[0];
+    const handler = /addEventListener\("submit", \(event\) => \{([\s\S]*?)\}\);/.exec(
+      loop ?? "",
+    )?.[1];
+    expect(handler).toContain("event.preventDefault()");
+    expect(handler).toContain("onChange()");
+    expect(handler).toMatch(/pending\.size > 0\) void save\(\)/);
   });
 });

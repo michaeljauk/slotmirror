@@ -276,6 +276,22 @@ rules.post("/choices", async (c) => {
     if (problem) return refuse(c, t.editor.workHoursErrors[problem]);
   }
 
+  // A direction that loses its last source calendar in this save has no rules left, so its hours
+  // have nothing to change. Skip them here: `setWorkingHours` would fail after the writes below.
+  const sourcesAfter = new Set(
+    accounts.flatMap((account) =>
+      account.calendars.flatMap((calendar) => (calendar.isSource ? [calendar.id] : [])),
+    ),
+  );
+  for (const { first, value } of calendars) {
+    if (value === "1") sourcesAfter.add(first);
+    else sourcesAfter.delete(first);
+  }
+  for (const [key, entry] of hours) {
+    const account = accounts.find((a) => a.id === entry.from);
+    if (!account?.calendars.some((calendar) => sourcesAfter.has(calendar.id))) hours.delete(key);
+  }
+
   // Source calendars first, so that the choices below also reach newly chosen calendars.
   for (const { first, value } of calendars) {
     await setSourceCalendar(c.env, user, first, value === "1");
@@ -292,8 +308,8 @@ rules.post("/choices", async (c) => {
     await setSettings(c.env, user, settingsFrom(form, t.editor.defaultBlockTitle, "settings."));
   }
   // Hours last: each helper reads the state that the writes before it left, so the writes are not
-  // one D1 batch. After the checks above, a write fails only on a storage error or if the direction
-  // is gone; the earlier writes then stay.
+  // one D1 batch. The checks above cover every refusal. A write still fails on a storage error or
+  // if a concurrent request removed the direction; the earlier writes then stay.
   for (const entry of hours.values()) {
     if (!(await setWorkingHours(c.env, user, entry.from, entry.to, entry.hours))) {
       return c.text("Working hours not saved", 409);

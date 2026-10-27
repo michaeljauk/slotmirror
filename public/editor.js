@@ -119,7 +119,12 @@
     };
     form.addEventListener("change", onChange);
     form.addEventListener("input", onChange);
-    form.addEventListener("submit", (event) => event.preventDefault());
+    // Enter in a time field saves every change of the page, as the bar does.
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      onChange();
+      if (pending.size > 0) void save();
+    });
   }
 
   // The block colour of a direction counts as one change while it differs from the saved one.

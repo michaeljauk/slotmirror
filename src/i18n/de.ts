@@ -34,7 +34,10 @@ export const de: Messages = {
     inSync: (time: string) => `Synchron · ${time}`,
     partlySynced: (time: string) => `Teilweise synchron · ${time}`,
     syncFailed: (code: string) => `Synchronisierung fehlgeschlagen: ${code}`,
-    changesFailed: (count: number) => `${count} Änderungen fehlgeschlagen`,
+    syncPaused: "Synchronisierung pausiert",
+    lastRunAt: (time: string) => `Letzter Lauf ${time}`,
+    changesFailed: (count: number) =>
+      count === 1 ? "1 Änderung fehlgeschlagen" : `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
     disconnect: "Trennen",
     rename: "Name und Farbe",
@@ -104,11 +107,11 @@ export const de: Messages = {
     previewResult: (create, update, remove, unchanged) =>
       `Vorschau: ${create} anlegen, ${update} ändern, ${remove} löschen, ${unchanged} unverändert. Es wurde nichts geschrieben.`,
     runResult: (applied, failed, remaining) =>
-      `Lauf beendet: ${applied} Änderungen geschrieben, ${failed} fehlgeschlagen, ${remaining} für den nächsten Lauf.`,
+      `Lauf beendet: ${applied === 1 ? "1 Änderung" : `${applied} Änderungen`} geschrieben, ${failed} fehlgeschlagen, ${remaining} für den nächsten Lauf.`,
     invalid:
       "Wähle zwei verschiedene Kalender. In den Zielkalender muss geschrieben werden dürfen.",
     lastRun: (blocks: number, time: string, changes: number) =>
-      `${blocks} Blöcke · letzter Lauf ${time} · ${changes} Änderungen`,
+      `${blocks === 1 ? "1 Block" : `${blocks} Blöcke`} · letzter Lauf ${time} · ${changes === 1 ? "1 Änderung" : `${changes} Änderungen`}`,
     lastRunFailed: (time: string, code: string) =>
       `letzter Lauf fehlgeschlagen · ${time} · ${code}`,
     capped: (level: string) => `Durch die Richtlinie dieser Installation begrenzt auf: ${level}`,
@@ -124,8 +127,8 @@ export const de: Messages = {
     viewList: "Liste",
     viewMatrix: "Übersicht",
     groupTitle: "Blocken sich gegenseitig",
-    groupText: (count: number) =>
-      `Diese ${count} Kalender sehen voneinander nur „Belegt“, als privat markiert. Mehr Details stellst du unten pro Kalender ein.`,
+    groupText: (count: number, markPrivate: boolean) =>
+      `Diese ${count} Kalender sehen voneinander nur „Belegt“${markPrivate ? ", als privat markiert" : ""}. Mehr Details stellst du unten pro Kalender ein.`,
     groupTooFew: "Wähle mindestens zwei Kalender.",
     groupAdd: "Zur Gruppe hinzufügen",
     groupRemove: "Aus der Gruppe nehmen",
@@ -173,6 +176,7 @@ export const de: Messages = {
     window: "Zeitraum",
     blockTitleLabel: "Titel belegter Blöcke",
     blockTitleHint: "Diesen Titel tragen Kopien mit der Stufe „Als belegt“.",
+    defaultBlockTitle: "Belegt",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
     skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
     skipCategoriesPlaceholder: "Privat, Fokus",
@@ -184,6 +188,13 @@ export const de: Messages = {
     blockCategoryPlaceholder: "Keine Kategorie",
     blockCategoryHint:
       "Outlook zeigt eine Farbe, wenn es eine Kategorie mit diesem Namen gibt. Lege sie zuerst in Outlook an.",
+    blockCategoryComma:
+      "Ein Kategoriename darf kein Komma enthalten: Outlook liest das Komma als Beginn einer zweiten Kategorie. Es wurde nichts gespeichert.",
+    blockCategoryTooLong: (max: number) =>
+      `Ein Kategoriename darf höchstens ${max} Zeichen haben. Es wurde nichts gespeichert.`,
+    blockColorInvalid:
+      "Diese Farbe passt nicht zum Kalender. Lade die Seite neu. Es wurde nichts gespeichert.",
+    choiceInvalid: "Diese Auswahl gibt es nicht. Lade die Seite neu. Es wurde nichts gespeichert.",
     reconnectText: (name: string) =>
       `${name} ist nicht mehr verbunden. Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.`,
     reconnect: (name: string) => `${name} neu verbinden`,
@@ -204,9 +215,12 @@ export const de: Messages = {
     days: (days: number) => `${days} Tage`,
     cellChanged: "geändert",
     checking: "Wird geprüft …",
+    checkFailed: "Die Prüfung ist fehlgeschlagen. Bitte später noch einmal.",
+    checkStale: "Diese Richtung hat sich inzwischen geändert. Lade die Seite neu.",
+    checkNoTokens: "Dieses Konto ist nicht mehr angemeldet. Verbinde es auf der Kontenseite neu.",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
       create + update + remove === 0
-        ? `Stimmt mit dem Kalender überein · ${unchanged} Blöcke`
+        ? `Stimmt mit dem Kalender überein · ${unchanged === 1 ? "1 Block" : `${unchanged} Blöcke`}`
         : `Beim nächsten Sync: ${create} neu, ${update} geändert, ${remove} entfernt`,
     othersTitle: "Weitere Regeln",
     othersLead:

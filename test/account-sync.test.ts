@@ -1295,7 +1295,7 @@ describe("throttling", () => {
     statefulGraph({
       [SOURCE_CAL]: fixture.value,
       "remote-throttled": () =>
-        new Response("busy", { status: 429, headers: { "Retry-After": "7" } }),
+        new Response("busy", { status: 429, headers: { "Retry-After": "20" } }),
     });
     const throttledRule = "acc-src-throttle-rule-2";
     await shortNextRun(stub);
@@ -1311,8 +1311,8 @@ describe("throttling", () => {
     expect(await auditOf(throttledRule, "sync_failed")).toHaveLength(1);
     expect(await stored("ruleQueue")).toEqual([ownRule, throttledRule]);
     const wait = ((await stored<Record<string, number>>("ruleNotBefore")) ?? {})[throttledRule];
-    expect((wait ?? 0) - Date.now()).toBeGreaterThan(4_000);
-    expect((wait ?? 0) - Date.now()).toBeLessThanOrEqual(7_000);
+    expect((wait ?? 0) - Date.now()).toBeGreaterThan(15_000);
+    expect((wait ?? 0) - Date.now()).toBeLessThanOrEqual(20_000);
 
     // The next alarm runs the other rule.
     await runDurableObjectAlarm(stub);
@@ -1323,7 +1323,7 @@ describe("throttling", () => {
     await runDurableObjectAlarm(stub);
     expect(await auditOf(throttledRule, "sync_failed")).toHaveLength(1);
     expect(await stored("ruleQueue")).toEqual([throttledRule]);
-    expect(await alarmIn(stub)).toBeLessThanOrEqual(7_000);
+    expect(await alarmIn(stub)).toBeLessThanOrEqual(20_000);
   });
 
   it.each([
@@ -1438,13 +1438,14 @@ describe("throttling", () => {
 });
 
 /**
- * Shorten the pause between two alarm runs of one instance to one second, as in production. The
- * test bindings use ten minutes, which hides every alarm time below that.
+ * Shorten the pause between two alarm runs of one instance to ten seconds. The test bindings use
+ * ten minutes, which hides every alarm time below that. One second, as in production, would let
+ * an alarm fire by itself during a slow test step.
  */
 async function shortNextRun(stub: DurableObjectStub<AccountSync>) {
   await runInDurableObject(stub, (instance: AccountSync) => {
     const self = instance as unknown as { env: Env };
-    self.env = { ...self.env, SYNC_NEXT_RUN_MS: "1000" };
+    self.env = { ...self.env, SYNC_NEXT_RUN_MS: "10000" };
   });
 }
 
@@ -1530,7 +1531,7 @@ describe("waiting rules", () => {
           ruleId: "old-rule",
           remoteCalendarId: TARGET_CAL,
           attempts: 1,
-          notBefore: Date.now() + 10_000,
+          notBefore: Date.now() + 20_000,
         },
       ]);
       await state.storage.put("ruleQueue", [throttledRule]);
@@ -1540,7 +1541,7 @@ describe("waiting rules", () => {
     await runDurableObjectAlarm(stub);
 
     expect(queued).toBe(true);
-    expect(await alarmIn(stub)).toBeLessThanOrEqual(1_000);
+    expect(await alarmIn(stub)).toBeLessThanOrEqual(10_000);
   });
 
   it("checks again within 30 seconds, or earlier for a removal or a retry", async () => {
@@ -1567,14 +1568,14 @@ describe("waiting rules", () => {
           ruleId: "gone-rule",
           remoteCalendarId: TARGET_CAL,
           attempts: 1,
-          notBefore: Date.now() + 10_000,
+          notBefore: Date.now() + 15_000,
         },
       ]),
     );
     await runDurableObjectAlarm(stub);
     expect(calls).toHaveLength(0);
-    expect(await alarmIn(stub)).toBeGreaterThan(5_000);
-    expect(await alarmIn(stub)).toBeLessThanOrEqual(10_000);
+    expect(await alarmIn(stub)).toBeGreaterThan(10_000);
+    expect(await alarmIn(stub)).toBeLessThanOrEqual(15_000);
   });
 
   it("keeps the pause between two alarms when a wait ends sooner", async () => {
@@ -1582,7 +1583,7 @@ describe("waiting rules", () => {
 
     await runDurableObjectAlarm(stub);
 
-    expect(await alarmIn(stub)).toBeGreaterThan(500);
+    expect(await alarmIn(stub)).toBeGreaterThan(5_000);
   });
 
   it.each([
@@ -1643,7 +1644,7 @@ describe("waiting rules", () => {
     ).toBeUndefined();
   });
 
-  it("keeps the queue and its other alarms when D1 cannot tell which rules may run", async () => {
+  it("keeps the queue and backs off while D1 cannot tell which rules may run", async () => {
     const { stub, ruleId } = await setupRule("acc-lookup-fails");
     await stub.storeTokens("acc-lookup-fails", {
       refreshToken: "r",
@@ -1652,6 +1653,8 @@ describe("waiting rules", () => {
     });
     const calls = fakeGraph();
     vi.spyOn(console, "error").mockImplementation(() => {});
+    await shortNextRun(stub);
+    let failing = true;
     await runInDurableObject(stub, async (instance: AccountSync, state) => {
       const self = instance as unknown as { env: Env };
       const db = self.env.DB;
@@ -1659,7 +1662,7 @@ describe("waiting rules", () => {
         ...self.env,
         DB: {
           prepare: (query: string) => {
-            if (query.includes("json_each")) throw new Error("D1_ERROR: transient");
+            if (failing && query.includes("json_each")) throw new Error("D1_ERROR: transient");
             return db.prepare(query);
           },
           batch: db.batch.bind(db),
@@ -1668,17 +1671,49 @@ describe("waiting rules", () => {
       await state.storage.put("ruleQueue", [ruleId]);
       await state.storage.setAlarm(Date.now() + 60_000);
     });
+    const stored = <T>(key: string) =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get<T>(key));
+    const expectAlarmIn = async (min: number, max: number) => {
+      const wait = await alarmIn(stub);
+      expect(wait).toBeGreaterThan(min);
+      expect(wait).toBeLessThanOrEqual(max);
+    };
 
+    // The rule stays queued and nothing runs; the wait doubles with each failure in a row.
     await runDurableObjectAlarm(stub);
-
     expect(calls.filter((call) => call.url.includes("calendarView"))).toHaveLength(0);
     expect(await auditOf(ruleId)).toEqual([]);
-    expect(
-      await runInDurableObject(stub, (_instance, state) => state.storage.get("ruleQueue")),
-    ).toEqual([ruleId]);
-    const wait = await alarmIn(stub);
-    expect(wait).toBeGreaterThan(25_000);
-    expect(wait).toBeLessThanOrEqual(30_000);
+    expect(await stored("ruleQueue")).toEqual([ruleId]);
+    await expectAlarmIn(25_000, 30_000);
+    await runDurableObjectAlarm(stub);
+    await expectAlarmIn(55_000, 60_000);
+
+    // The wait stops growing at ten minutes.
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("ruleLookupFailures", 9),
+    );
+    await runDurableObjectAlarm(stub);
+    await expectAlarmIn(595_000, 600_000);
+
+    // A removal that waits after a failed attempt keeps its earlier time.
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("removalQueue", [
+        {
+          ruleId: "gone-rule",
+          remoteCalendarId: TARGET_CAL,
+          attempts: 1,
+          notBefore: Date.now() + 40_000,
+        },
+      ]),
+    );
+    await runDurableObjectAlarm(stub);
+    await expectAlarmIn(35_000, 40_000);
+
+    // Once D1 answers, the rule runs and the count of failures is gone.
+    failing = false;
+    await runDurableObjectAlarm(stub);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
+    expect(await stored("ruleLookupFailures")).toBeUndefined();
   });
 });
 

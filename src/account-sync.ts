@@ -73,8 +73,15 @@ const RULE_NOT_BEFORE_KEY = "ruleNotBefore";
  */
 const WAITING_RULES_CHECK_MS = 30_000;
 
-/** If D1 fails to tell which queued rules may run, the alarm tries again after this long. */
+/**
+ * If D1 fails to tell which queued rules may run, the alarm tries again after this long. The wait
+ * doubles with each failure in a row, up to RULE_LOOKUP_RETRY_MAX_MS.
+ */
 const RULE_LOOKUP_RETRY_MS = 30_000;
+const RULE_LOOKUP_RETRY_MAX_MS = 10 * 60_000;
+
+/** Durable Object storage key: failed rule lookups in a row. See RULE_LOOKUP_RETRY_MS. */
+const RULE_LOOKUP_FAILURES_KEY = "ruleLookupFailures";
 
 /** Result of a source read over RPC. See `readSourceForRule()`. */
 type SourceRead = { events: SourceEvent[] } | { throttled: { message: string; waitMs: number } };
@@ -1254,11 +1261,20 @@ export class AccountSync extends DurableObject<Env> {
    * tries again later, and this returns null: dropping the rule would lose its run.
    */
   private async rulesRunningFromAlarm(ruleIds: string[]): Promise<Set<string> | null> {
+    const failures = (await this.ctx.storage.get<number>(RULE_LOOKUP_FAILURES_KEY)) ?? 0;
     try {
-      return await rulesRunningFromAlarm(this.env.DB, ruleIds);
+      const running = await rulesRunningFromAlarm(this.env.DB, ruleIds);
+      if (failures > 0) await this.ctx.storage.delete(RULE_LOOKUP_FAILURES_KEY);
+      return running;
     } catch (error) {
       console.error("Rule lookup failed", errorCode(error));
-      await this.setSyncAlarm(Date.now() + RULE_LOOKUP_RETRY_MS);
+      await this.ctx.storage.put(RULE_LOOKUP_FAILURES_KEY, failures + 1);
+      const wait = Math.min(RULE_LOOKUP_RETRY_MAX_MS, RULE_LOOKUP_RETRY_MS * 2 ** failures);
+      // A removal or a retry that is due earlier keeps its time.
+      const now = Date.now();
+      await this.setSyncAlarm(
+        await this.waitingRulesAlarm(now + wait, now + this.delays().nextRun, { recheck: false }),
+      );
       return null;
     }
   }
@@ -1267,14 +1283,19 @@ export class AccountSync extends DurableObject<Env> {
    * The alarm for the queue when its next rule may run at `at`, but no earlier than `earliest`. If
    * only a source wait holds the queue, the alarm comes back within WAITING_RULES_CHECK_MS, or for a
    * removal or a retry that is due earlier. A removal without a wait is due now. Every time is
-   * raised to `earliest`, which lies in the future, so the alarm cannot loop.
+   * raised to `earliest`, which lies in the future, so the alarm cannot loop. Without `recheck`, the
+   * 30-second check does not apply.
    */
-  private async waitingRulesAlarm(at: number, earliest: number): Promise<number> {
+  private async waitingRulesAlarm(
+    at: number,
+    earliest: number,
+    { recheck = true } = {},
+  ): Promise<number> {
     if (at <= earliest) return earliest;
     const removal = nextRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []);
     const retry = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
     const other = [
-      Date.now() + WAITING_RULES_CHECK_MS,
+      ...(recheck ? [Date.now() + WAITING_RULES_CHECK_MS] : []),
       ...(removal ? [removal.notBefore ?? 0] : []),
       ...(retry ? [retry.at] : []),
     ];

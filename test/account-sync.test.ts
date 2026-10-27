@@ -483,9 +483,9 @@ async function bareAccount(accountId: string, accessExpiresAt = Date.now() + 3_6
  * Fake Graph with one block of the deleted rule `gone-rule` in the target calendar. Deletes answer
  * `deleteStatus`, creates 201. Records the method of every batch request.
  */
-async function stuckBlockGraph(deleteStatus: number) {
+async function stuckBlockGraph(deleteStatus: number, ruleId = "gone-rule") {
   const [template] = fixture.value;
-  const tag = await ruleTagFor("gone-rule");
+  const tag = await ruleTagFor(ruleId);
   const graph = { deleteStatus, methods: [] as string[], downCalendar: "" };
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -622,6 +622,163 @@ describe("alarm queue", () => {
     expect(await removalsOf(stub)).toBeUndefined();
     expect(await alarmKind(stub)).toBeUndefined();
     expect(await alarmAt(stub)).not.toBeNull();
+  });
+
+  it("backs off a removal whose calendar refuses access, and gives up after the last attempt", async () => {
+    // The editor queues a removal even for a calendar it can no longer write to.
+    const stub = await bareAccount("acc-removal-denied");
+    const reads: string[] = [];
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      reads.push(url);
+      return Response.json(
+        { error: { code: "ErrorAccessDenied", message: "Access is denied." } },
+        { status: 403 },
+      );
+    });
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    const waits: number[] = [];
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await runDurableObjectAlarm(stub);
+      const [job] = (await removalsOf(stub)) ?? [];
+      expect(job?.attempts).toBe(attempt);
+      waits.push((job?.notBefore ?? 0) - Date.now());
+      expect(await alarmKind(stub)).toBe("removal");
+      expect(await alarmAt(stub)).toBe(job?.notBefore);
+    }
+    expect(waits.map((wait) => Math.round(wait / 60_000))).toEqual([1, 10, 120, 720]);
+
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toBeUndefined();
+    // One read per attempt; no attempt retries within its own invocation.
+    expect(reads.filter((url) => url.includes(TARGET_CAL))).toHaveLength(5);
+  });
+
+  /**
+   * A disabled rule whose removal failed once and now waits for its retry. A group direction turned
+   * off keeps its rule ID, so a reset to busy enables the same rule again.
+   */
+  async function waitingRemoval(accountId: string) {
+    const { stub, ruleId } = await setupRule(accountId);
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const graph = await stuckBlockGraph(500, ruleId);
+    const deletes = () => graph.methods.filter((method) => method === "DELETE").length;
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(1);
+    const cycleOwed = () =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get("fullCycleRequested"));
+    return { stub, ruleId, graph, deletes, cycleOwed };
+  }
+
+  /** Whether the removal logged a failed rule lookup. Call it after `stuckBlockGraph()`. */
+  function lookupLog() {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    return () => errors.mock.calls.some(([message]) => message === "Removal rule lookup failed");
+  }
+
+  it("drops a waiting removal once its rule runs again, and owes a full cycle", async () => {
+    const { stub, ruleId, deletes, cycleOwed } = await waitingRemoval("acc-removal-revived");
+    const lookupFailed = lookupLog();
+    // While the rule is off, the retries run.
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+    expect(await cycleOwed()).toBeUndefined();
+
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect(await removalsOf(stub)).toBeUndefined();
+    // An earlier partial attempt may have deleted blocks the rule wants again.
+    expect(await cycleOwed()).toBe(true);
+    expect(lookupFailed()).toBe(false);
+  });
+
+  it("checks the rule only on retries, not on the first attempt", async () => {
+    // The request that queued the removal may still be changing the rule.
+    const { stub, ruleId } = await setupRule("acc-removal-first");
+    await stub.storeTokens("acc-removal-first", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const graph = await stuckBlockGraph(500, ruleId);
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect(graph.methods).toEqual(["DELETE"]);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 1 });
+  });
+
+  it("retries the removal of an enabled rule whose user is deactivated", async () => {
+    const { stub, ruleId, deletes } = await waitingRemoval("acc-removal-inactive");
+    const lookupFailed = lookupLog();
+    const { user } = await signIn("paused-removal@org.example");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE rules SET enabled = 1, user_id = ? WHERE id = ?").bind(
+        user.id,
+        ruleId,
+      ),
+      env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id),
+    ]);
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+    expect(lookupFailed()).toBe(false);
+  });
+
+  it("retries the removal for a calendar the rule no longer writes into", async () => {
+    const { stub, ruleId, graph } = await setupRule("acc-removal-moved").then(async (setup) => {
+      await setup.stub.storeTokens("acc-removal-moved", {
+        refreshToken: "r",
+        accessToken: "a",
+        accessExpiresAt: Date.now() + 3_600_000,
+      });
+      return { ...setup, graph: await stuckBlockGraph(500, setup.ruleId) };
+    });
+    // The rule is enabled and writes into TARGET_CAL; the removal is for an older calendar.
+    graph.downCalendar = "remote-old";
+    const lookupFailed = lookupLog();
+    await stub.queueRemoval(ruleId, "remote-old");
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+    expect(lookupFailed()).toBe(false);
+  });
+
+  it("goes on with a removal and keeps its alarm when D1 cannot tell whether the rule runs", async () => {
+    const { stub, ruleId, deletes } = await waitingRemoval("acc-removal-d1");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+    await runInDurableObject(stub, (instance: AccountSync) => {
+      const self = instance as unknown as { env: Env };
+      const db = self.env.DB;
+      self.env = {
+        ...self.env,
+        DB: {
+          prepare: (query: string) => {
+            if (query.includes("tc.remote_id = ?")) throw new Error("D1_ERROR: transient");
+            return db.prepare(query);
+          },
+          batch: db.batch.bind(db),
+        } as unknown as D1Database,
+      };
+    });
+
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    const [job] = (await removalsOf(stub)) ?? [];
+    expect(job).toMatchObject({ ruleId, attempts: 2 });
+    expect(await alarmKind(stub)).toBe("removal");
+    expect(await alarmAt(stub)).toBe(job?.notBefore);
+    expect(errors).toHaveBeenCalledWith("Removal rule lookup failed", "D1_ERROR: transient");
   });
 
   it("runs the account's rules while a removal waits for its next attempt", async () => {

@@ -14,6 +14,7 @@ import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/p
 import {
   cleanupWindow,
   loadRule,
+  ruleWritesInto,
   rulesRunningFromAlarm,
   rulesTargetingAccount,
   siblingRuleIds,
@@ -1021,6 +1022,16 @@ export class AccountSync extends DurableObject<Env> {
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
   }
 
+  /** True if the removal's rule writes into its calendar again. If D1 fails, the removal goes on. */
+  private async ruleWritesAgain(job: Removal): Promise<boolean> {
+    try {
+      return await ruleWritesInto(this.env.DB, job.ruleId, job.remoteCalendarId);
+    } catch (error) {
+      console.error("Removal rule lookup failed", errorCode(error));
+      return false;
+    }
+  }
+
   /**
    * Run one queued removal that is due. Returns false if none is due, so that the account's rules
    * run while a removal waits after a failed attempt. A retiring account waits for its removals.
@@ -1032,6 +1043,19 @@ export class AccountSync extends DurableObject<Env> {
     const ownAlarm = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === REMOVAL_ALARM;
     const job = dueRemoval(queue, Date.now()) ?? (ownAlarm ? nextRemoval(queue) : undefined);
     if (!job) return this.retiring();
+    // A retry can come hours later. If the rule runs again by then, for example after a group
+    // direction went back to busy with the same rule ID, its blocks are wanted again. The first
+    // attempt skips this check: it runs right after the request that queued it, which may still
+    // be changing the rule.
+    if (job.attempts > 0 && (await this.ruleWritesAgain(job))) {
+      await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) =>
+        current.filter((queued) => !sameRemoval(queued, job)),
+      );
+      // An earlier attempt may have deleted blocks the rule wants again.
+      await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
+      await this.setSyncAlarm(Date.now() + this.delays().nextRun);
+      return true;
+    }
     let outcome: "done" | "continue" | "throttled" | "failed" = "done";
     let delayMs = this.delays().nextRun;
     let giveUp = false;

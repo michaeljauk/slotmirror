@@ -120,6 +120,19 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
 }
 
 /**
+ * The window of the target read of a rule: the sync window and one day more on each side. Each
+ * provider filters all-day blocks at the midnights of the target calendar's time zone, so only a
+ * wider read returns every all-day date that the source read can return; see `planSync`.
+ */
+export function targetReadWindow(window: { start: Date; end: Date }): { start: Date; end: Date } {
+  const day = 24 * 60 * 60 * 1000;
+  return {
+    start: new Date(window.start.getTime() - day),
+    end: new Date(window.end.getTime() + day),
+  };
+}
+
+/**
  * Window for removing a rule's blocks: from the start of the current UTC day to one year and a
  * month ahead, wider than any rule window. Past blocks stay as a record of when the user was busy.
  */

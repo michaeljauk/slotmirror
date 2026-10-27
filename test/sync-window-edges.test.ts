@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ruleOptionsSchema } from "../src/config";
 import { desiredBlocks, planSync } from "../src/sync/plan";
-import { syncWindow } from "../src/sync/rules";
+import { syncWindow, targetReadWindow } from "../src/sync/rules";
 import type { DesiredBlock, ExistingBlock, SourceEvent, SyncPlan } from "../src/sync/types";
 import fixture from "./fixtures/graph/calendar-view.json";
 import { signIn } from "./helpers";
@@ -74,9 +74,15 @@ async function run(target: Target, events: SourceEvent[], sourceOffset: number, 
   const window = syncWindow(OPTIONS, now);
   const read = events.filter((item) => inRead(item, window, sourceOffset));
   const desired = await desiredBlocks(RULE, read, OPTIONS);
-  const plan = planSync(desired, target.read(window), { sync: window });
+  const targetRead = targetReadWindow(window);
+  const plan = planSync(desired, target.read(targetRead), { sync: window, target: targetRead });
   target.apply(plan);
-  return plan.stats;
+  return { stats: plan.stats, read };
+}
+
+/** The date of the target calendar's current local day. */
+function localDay(at: number, offset: number): string {
+  return new Date(at + offset * HOUR).toISOString().slice(0, 10);
 }
 
 // The sync window on 27 Oct runs from 27 Oct to 26 Nov, 00:00 UTC.
@@ -102,9 +108,24 @@ describe("all-day blocks at the edges of the sync window", () => {
           const label = `source ${sourceOffset}, target ${targetOffset}, ${now}`;
           for (const at of [Date.parse(now), Date.parse(now) + 24 * HOUR]) {
             const before = new Set(target.markers());
-            await run(target, EVENTS, sourceOffset, new Date(at));
-            const again = await run(target, EVENTS, sourceOffset, new Date(at));
+            const { read } = await run(target, EVENTS, sourceOffset, new Date(at));
+            const { stats: again } = await run(target, EVENTS, sourceOffset, new Date(at));
             const markers = target.markers();
+            // Every all-day event of the local day that the source returns gets its block.
+            const today = localDay(at, targetOffset);
+            const blocked = new Set([...target.blocks.values()].map((block) => block.start));
+            for (const item of read) {
+              if (
+                item.allDay &&
+                item.start <= today &&
+                item.end > today &&
+                !blocked.has(item.start)
+              ) {
+                failures.push(
+                  `${label}: no block for the local day at ${new Date(at).toISOString()}`,
+                );
+              }
+            }
             if (again.create + again.update + again.delete > 0) {
               failures.push(`${label}: second run at ${new Date(at).toISOString()} changes`);
             }
@@ -128,7 +149,7 @@ describe("all-day blocks at the edges of the sync window", () => {
       await run(target, today, -8, new Date("2026-10-26T20:00:00Z"));
       expect(target.blocks.size).toBe(1);
       // A source at UTC or east of it no longer returns the event. The block stays in each case.
-      const stats = await run(target, today, sourceOffset, new Date("2026-10-27T01:00:00Z"));
+      const { stats } = await run(target, today, sourceOffset, new Date("2026-10-27T01:00:00Z"));
       expect(stats).toMatchObject({ create: 0, delete: 0 });
       expect(target.blocks.size).toBe(1);
     }
@@ -143,33 +164,74 @@ describe("all-day blocks at the edges of the sync window", () => {
       new Date("2026-10-26T20:00:00Z"),
     );
     const changed = [event("today", "2026-10-26", "2026-10-27", { showAs: "tentative" })];
-    const stats = await run(target, changed, -8, new Date("2026-10-27T01:00:00Z"));
+    const { stats } = await run(target, changed, -8, new Date("2026-10-27T01:00:00Z"));
     expect(stats).toMatchObject({ create: 0, update: 1, delete: 0 });
   });
 
-  it("creates no all-day block whose date is outside the sync window", async () => {
-    const window = syncWindow(OPTIONS, new Date("2026-10-27T12:00:00Z"));
-    const outside = await desiredBlocks(RULE, [EVENTS[0]!, EVENTS[3]!], OPTIONS);
-    expect(planSync(outside, [], { sync: window }).actions).toEqual([]);
+  it("creates the local-day block west of UTC after midnight UTC", async () => {
+    const today = [event("today", "2026-10-26", "2026-10-27")];
+    const target = new Target(-8);
+    const { stats } = await run(target, today, -8, new Date("2026-10-27T01:00:00Z"));
+    expect(stats).toMatchObject({ create: 1 });
+    expect((await run(target, today, -8, new Date("2026-10-27T01:00:00Z"))).stats).toMatchObject({
+      create: 0,
+      unchanged: 1,
+    });
   });
 
-  it("keeps one block of an all-day event outside the sync window and deletes its duplicates", async () => {
+  it("creates an all-day block outside the sync window only if every target read returns it", async () => {
+    const window = syncWindow(OPTIONS, new Date("2026-10-27T12:00:00Z"));
+    const target = targetReadWindow(window);
+    const twoDaysBefore = event("two-days-before", "2026-10-25", "2026-10-26");
+    const outside = await desiredBlocks(RULE, [EVENTS[0]!, EVENTS[3]!, twoDaysBefore], OPTIONS);
+    // Without the wider target read, the next run could miss the block and create it again.
+    expect(planSync(outside, [], { sync: window }).actions).toEqual([]);
+    const created = planSync(outside, [], { sync: window, target }).actions.map((action) =>
+      action.kind === "create" ? action.block.start : action.kind,
+    );
+    expect(created).toEqual(["2026-10-26", "2026-11-26"]);
+    // Half a day more on each side is not enough: a calendar at UTC+14 would miss 26 Oct.
+    const half = { start: new Date(window.start.getTime() - 12 * HOUR), end: window.end };
+    expect(planSync(outside.slice(0, 1), [], { sync: window, target: half }).actions).toEqual([]);
+  });
+
+  it("never deletes a block outside the sync window whose event the source did not return", async () => {
+    const window = syncWindow(OPTIONS, new Date("2026-10-27T12:00:00Z"));
+    const timed = event("timed-before", "2026-10-26T20:00:00.000Z", "2026-10-26T21:00:00.000Z");
+    const blocks = await desiredBlocks(RULE, [EVENTS[0]!, timed], OPTIONS);
+    // Two copies each, as the window-edge loop on earlier versions wrote them.
+    const existing = blocks.flatMap((block, index) =>
+      ["a", "b"].map((copy) => ({ ...block, targetId: `t${index}${copy}`, ruleTag: "tag" })),
+    );
+    const target = targetReadWindow(window);
+    expect(planSync([], existing, { sync: window, target }).actions).toEqual([]);
+  });
+
+  it("deletes the copies of an all-day block outside the sync window whose event it reads", async () => {
     const window = syncWindow(OPTIONS, new Date("2026-10-27T12:00:00Z"));
     const [block] = await desiredBlocks(RULE, [EVENTS[0]!], OPTIONS);
     if (!block) throw new Error("no block");
     const existing = ["t0", "t1"].map((targetId) => ({ ...block, targetId, ruleTag: "tag" }));
-    const plan = planSync([], existing, { sync: window });
+    const plan = planSync([block], existing, { sync: window, target: targetReadWindow(window) });
     expect(plan.actions).toEqual([{ kind: "delete", targetId: "t1", marker: block.marker }]);
   });
 
-  it("still creates and deletes timed blocks outside the sync window", async () => {
+  it("leaves a timed block outside the sync window as the narrow read did", async () => {
     const window = syncWindow(OPTIONS, new Date("2026-10-27T12:00:00Z"));
-    const timed = event("timed-before", "2026-10-26T20:00:00.000Z", "2026-10-26T21:00:00.000Z");
-    const [block] = await desiredBlocks(RULE, [timed], OPTIONS);
-    if (!block) throw new Error("no block");
-    expect(planSync([block], [], { sync: window }).stats).toMatchObject({ create: 1 });
-    const existing = [{ ...block, targetId: "t0", ruleTag: "tag" }];
-    expect(planSync([], existing, { sync: window }).stats).toMatchObject({ delete: 1 });
+    const windows = { sync: window, target: targetReadWindow(window) };
+    const yesterday = event("moved", "2026-10-26T09:00:00.000Z", "2026-10-26T10:00:00.000Z");
+    const today = event("moved", "2026-10-27T09:00:00.000Z", "2026-10-27T10:00:00.000Z");
+    const [old] = await desiredBlocks(RULE, [yesterday], OPTIONS);
+    const [moved] = await desiredBlocks(RULE, [today], OPTIONS);
+    if (!old || !moved) throw new Error("no block");
+    const existing = [{ ...old, targetId: "t0", ruleTag: "tag" }];
+    // The event moved into the window: a new block, and yesterday's block stays as it was.
+    expect(planSync([moved], existing, windows).actions).toEqual([
+      { kind: "create", block: moved },
+    ]);
+    // An event the source returns outside the window still gets its block, and keeps it.
+    expect(planSync([old], [], windows).stats).toMatchObject({ create: 1 });
+    expect(planSync([old], existing, windows).stats).toMatchObject({ unchanged: 1 });
   });
 });
 
@@ -178,7 +240,7 @@ describe("AccountSync with all-day events at the window edges", () => {
     vi.restoreAllMocks();
   });
 
-  it("passes the sync window to the plan", async () => {
+  it("reads the target one day wider and creates yesterday's all-day block", async () => {
     const { user } = await signIn("owner@example.com");
     await env.DB.batch([
       env.DB.prepare(
@@ -212,14 +274,23 @@ describe("AccountSync with all-day events at the window edges", () => {
       end: { dateTime: `${end}T00:00:00.0000000`, timeZone: "UTC" },
     });
     const source = [allDay("yesterday", day(-1), day(0)), allDay("today", day(0), day(1))];
+    const urls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = input instanceof Request ? input.url : String(input);
+      urls.push(url);
       if (url.includes("/calendars/src/")) return Response.json({ value: source });
       if (url.includes("/calendars/dst/")) return Response.json({ value: [] });
       return new Response("unexpected", { status: 500 });
     });
 
     const result = await stub.runRule("edge-rule", { dryRun: true });
-    expect(result).toMatchObject({ stats: { create: 1, delete: 0 } });
+    expect(result).toMatchObject({ stats: { create: 2, delete: 0 } });
+    // One list call for the target, as before, over the wider range.
+    const targetCalls = urls.filter((url) => url.includes("/calendars/dst/"));
+    expect(targetCalls).toHaveLength(1);
+    const params = new URL(targetCalls[0]!).searchParams;
+    expect(params.get("startDateTime")).toBe(`${day(-1)}T00:00:00.000Z`);
+    const { daysAhead } = ruleOptionsSchema.parse({});
+    expect(params.get("endDateTime")).toBe(`${day(daysAhead + 1)}T00:00:00.000Z`);
   });
 });

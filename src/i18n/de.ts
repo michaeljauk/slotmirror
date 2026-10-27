@@ -341,6 +341,8 @@ export const de: Messages = {
     back: "Zurück zur Startseite",
     notAllowed: "Nicht erlaubt",
     notAvailable: "Noch nicht verfügbar",
+    errorTitle: "Etwas ist schiefgelaufen",
+    errorText: "Die Anfrage ist fehlgeschlagen. Bitte gleich noch einmal versuchen.",
     providerNotConfigured: (provider) =>
       `${provider} ist für diese Installation nicht eingerichtet. Die Verwaltung muss die Client-ID hinterlegen.`,
     signInExpired: "Anmeldung abgelaufen",

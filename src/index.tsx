@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import * as z from "zod/mini";
@@ -336,6 +337,19 @@ app.get("/admin", async (c) => {
         tenantCount: policyFromEnv(c.env).allowedTenantIds.length,
       }}
     />,
+  );
+});
+
+// An unexpected error gets a page in the user's language. The log keeps the error code only:
+// messages of foreign errors can echo request data.
+app.onError((error, c) => {
+  if (error instanceof HTTPException) return error.getResponse();
+  console.error("Request failed", errorCode(error));
+  const { t } = i18nFromContext(c);
+  return render(
+    c,
+    <MessagePage title={t.messages.errorTitle} message={t.messages.errorText} />,
+    500,
   );
 });
 

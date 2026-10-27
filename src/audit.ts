@@ -60,23 +60,36 @@ export const AUDIT_RETENTION_DAYS = 90;
 /** Rows shown on an activity page. */
 export const ACTIVITY_LIMIT = 100;
 
+/**
+ * The insert of one event, for a batch. With `onlyIfRuleExists` the row is written only if the
+ * event's rule exists, for example after an insert that a concurrent request made a no-op.
+ */
+export function auditStatement(
+  db: D1Database,
+  event: AuditEvent,
+  onlyIfRuleExists = false,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6
+       WHERE ?7 = 0 OR EXISTS (SELECT 1 FROM rules WHERE id = ?4)`,
+    )
+    .bind(
+      event.orgId,
+      event.userId ?? null,
+      event.accountId ?? null,
+      event.ruleId ?? null,
+      event.kind,
+      JSON.stringify(event.detail ?? {}),
+      onlyIfRuleExists ? 1 : 0,
+    );
+}
+
 /** Write one event. Never throws: a broken log must not break a sync or a sign-in. */
 export async function recordAudit(db: D1Database, event: AuditEvent): Promise<void> {
   try {
-    await db
-      .prepare(
-        `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        event.orgId,
-        event.userId ?? null,
-        event.accountId ?? null,
-        event.ruleId ?? null,
-        event.kind,
-        JSON.stringify(event.detail ?? {}),
-      )
-      .run();
+    await auditStatement(db, event).run();
   } catch (error) {
     console.error("Audit write failed", event.kind, error);
   }

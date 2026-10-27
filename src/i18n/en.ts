@@ -339,6 +339,8 @@ export const en = {
     back: "Back to the start page",
     notAllowed: "Not allowed",
     notAvailable: "Not available yet",
+    errorTitle: "Something went wrong",
+    errorText: "The request failed. Try again in a moment.",
     providerNotConfigured: (provider: string) =>
       `${provider} is not set up for this deployment. Ask the administrator to add its client ID.`,
     signInExpired: "Sign-in expired",

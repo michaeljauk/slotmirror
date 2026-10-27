@@ -12,6 +12,7 @@ import {
   setDirection,
   setBlockColor,
   setGroupMembership,
+  setGroupMemberships,
   setSettings,
   setSourceCalendar,
   type SettingsForm,
@@ -155,9 +156,8 @@ function backTo(c: Context<AppEnv>, sourceId: string) {
 rules.post("/group/all", async (c) => {
   const user = currentUser(c);
   const state = await loadEditorState(c.env, user.id);
-  for (const account of state.accounts) {
-    await setGroupMembership(c.env, user, account.id, true);
-  }
+  const ids = state.accounts.map((account) => account.id);
+  await setGroupMemberships(c.env, user, ids, true);
   return c.redirect("/rules");
 });
 

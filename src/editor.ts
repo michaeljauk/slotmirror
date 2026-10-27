@@ -1,4 +1,4 @@
-import { recordAudit } from "./audit";
+import { auditStatement, recordAudit } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
@@ -112,39 +112,69 @@ function toChoice(level: DetailLevel): Choice {
   return level === "title_location" ? "title" : level;
 }
 
+interface AccountRow {
+  id: string;
+  provider: Provider;
+  email: string;
+  tenantId: string | null;
+  inGroup: number;
+  displayName: string | null;
+  needsReconnect: number;
+  color: string | null;
+}
+
+interface CalendarRow {
+  id: string;
+  accountId: string;
+  remoteId: string;
+  name: string;
+  canEdit: number;
+  isMain: number;
+  isSource: number;
+}
+
+interface RuleRow {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  options: string;
+  enabled: number;
+  origin: "group" | "custom";
+  sourceName: string;
+  sourceAccountId: string;
+  targetName: string;
+  targetAccountId: string;
+}
+
+/** The editor state. One batch reads it, which counts as one D1 query per invocation. */
 export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
-  const { results: accountRows } = await env.DB.prepare(
-    `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
-            display_name AS displayName, needs_reconnect AS needsReconnect, color
-     FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
-  )
-    .bind(userId)
-    .all<{
-      id: string;
-      provider: Provider;
-      email: string;
-      tenantId: string | null;
-      inGroup: number;
-      displayName: string | null;
-      needsReconnect: number;
-      color: string | null;
-    }>();
-  const { results: calendarRows } = await env.DB.prepare(
-    `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
-            c.can_edit AS canEdit, c.is_default AS isMain, c.is_source AS isSource
-     FROM calendars c JOIN accounts a ON a.id = c.account_id
-     WHERE a.user_id = ? ORDER BY c.is_default DESC, c.name`,
-  )
-    .bind(userId)
-    .all<{
-      id: string;
-      accountId: string;
-      remoteId: string;
-      name: string;
-      canEdit: number;
-      isMain: number;
-      isSource: number;
-    }>();
+  const [accountResult, calendarResult, ruleResult, settingsResult] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
+              display_name AS displayName, needs_reconnect AS needsReconnect, color
+       FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
+    ).bind(userId),
+    env.DB.prepare(
+      `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
+              c.can_edit AS canEdit, c.is_default AS isMain, c.is_source AS isSource
+       FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ? ORDER BY c.is_default DESC, c.name`,
+    ).bind(userId),
+    env.DB.prepare(
+      `SELECT r.id, r.source_calendar_id AS sourceId, r.target_calendar_id AS targetId, r.options,
+              r.enabled, r.origin, sc.name AS sourceName, sc.account_id AS sourceAccountId,
+              tc.name AS targetName, tc.account_id AS targetAccountId
+       FROM rules r
+       JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN calendars tc ON tc.id = r.target_calendar_id
+       WHERE r.user_id = ?`,
+    ).bind(userId),
+    env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?").bind(userId),
+  ]);
+  const accountRows = (accountResult?.results ?? []) as AccountRow[];
+  const calendarRows = (calendarResult?.results ?? []) as CalendarRow[];
+  const ruleRows = (ruleResult?.results ?? []) as RuleRow[];
+  const settingsRow = settingsResult?.results[0] as { json: string } | undefined;
   const names = shortNames(accountRows.map((row) => row.email));
   const colors = resolveAccountColorState(accountRows.map((row) => row.color));
   // Store assigned colours, so that they stay when another account gets a colour later.
@@ -182,28 +212,6 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
     };
   });
 
-  const { results: ruleRows } = await env.DB.prepare(
-    `SELECT r.id, r.source_calendar_id AS sourceId, r.target_calendar_id AS targetId, r.options,
-            r.enabled, r.origin, sc.name AS sourceName, sc.account_id AS sourceAccountId,
-            tc.name AS targetName, tc.account_id AS targetAccountId
-     FROM rules r
-     JOIN calendars sc ON sc.id = r.source_calendar_id
-     JOIN calendars tc ON tc.id = r.target_calendar_id
-     WHERE r.user_id = ?`,
-  )
-    .bind(userId)
-    .all<{
-      id: string;
-      sourceId: string;
-      targetId: string;
-      options: string;
-      enabled: number;
-      origin: "group" | "custom";
-      sourceName: string;
-      sourceAccountId: string;
-      targetName: string;
-      targetAccountId: string;
-    }>();
   const byPair = new Map(ruleRows.map((row) => [`${row.sourceId}>${row.targetId}`, row]));
 
   const directions: EditorDirection[] = [];
@@ -257,9 +265,6 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       target: `${nameOf(row.targetAccountId)} · ${row.targetName}`,
       choice: choiceOf(parseRuleOptions(row.options), row.enabled === 1),
     }));
-  const settingsRow = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
-    .bind(userId)
-    .first<{ json: string }>();
   const json = settingsRow?.json ?? "{}";
   const daysAhead = shownDaysAhead(
     json,
@@ -544,18 +549,19 @@ export async function setDirection(
       if (!rule) {
         // Between group members, a disabled exception keeps the group from adding the rule.
         if (bothInGroup) {
-          const ruleId = crypto.randomUUID();
-          const options = newRuleOptions(state.settings, "busy");
-          await insertRule(
-            env,
-            user,
-            ruleId,
-            slot.sourceCalendarId,
-            to.calendar.id,
-            options,
-            "custom",
-            false,
-          );
+          const stored = await upsertRule(env, user, {
+            id: crypto.randomUUID(),
+            sourceCalendarId: slot.sourceCalendarId,
+            targetCalendarId: to.calendar.id,
+            options: newRuleOptions(state.settings, "busy"),
+            origin: "custom",
+            enabled: false,
+          });
+          // A concurrent request created the rule, and it can have written blocks already.
+          if (stored && !stored.created) {
+            await queueRemoval(env, stored.id, target);
+            await audit(env, user, to.id, stored.id, "rule_updated", { choice });
+          }
         }
         continue;
       }
@@ -586,9 +592,18 @@ export async function setDirection(
         .run();
       await audit(env, user, to.id, rule.id, "rule_updated", { choice });
     } else {
-      const ruleId = crypto.randomUUID();
-      await insertRule(env, user, ruleId, slot.sourceCalendarId, to.calendar.id, options, origin);
-      await audit(env, user, to.id, ruleId, "rule_created", { choice });
+      const stored = await upsertRule(env, user, {
+        id: crypto.randomUUID(),
+        sourceCalendarId: slot.sourceCalendarId,
+        targetCalendarId: to.calendar.id,
+        options,
+        origin,
+        enabled: true,
+      });
+      if (stored) {
+        const kind = stored.created ? "rule_created" : "rule_updated";
+        await audit(env, user, to.id, stored.id, kind, { choice });
+      }
     }
   }
   if (choice !== "off") await accountSync(env, to.id).requestSync();
@@ -596,7 +611,8 @@ export async function setDirection(
 
 /**
  * Turn a calendar on or off as a source of its account. On: it gets a rule for every direction
- * of the account, with that direction's choice. Off: its rules go, with their blocks.
+ * of the account, with that direction's choice, or the group's rule between group members. Off:
+ * its rules go, with their blocks.
  */
 export async function setSourceCalendar(
   env: Env,
@@ -612,9 +628,6 @@ export async function setSourceCalendar(
     .bind(isSource ? 1 : 0, calendarId, isSource ? 1 : 0, user.id)
     .run();
   if (updated.meta.changes === 0) return;
-  const state = await loadEditorState(env, user.id);
-  const account = state.accounts.find((a) => a.calendars.some((c) => c.id === calendarId));
-  if (!account) return;
 
   if (!isSource) {
     const { results } = await env.DB.prepare(
@@ -625,32 +638,7 @@ export async function setSourceCalendar(
     for (const row of results) await deleteRuleWithBlocks(env, user, row.id);
     return;
   }
-
-  for (const direction of state.directions) {
-    if (
-      direction.from !== account.id ||
-      (direction.choice === "off" && direction.origin !== "custom")
-    ) {
-      continue;
-    }
-    const to = state.accounts.find((a) => a.id === direction.to);
-    const slot = direction.slots.find((s) => s.sourceCalendarId === calendarId);
-    const model = direction.slots.find((s) => s.rule)?.rule;
-    if (!to?.calendar?.canEdit || !slot || slot.rule || !model) continue;
-    const ruleId = crypto.randomUUID();
-    await insertRule(
-      env,
-      user,
-      ruleId,
-      calendarId,
-      to.calendar.id,
-      model.options,
-      model.origin,
-      model.enabled,
-    );
-    await audit(env, user, to.id, ruleId, "rule_created", { choice: direction.choice });
-    if (model.enabled) await accountSync(env, to.id).requestSync();
-  }
+  await reconcileRules(env, user);
 }
 
 /**
@@ -672,70 +660,210 @@ export async function resetDirection(
   await setBlockColor(env, user, fromId, toId, "");
 }
 
+/** A rule that a direction lacks, with the choice for the audit log. */
+interface MissingRule {
+  id: string;
+  sourceCalendarId: string;
+  targetCalendarId: string;
+  targetAccountId: string;
+  options: RuleOptions;
+  origin: "group" | "custom";
+  enabled: boolean;
+  choice: Choice;
+}
+
 /**
- * Add an account to the block group or remove it. Joining creates a busy rule to and from every
- * other member, and adopts existing busy rules with default options. Leaving deletes the group
- * rules of the account with their blocks; custom rules stay.
+ * The rules that make every direction complete:
+ * - A direction with a rule gets a copy of it for each source calendar without one, so that all
+ *   its rules have the same choice.
+ * - A direction without rules between two group members gets a group rule ("busy") for each
+ *   source calendar.
+ *
+ * A source calendar that has a rule keeps it, so an exception, also a disabled one, wins over the
+ * group. A read-only target gets nothing, because turning a direction on needs write access.
  */
+function missingRules(state: EditorState): MissingRule[] {
+  const missing: MissingRule[] = [];
+  for (const direction of state.directions) {
+    const from = state.accounts.find((account) => account.id === direction.from);
+    const to = state.accounts.find((account) => account.id === direction.to);
+    if (!from || !to?.calendar?.canEdit) continue;
+    const model = direction.slots.find((slot) => slot.rule)?.rule;
+    if (!model && !(from.inGroup && to.inGroup)) continue;
+    for (const slot of direction.slots) {
+      if (slot.rule) continue;
+      missing.push({
+        id: crypto.randomUUID(),
+        sourceCalendarId: slot.sourceCalendarId,
+        targetCalendarId: to.calendar.id,
+        targetAccountId: to.id,
+        options: model?.options ?? newRuleOptions(state.settings, "busy"),
+        origin: model?.origin ?? "group",
+        enabled: model?.enabled ?? true,
+        choice: model ? choiceOf(model.options, model.enabled) : "busy",
+      });
+    }
+  }
+  return missing;
+}
+
+/**
+ * Statements that insert the missing rules, each with its audit event. A concurrent request can
+ * insert the same pair first; the insert then does nothing, and its audit event is not written.
+ */
+function insertStatements(
+  env: Env,
+  user: Pick<CurrentUser, "id" | "orgId">,
+  rules: MissingRule[],
+): D1PreparedStatement[] {
+  return rules.flatMap((rule) => [
+    env.DB.prepare(
+      `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (source_calendar_id, target_calendar_id) DO NOTHING`,
+    ).bind(
+      rule.id,
+      user.id,
+      rule.sourceCalendarId,
+      rule.targetCalendarId,
+      JSON.stringify(rule.options),
+      rule.enabled ? 1 : 0,
+      rule.origin,
+    ),
+    auditStatement(
+      env.DB,
+      {
+        orgId: user.orgId,
+        userId: user.id,
+        accountId: rule.targetAccountId,
+        ruleId: rule.id,
+        kind: "rule_created",
+        detail: { choice: rule.choice },
+      },
+      true,
+    ),
+  ]);
+}
+
+/** Target accounts that got an enabled rule from `insertStatements`, run at `offset` in a batch. */
+function syncTargets(rules: MissingRule[], results: D1Result[], offset: number): Set<string> {
+  const targets = new Set<string>();
+  rules.forEach((rule, index) => {
+    const inserted = (results[offset + 2 * index]?.meta.changes ?? 0) > 0;
+    if (inserted && rule.enabled) targets.add(rule.targetAccountId);
+  });
+  return targets;
+}
+
+async function requestSyncs(env: Env, accountIds: Iterable<string>): Promise<void> {
+  for (const id of accountIds) await accountSync(env, id).requestSync();
+}
+
+/**
+ * Add the rules that the directions of a user lack (see `missingRules`). Call it after anything
+ * that can make a rule possible: a source calendar turned on, calendars loaded or refreshed, a
+ * target that became writable. A second call adds nothing. Cost: one read batch, and one write
+ * batch only if a rule is missing.
+ */
+export async function reconcileRules(
+  env: Env,
+  user: Pick<CurrentUser, "id" | "orgId">,
+): Promise<void> {
+  const missing = missingRules(await loadEditorState(env, user.id));
+  if (missing.length === 0) return;
+  const results = await env.DB.batch(insertStatements(env, user, missing));
+  await requestSyncs(env, syncTargets(missing, results, 0));
+}
+
+/** Add an account to the block group or remove it. See `setGroupMemberships`. */
 export async function setGroupMembership(
   env: Env,
   user: CurrentUser,
   accountId: string,
   inGroup: boolean,
 ): Promise<void> {
-  const updated = await env.DB.prepare(
-    "UPDATE accounts SET in_block_group = ? WHERE id = ? AND user_id = ? AND in_block_group <> ?",
-  )
-    .bind(inGroup ? 1 : 0, accountId, user.id, inGroup ? 1 : 0)
-    .run();
-  if (updated.meta.changes === 0) return;
-  await recordAudit(env.DB, {
-    orgId: user.orgId,
-    userId: user.id,
-    accountId,
-    kind: "group_changed",
-    detail: { inGroup },
-  });
+  await setGroupMemberships(env, user, [accountId], inGroup);
+}
+
+/**
+ * Add accounts to the block group or remove them. Joining creates a busy rule to and from every
+ * other member, and adopts existing busy rules with default options. Leaving deletes the group
+ * rules of the accounts with their blocks; custom rules stay. The writes go in batches, so that
+ * the quick start for all accounts stays within the D1 queries of one invocation.
+ */
+export async function setGroupMemberships(
+  env: Env,
+  user: CurrentUser,
+  accountIds: readonly string[],
+  inGroup: boolean,
+): Promise<void> {
+  if (accountIds.length === 0) return;
+  const value = inGroup ? 1 : 0;
+  const updates = await env.DB.batch(
+    accountIds.map((id) =>
+      env.DB.prepare(
+        "UPDATE accounts SET in_block_group = ? WHERE id = ? AND user_id = ? AND in_block_group <> ?",
+      ).bind(value, id, user.id, value),
+    ),
+  );
+  const changed = new Set(accountIds.filter((_, i) => (updates[i]?.meta.changes ?? 0) > 0));
+  if (changed.size === 0) return;
+  const statements = [...changed].map((accountId) =>
+    auditStatement(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      accountId,
+      kind: "group_changed",
+      detail: { inGroup },
+    }),
+  );
 
   const state = await loadEditorState(env, user.id);
-  const touched = new Set<string>();
   for (const direction of state.directions) {
-    if (direction.from !== accountId && direction.to !== accountId) continue;
+    if (!changed.has(direction.from) && !changed.has(direction.to)) continue;
     const from = state.accounts.find((account) => account.id === direction.from);
     const to = state.accounts.find((account) => account.id === direction.to);
-    if (!from || !to?.calendar?.canEdit) continue;
-
-    for (const slot of direction.slots) {
-      const { rule } = slot;
-      if (inGroup && from.inGroup && to.inGroup) {
-        if (!rule) {
-          const ruleId = crypto.randomUUID();
-          await insertRule(
-            env,
-            user,
-            ruleId,
-            slot.sourceCalendarId,
-            to.calendar.id,
-            newRuleOptions(state.settings, "busy"),
-            "group",
-          );
-          await audit(env, user, to.id, ruleId, "rule_created", { choice: "busy" });
-          touched.add(to.id);
-        } else if (
-          rule.enabled &&
-          choiceOf(rule.options, true) === "busy" &&
-          hasDefaultOptions(rule.options, state.settings)
-        ) {
-          await env.DB.prepare("UPDATE rules SET origin = 'group' WHERE id = ?")
-            .bind(rule.id)
-            .run();
-        }
-      } else if (!inGroup && rule?.origin === "group") {
-        await deleteRuleWithBlocks(env, user, rule.id);
+    if (!from || !to?.calendar) continue;
+    for (const { rule } of direction.slots) {
+      if (!inGroup && rule?.origin === "group") {
+        // Like "off", leaving needs no write access to the target.
+        const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
+        const queued = await queueRemoval(env, rule.id, target);
+        statements.push(
+          env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?").bind(rule.id, user.id),
+          auditStatement(env.DB, {
+            orgId: user.orgId,
+            userId: user.id,
+            accountId: to.id,
+            ruleId: rule.id,
+            kind: "rule_deleted",
+            detail: queued ? { cleanup: "queued" } : { cleanupFailed: true },
+          }),
+        );
+      } else if (
+        inGroup &&
+        from.inGroup &&
+        to.inGroup &&
+        to.calendar.canEdit &&
+        rule?.origin === "custom" &&
+        rule.enabled &&
+        choiceOf(rule.options, true) === "busy" &&
+        hasDefaultOptions(rule.options, state.settings)
+      ) {
+        statements.push(
+          env.DB.prepare(
+            `UPDATE rules SET origin = 'group'
+             WHERE id = ? AND enabled = 1 AND json_extract(options, '$.detailLevel') = 'busy'`,
+          ).bind(rule.id),
+        );
+        // Copies for other source calendars of the direction follow the adopted rule.
+        rule.origin = "group";
       }
     }
   }
-  for (const id of touched) await accountSync(env, id).requestSync();
+  const missing = inGroup ? missingRules(state) : [];
+  const results = await env.DB.batch([...statements, ...insertStatements(env, user, missing)]);
+  await requestSyncs(env, syncTargets(missing, results, statements.length));
 }
 
 function hasDefaultOptions(options: RuleOptions | null, settings: SyncSettings): boolean {
@@ -745,30 +873,43 @@ function hasDefaultOptions(options: RuleOptions | null, settings: SyncSettings):
   return JSON.stringify(rest) === JSON.stringify(defaults);
 }
 
-async function insertRule(
+/**
+ * Insert a rule, or write this request's choice into the rule of the same pair. Two requests can
+ * add the same pair at once, for example after a double click or from two tabs; the UNIQUE
+ * constraint on the pair would refuse the second insert. Here the later request wins, as if it
+ * came second. Returns the ID of the stored rule and whether this call created it.
+ */
+async function upsertRule(
   env: Env,
   user: CurrentUser,
-  ruleId: string,
-  sourceCalendarId: string,
-  targetCalendarId: string,
-  options: RuleOptions,
-  origin: "group" | "custom",
-  enabled = true,
-): Promise<void> {
-  await env.DB.prepare(
+  rule: {
+    id: string;
+    sourceCalendarId: string;
+    targetCalendarId: string;
+    options: RuleOptions;
+    origin: "group" | "custom";
+    enabled: boolean;
+  },
+): Promise<{ id: string; created: boolean } | null> {
+  const stored = await env.DB.prepare(
     `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (source_calendar_id, target_calendar_id) DO UPDATE SET
+       options = excluded.options, enabled = excluded.enabled, origin = excluded.origin
+     WHERE rules.user_id = excluded.user_id
+     RETURNING id`,
   )
     .bind(
-      ruleId,
+      rule.id,
       user.id,
-      sourceCalendarId,
-      targetCalendarId,
-      JSON.stringify(options),
-      enabled ? 1 : 0,
-      origin,
+      rule.sourceCalendarId,
+      rule.targetCalendarId,
+      JSON.stringify(rule.options),
+      rule.enabled ? 1 : 0,
+      rule.origin,
     )
-    .run();
+    .first<{ id: string }>();
+  return stored ? { id: stored.id, created: stored.id === rule.id } : null;
 }
 
 async function audit(

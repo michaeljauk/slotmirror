@@ -713,6 +713,18 @@ describe("alarm queue", () => {
     expect(lookupFailed()).toBe(false);
   });
 
+  it("keeps retrying the removal of a retiring account whose rule is enabled", async () => {
+    // The request that retires an account can stop before it deletes the account's rules.
+    const { stub, ruleId, deletes, cycleOwed } = await waitingRemoval("acc-removal-retiring-rule");
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+    await stub.retire();
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+    expect(await cycleOwed()).toBeUndefined();
+    expect(await stub.hasTokens()).toBe(true);
+  });
+
   it("checks the rule only on retries, not on the first attempt", async () => {
     // The request that queued the removal may still be changing the rule.
     const { stub, ruleId } = await setupRule("acc-removal-first");

@@ -143,6 +143,8 @@ function SettingsCard(props: { state: EditorState }) {
         <strong>{t.editor.settingsTitle}</strong>
         <span class="group-text">{t.editor.settingsLead}</span>
       </div>
+      {/* A save of other settings keeps each rule's window; see setSettings. */}
+      <input type="hidden" name="daysAheadShown" value={String(settings.daysAhead)} />
       <div class="settings-row">
         <span class="settings-label">{t.editor.window}</span>
         <span class="choices">

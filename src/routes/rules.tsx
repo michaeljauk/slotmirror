@@ -17,7 +17,7 @@ import {
   setSettings,
   setSourceCalendar,
   type BlockBuffer,
-  type SyncSettings,
+  type SettingsForm,
   type Choice,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
@@ -283,8 +283,9 @@ rules.post("/direction/reset", async (c) => {
 });
 
 /** Settings from a form or the editor script's fields "settings.<name>". */
-function settingsFrom(form: FormData, prefix = ""): SyncSettings {
-  const days = Number(form.get(`${prefix}daysAhead`) ?? 90);
+function settingsFrom(form: FormData, prefix = ""): SettingsForm {
+  const days = Number(form.get(`${prefix}daysAhead`));
+  const shown = Number(form.get(`${prefix}daysAheadShown`));
   const text = (name: string) => {
     const value = form.get(`${prefix}${name}`);
     return typeof value === "string" ? value : "";
@@ -298,7 +299,8 @@ function settingsFrom(form: FormData, prefix = ""): SyncSettings {
     .getAll(`${prefix}skipColor`)
     .filter((value): value is string => typeof value === "string" && /^color:\d{1,2}$/.test(value));
   return {
-    daysAhead: [30, 90, 180, 365].includes(days) ? days : 90,
+    ...([30, 90, 180, 365].includes(days) ? { daysAhead: days } : {}),
+    ...(Number.isInteger(shown) && shown >= 1 && shown <= 365 ? { daysAheadShown: shown } : {}),
     skipAllDay: form.has(`${prefix}skipAllDay`),
     skipTentative: form.has(`${prefix}skipTentative`),
     markPrivate: form.has(`${prefix}markPrivate`),

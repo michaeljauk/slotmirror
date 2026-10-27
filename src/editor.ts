@@ -260,7 +260,12 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
   const settingsRow = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
     .bind(userId)
     .first<{ json: string }>();
-  return { accounts, directions, others, settings: parseSettings(settingsRow?.json ?? "{}") };
+  const json = settingsRow?.json ?? "{}";
+  const daysAhead = shownDaysAhead(
+    json,
+    ruleRows.map((row) => parseRuleOptions(row.options)),
+  );
+  return { accounts, directions, others, settings: { ...parseSettings(json), daysAhead } };
 }
 
 function parseSettings(json: string): SyncSettings {
@@ -268,6 +273,23 @@ function parseSettings(json: string): SyncSettings {
     parseRuleOptions(json);
   return { daysAhead, skipAllDay, skipTentative, markPrivate, blockTitle, skipCategories };
 }
+
+/**
+ * The window the settings show: the stored one, or else the largest `daysAhead` of the user's
+ * rules. Rules can be older than the stored settings; a default would shrink them on any save.
+ */
+function shownDaysAhead(json: string, rules: RuleOptions[]): number {
+  const stored = (JSON.parse(json) as { daysAhead?: unknown }).daysAhead;
+  if (stored !== undefined || rules.length === 0) return parseSettings(json).daysAhead;
+  return Math.max(...rules.map((options) => options.daysAhead));
+}
+
+/** Settings from the form. The window can be missing, for example if no choice matched. */
+export type SettingsForm = Omit<SyncSettings, "daysAhead"> & {
+  daysAhead?: number;
+  /** The window that the form showed. */
+  daysAheadShown?: number;
+};
 
 /** Options of a new rule: the user's settings with the given detail level. */
 function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOptions {
@@ -279,28 +301,64 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
 
 /**
  * Store the settings and apply them to every rule of the user. The detail level of each rule
- * stays; it is the choice per direction.
+ * stays; it is the choice per direction. The window applies only if the user changed it from the
+ * one the form showed, and only in that direction: a higher window raises the rules below it, a
+ * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
+ * removal of the blocks beyond it, which no run reads any more.
  */
-export async function setSettings(
-  env: Env,
-  user: CurrentUser,
-  settings: SyncSettings,
-): Promise<void> {
+export async function setSettings(env: Env, user: CurrentUser, form: SettingsForm): Promise<void> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, r.options, r.enabled, tc.can_edit AS canEdit, tc.account_id AS targetAccountId,
+            tc.remote_id AS remoteCalendarId
+     FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
+  )
+    .bind(user.id)
+    .all<{
+      id: string;
+      options: string;
+      enabled: number;
+      canEdit: number;
+      targetAccountId: string;
+      remoteCalendarId: string;
+    }>();
+  const stored = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+    .bind(user.id)
+    .first<{ json: string }>();
+  const json = stored?.json ?? "{}";
+  const current = shownDaysAhead(
+    json,
+    results.map((row) => parseRuleOptions(row.options)),
+  );
+  const { daysAhead: chosen, daysAheadShown, ...rest } = form;
+  // A page from before `daysAheadShown` existed showed the stored window, or the default.
+  const shown = daysAheadShown ?? parseSettings(json).daysAhead;
+  const windowChanged = chosen !== undefined && chosen !== shown;
+  const settings: SyncSettings = { ...rest, daysAhead: windowChanged ? chosen : current };
+  const windowOf = (previous: number) =>
+    !windowChanged
+      ? previous
+      : settings.daysAhead > shown
+        ? Math.max(previous, settings.daysAhead)
+        : Math.min(previous, settings.daysAhead);
   await env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?")
     .bind(JSON.stringify(settings), user.id)
     .run();
-  const { results } = await env.DB.prepare(
-    `SELECT r.id, r.options, tc.account_id AS targetAccountId FROM rules r
-     JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
-  )
-    .bind(user.id)
-    .all<{ id: string; options: string; targetAccountId: string }>();
   const targets = new Set<string>();
   for (const row of results) {
-    const options = ruleOptionsSchema.parse({ ...parseRuleOptions(row.options), ...settings });
+    const previous = parseRuleOptions(row.options);
+    const options = ruleOptionsSchema.parse({
+      ...previous,
+      ...settings,
+      daysAhead: windowOf(previous.daysAhead),
+    });
     await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
       .bind(JSON.stringify(options), row.id)
       .run();
+    // A disabled rule has its blocks removed already; a read-only calendar refuses the deletes.
+    if (options.daysAhead < previous.daysAhead && row.enabled === 1 && row.canEdit === 1) {
+      const target = { accountId: row.targetAccountId, remoteCalendarId: row.remoteCalendarId };
+      await queueRemoval(env, row.id, target, { trim: true });
+    }
     targets.add(row.targetAccountId);
   }
   await recordAudit(env.DB, {
@@ -487,9 +545,10 @@ async function queueRemoval(
   env: Env,
   ruleId: string,
   target: { accountId: string; remoteCalendarId: string },
+  options: { trim?: boolean } = {},
 ): Promise<boolean> {
   try {
-    await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId);
+    await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId, options);
     return true;
   } catch (error) {
     console.error("Queueing the removal failed", ruleId, error);

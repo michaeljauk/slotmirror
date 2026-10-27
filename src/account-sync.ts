@@ -243,6 +243,14 @@ function sameRemoval(a: Removal, b: Removal): boolean {
   );
 }
 
+/** Outcome of one attempt to remove a rule's blocks. */
+type RemovalResult = {
+  removed: number;
+  remaining: number;
+  throttled: boolean;
+  retryAfterMs?: number;
+};
+
 /** The first queued removal that may run at `now`. */
 function dueRemoval(queue: Removal[], now: number): Removal | undefined {
   return queue.find((job) => (job.notBefore ?? 0) <= now);
@@ -984,7 +992,7 @@ export class AccountSync extends DurableObject<Env> {
     ruleId: string,
     remoteCalendarId: string,
     beyond?: Date,
-  ): Promise<{ removed: number; remaining: number; throttled: boolean; retryAfterMs?: number }> {
+  ): Promise<RemovalResult> {
     const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
     const cleanup = cleanupWindow();
@@ -1062,13 +1070,19 @@ export class AccountSync extends DurableObject<Env> {
 
   /**
    * Delete a rule's blocks beyond its current sync window. The window is read at every attempt, so
-   * that a `daysAhead` raised meanwhile keeps the blocks the rule wants again. A deleted rule has
-   * its own removal.
+   * that a `daysAhead` raised meanwhile keeps the blocks the rule wants again. A deleted or
+   * disabled rule has its own removal. Returns the window end it trimmed at, if any.
    */
-  private async trimRuleBlocks(job: Removal): ReturnType<AccountSync["removeRuleBlocks"]> {
+  private async trimRuleBlocks(job: Removal): Promise<RemovalResult & { end?: Date }> {
+    const end = await this.trimEnd(job);
+    if (!end) return { removed: 0, remaining: 0, throttled: false };
+    return { ...(await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId, end)), end };
+  }
+
+  /** The current sync window end of a trim's rule, or undefined if the rule is gone or disabled. */
+  private async trimEnd(job: Removal): Promise<Date | undefined> {
     const rule = await loadRule(this.env.DB, job.ruleId);
-    if (!rule) return { removed: 0, remaining: 0, throttled: false };
-    return this.removeRuleBlocks(job.ruleId, job.remoteCalendarId, syncWindow(rule.options).end);
+    return rule?.enabled ? syncWindow(rule.options).end : undefined;
   }
 
   /**
@@ -1106,7 +1120,7 @@ export class AccountSync extends DurableObject<Env> {
     let delayMs = this.delays().nextRun;
     let giveUp = false;
     try {
-      const result = job.trim
+      const result: RemovalResult & { end?: Date } = job.trim
         ? await this.trimRuleBlocks(job)
         : await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
       if (result.throttled) {
@@ -1115,6 +1129,10 @@ export class AccountSync extends DurableObject<Env> {
       } else if (result.remaining > 0) {
         // A run without progress failed, for example with 403 on every block.
         outcome = result.removed > 0 ? "continue" : "failed";
+      } else if (result.end && ((await this.trimEnd(job)) ?? result.end) < result.end) {
+        // The window went down again during the trim. That lowering found this job queued, so
+        // the job goes on instead of ending.
+        outcome = "continue";
       }
     } catch (error) {
       console.error("Queued removal failed", job.ruleId, error);

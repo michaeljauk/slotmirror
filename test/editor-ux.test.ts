@@ -115,7 +115,7 @@ describe("page save is all or nothing", () => {
     const { user, cookie, w, o } = await setup("commanojs");
     await setDirection(env, user, w, o, "busy");
     const response = await post(
-      "/rules/direction/color",
+      "/rules/direction/details",
       cookie,
       new URLSearchParams({ from: w, to: o, blockColor: "a,b" }),
       GERMAN,
@@ -304,7 +304,7 @@ describe("copy", () => {
 
     await saveSettings({});
     const off = await page(cookie, "/rules", GERMAN);
-    expect(off).toContain("sehen voneinander nur „Belegt“. Mehr Details");
+    expect(off).toContain("sehen voneinander nur „Belegt“.");
     expect(off).not.toContain("als privat markiert");
 
     await saveSettings({ "settings.markPrivate": "on" });

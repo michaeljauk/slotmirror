@@ -41,9 +41,14 @@ export const en = {
     lastRunAt: (time: string) => `Last run ${time}`,
     changesFailed: (count: number) => (count === 1 ? "1 change failed" : `${count} changes failed`),
     disconnect: "Disconnect",
-    rename: "Name and colour",
+    rename: "Settings",
+    workHoursLabel: "Working hours",
+    workHoursHint: "Applies to everything copied into this account.",
+    workHoursTitle:
+      "You turn it on per calendar in the sync settings. Without working hours the whole day counts.",
+    workHoursNone: "No working hours",
     colorLabel: "Colour",
-    colorHint: "Marks the account on these pages. It does not change your calendars.",
+    colorHint: "Only on these pages, not in your calendars.",
     colorAuto: "Automatic",
     colorNames: {
       green: "Green",
@@ -56,7 +61,7 @@ export const en = {
       slate: "Slate",
     },
     nameLabel: "Name",
-    nameHint: "Shown in the sync settings. Leave empty to use the name from the address.",
+    nameHint: "Leave empty for the name from the address.",
     save: "Save",
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
@@ -126,7 +131,7 @@ export const en = {
     viewMatrix: "Overview",
     groupTitle: "Block each other",
     groupText: (count: number, markPrivate: boolean) =>
-      `These ${count} calendars see each other only as busy${markPrivate ? ", marked private" : ""}. Set more detail per calendar below.`,
+      `These ${count} calendars see each other only as busy${markPrivate ? ", marked private" : ""}.`,
     groupTooFew: "Choose at least two calendars.",
     groupAdd: "Add to the group",
     groupRemove: "Remove from the group",
@@ -135,7 +140,7 @@ export const en = {
     manage: "Edit",
     choices: { off: "Not", busy: "As busy", title: "With title", full: "Everything" },
     short: { off: "no", busy: "busy", title: "title", full: "all" },
-    looksLike: "Looks like this there:",
+    looksLike: "There:",
     notThere: "does not appear there",
     sampleWork: { title: "Discuss the Q4 offer", detail: "Teams · agenda, 3 attendees" },
     samplePrivate: { title: "Dentist", detail: "Main square practice · check-up" },
@@ -161,7 +166,7 @@ export const en = {
     stepChoose: "Choose here where the events of each calendar go.",
     quickStartTitle: "Quick start",
     quickStartText: (count: number) =>
-      `Let all ${count} calendars block each other as busy. Afterwards you can show more detail for single directions, for example work events with titles in your private calendar.`,
+      `All ${count} calendars block each other as busy. Add detail per direction later.`,
     quickStartButton: "Block each other",
     statusOk: (time: string) => `Everything in sync · ${time}`,
     changes: (count: number) => (count === 1 ? "1 change" : `${count} changes`),
@@ -178,37 +183,90 @@ export const en = {
     skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
     skipCategoriesPlaceholder: "Private, Focus",
     skipColorsLabel: "Skip Google events with these colours",
-    googleColor: (id: string) => `Google colour ${id}`,
-    blockColorLabel: "Colour there:",
+    weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+    weekdayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    workStart: "From",
+    workEnd: "Until",
+    workTimeZone: "Time zone",
+    workUntilMidnight: "until midnight",
+    workZoneUnknown: (zone: string) =>
+      `This server does not know the time zone ${zone}. Until you choose another one, the hours are read in UTC.`,
+    onlyWorkHours: (name: string, hours: string) =>
+      `Only during the working hours of ${name} (${hours})`,
+    onlyWorkHoursHint: "Only events that touch these hours are copied, with their full times.",
+    setWorkHours: "Set working hours",
+    workHoursMissing: (name: string) =>
+      `${name} has no working hours. Set them in the account settings. Nothing was saved.`,
+    everyDay: "every day",
+    allDay: "all day",
+    workHoursErrors: {
+      days: "Working hours: choose at least one weekday. Nothing was saved.",
+      time: "Working hours: enter a start and an end, for example 08:00 and 18:00, or leave both empty. Nothing was saved.",
+      order:
+        "Working hours: the end must be after the start. For the end of the day, choose “until midnight”. Nothing was saved.",
+      zone: "Working hours: unknown time zone. Enter a name such as Europe/Vienna. Nothing was saved.",
+    },
+    saveConflict:
+      "These rules changed in the meantime, for example in another tab. Reload the page and check them.",
+    workHoursDirection:
+      "These working hours belong to a direction that no longer exists. Reload the page. Nothing was saved.",
+    googleColor: (id: string) =>
+      [
+        "Lavender",
+        "Sage",
+        "Grape",
+        "Flamingo",
+        "Banana",
+        "Tangerine",
+        "Peacock",
+        "Graphite",
+        "Blueberry",
+        "Basil",
+        "Tomato",
+      ][Number(id) - 1] ?? `Google colour ${id}`,
+    blockColorLabel: "Colour of the copies",
     blockColorNone: "No colour",
-    blockCategoryLabel: "Category there:",
-    blockCategoryPlaceholder: "No category",
+    blockCategoryLabel: "Outlook category of the copies",
+    blockCategoryPlaceholder: "Category",
     blockCategoryHint:
       "Outlook shows a colour if a category with this name exists. Create it in Outlook first.",
+    bufferLabel: "Buffer",
+    bufferNone: "No buffer",
+    bufferSummary: (before: number, after: number) =>
+      before === after
+        ? `${before} min. before and after`
+        : [before > 0 ? `${before} min. before` : "", after > 0 ? `${after} min. after` : ""]
+            .filter(Boolean)
+            .join(", "),
+    bufferMixed: "differs",
+    bufferMixedHint:
+      "The targets of this calendar have different buffers. A save sets one for all.",
+    change: "change",
+    bufferBefore: "min. before",
+    bufferAfter: "min. after",
+    bufferHint: "All-day events get no buffer.",
     blockCategoryComma:
       "A category name cannot contain a comma: Outlook reads the comma as the start of a second category. Nothing was saved.",
     blockCategoryTooLong: (max: number) =>
       `A category name can have at most ${max} characters. Nothing was saved.`,
     blockColorInvalid: "This colour does not fit the calendar. Reload the page. Nothing was saved.",
     choiceInvalid: "This choice is not available. Reload the page. Nothing was saved.",
+    bufferInvalid: (max: number) =>
+      `A buffer is a whole number of minutes from 0 to ${max}. Nothing was saved.`,
     reconnectTitle: (email: string, provider: string) =>
       `The ${provider} account ${email} is no longer connected.`,
     reconnectText: "Its calendars do not sync until you reconnect it.",
     reconnect: (email: string) => `Reconnect ${email}`,
     reconnectShort: "Reconnect",
-    calendarsFrom: (name: string) => `Calendars from ${name}:`,
+    calendarsLabel: "Calendars",
     mainCalendar: "Main calendar",
-    noSource:
-      "No calendar chosen. Turn on at least one, then its events go to the calendars below.",
+    noSource: "No calendar chosen. Turn on at least one.",
     skipAllDayTitle: "Skip all-day events",
-    skipAllDayHint:
-      "Holidays, birthdays and days off would otherwise block the whole day in the other calendars.",
+    skipAllDayHint: "Otherwise holidays and days off block whole days.",
     skipTentativeTitle: "Skip tentative events",
-    skipTentativeHint:
-      "Invitations you answered with “maybe”, and events marked as tentative, then do not block.",
+    skipTentativeHint: "“Maybe” answers and tentative events do not block.",
     markPrivateTitle: "Mark copies as private",
-    markPrivateHint:
-      "People who can see your calendar, such as colleagues or an assistant, see “Private” instead of the title. You still see everything.",
+    markPrivateHint: "Others see “Private” instead of the title. You see everything.",
     days: (days: number) => `${days} days`,
     cellChanged: "changed",
     checking: "Checking…",

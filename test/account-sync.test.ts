@@ -70,8 +70,49 @@ function writtenBlocks(calls: { url: string; init?: RequestInit }[], prefix: str
     });
 }
 
-/** Fake Graph and token endpoint. Records every request. */
-function fakeGraph(target: unknown[] = []) {
+/** Start or end of a Graph event as a UTC instant. */
+function graphInstant(time: { dateTime: string }): number {
+  return Date.parse(`${time.dateTime.replace(/\.\d+$/, "")}Z`);
+}
+
+/** The events that overlap the window a calendarView request asks for, as Graph answers. */
+function inRequestedWindow(url: string, events: unknown[]): unknown[] {
+  const params = new URL(url).searchParams;
+  const start = Date.parse(params.get("startDateTime") ?? "");
+  const end = Date.parse(params.get("endDateTime") ?? "");
+  return events.filter((raw) => {
+    const event = raw as { start: { dateTime: string }; end: { dateTime: string } };
+    return graphInstant(event.end) > start && graphInstant(event.start) < end;
+  });
+}
+
+/** A single Graph event in UTC, built from the fixture's single event. */
+function graphEvent(id: string, start: Date, end: Date, isAllDay = false) {
+  const template = fixture.value.find((event) => event.subject === "FBS single");
+  const time = (date: Date) => ({ dateTime: date.toISOString().slice(0, 19), timeZone: "UTC" });
+  return {
+    ...template,
+    id,
+    type: "singleInstance",
+    seriesMasterId: null,
+    originalStart: null,
+    isAllDay,
+    start: time(start),
+    end: time(end),
+  };
+}
+
+/**
+ * Fake Graph and token endpoint. Records every request. With `windowed`, calendarView answers
+ * only the events in the requested window, so that tests can cover the edges of the window.
+ */
+function fakeGraph(
+  target: unknown[] = [],
+  options: { source?: unknown[]; windowed?: boolean } = {},
+) {
+  const source = options.source ?? fixture.value;
+  const answer = (url: string, events: unknown[]) =>
+    Response.json({ value: options.windowed ? inRequestedWindow(url, events) : events });
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -84,9 +125,8 @@ function fakeGraph(target: unknown[] = []) {
       });
     }
     // Also matches further source calendars such as `remote-source-2`.
-    if (url.includes(`/calendars/${SOURCE_CAL}`)) return Response.json({ value: fixture.value });
-    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`))
-      return Response.json({ value: target });
+    if (url.includes(`/calendars/${SOURCE_CAL}`)) return answer(url, source);
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) return answer(url, target);
     if (url.endsWith("/$batch")) {
       const body = JSON.parse(init?.body as string) as {
         requests: { id: string; method: string }[];
@@ -271,6 +311,95 @@ describe("AccountSync.runRule", () => {
       delete: 0,
       unchanged: 15,
     });
+  });
+
+  it("writes buffered blocks, and the next run with the same events changes nothing", async () => {
+    const { stub, ruleId } = await setupRule("acc-buffer", { bufferBefore: 15, bufferAfter: 30 });
+    await stub.storeTokens("acc-buffer", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const calls = fakeGraph();
+    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 15, failed: 0 });
+    const written = writtenBlocks(calls, "buffered") as {
+      start: { dateTime: string };
+      end: { dateTime: string };
+    }[];
+    // "FBS single" runs from 13:00 to 14:00.
+    expect(written.map((block) => [block.start.dateTime, block.end.dateTime])).toContainEqual([
+      "2026-10-27T12:45:00",
+      "2026-10-27T14:30:00",
+    ]);
+
+    // The source read starts 240 minutes, the largest buffer, before the sync window at 00:00 UTC.
+    // The target read starts one day before it, for all-day blocks in every time zone.
+    const window = (part: string) => {
+      const call = calls.find((c) => c.url.includes(`/calendars/${part}/calendarView`));
+      const params = new URL(call?.url ?? "https://x").searchParams;
+      return [params.get("startDateTime"), params.get("endDateTime")].map((v) =>
+        Date.parse(v ?? ""),
+      );
+    };
+    const [sourceStart, sourceEnd] = window(SOURCE_CAL);
+    const [targetStart, targetEnd] = window(TARGET_CAL);
+    expect((sourceStart ?? 0) - (targetStart ?? 0)).toBe(20 * 60 * 60_000);
+    expect((targetEnd ?? 0) - (sourceEnd ?? 0)).toBe(20 * 60 * 60_000);
+    expect(new Date((sourceStart ?? 0) + 240 * 60_000).toISOString()).toMatch(/T00:00:00\.000Z$/);
+    vi.restoreAllMocks();
+
+    fakeGraph(written);
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: 0,
+      unchanged: 15,
+    });
+  });
+
+  it("writes one block where two rules with different buffers would write one event", async () => {
+    const { stub, ruleId } = await setupRule("acc-dedupe-buffer");
+    await stub.storeTokens("acc-dedupe-buffer", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const owner = await env.DB.prepare("SELECT user_id FROM rules WHERE id = ?")
+      .bind(ruleId)
+      .first<{ user_id: string }>();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Copy')",
+      ).bind("acc-dedupe-buffer-src2", "acc-dedupe-buffer", `${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, ?, ?)",
+      ).bind(
+        "acc-dedupe-buffer-rule-2",
+        owner?.user_id,
+        "acc-dedupe-buffer-src2",
+        "acc-dedupe-buffer-dst",
+      ),
+    ]);
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-dedupe-buffer-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+    const setOptions = (id: string, options: object) =>
+      env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+        .bind(JSON.stringify(options), id)
+        .run();
+    await setOptions(first, { bufferBefore: 30 });
+    await setOptions(second, { bufferBefore: 15 });
+
+    const calls = fakeGraph();
+    expect(await stub.runRule(first)).toMatchObject({ applied: 15 });
+    const kept = writtenBlocks(calls, "kept");
+    vi.restoreAllMocks();
+
+    // The blocks with precedence cover the narrower ones: the meeting is not written twice.
+    fakeGraph(kept);
+    expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({ create: 0 });
+    // A wider buffer is not covered; that rule writes its own blocks, so its buffer stays.
+    await setOptions(second, { bufferBefore: 45 });
+    expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({ create: 15 });
   });
 
   it("refreshes an expired token once and stores the rotated refresh token", async () => {
@@ -3299,6 +3428,160 @@ describe("overlapping runs", () => {
     await alarm;
 
     expect(target.some((block) => block.start.dateTime.startsWith("2026-12-01T10:00"))).toBe(true);
+  });
+});
+
+describe("buffers at the edges of the sync window", () => {
+  const now = new Date();
+  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  /** Minutes from the start of the current UTC day, where the sync window starts. */
+  const at = (minutes: number) => new Date(midnight + minutes * 60_000);
+
+  async function bufferRule(accountId: string, options: object) {
+    const { stub, ruleId } = await setupRule(accountId, options);
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    return { stub, ruleId };
+  }
+
+  /** One real run against the windowed fake; returns the stats and the blocks it wrote. */
+  async function run(
+    stub: DurableObjectStub<AccountSync>,
+    ruleId: string,
+    target: unknown[],
+    source: unknown[],
+  ) {
+    // Each run is a new cycle, which reads the source again.
+    await runInDurableObject(stub, (instance) => {
+      (instance as unknown as { sourceCache: Map<string, unknown> }).sourceCache.clear();
+    });
+    const calls = fakeGraph(target, { source, windowed: true });
+    const result = await stub.runRule(ruleId);
+    vi.restoreAllMocks();
+    return { stats: result.stats, written: writtenBlocks(calls, `w${target.length}`) };
+  }
+
+  const nothingToDo = (unchanged: number) => ({ create: 0, update: 0, delete: 0, unchanged });
+
+  it("keeps the block of an event that ended before the window, buffered into it", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge", { bufferAfter: 30 });
+    const source = [graphEvent("night", at(-60), at(-10))];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    expect((await run(stub, ruleId, first.written, source)).stats).toEqual(nothingToDo(1));
+  });
+
+  it("writes yesterday's all-day event once, and not again on every run", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-allday", {
+      skipAllDay: false,
+      bufferAfter: 30,
+    });
+    const source = [
+      graphEvent("yesterday", at(-1440), at(0), true),
+      graphEvent("today", at(0), at(1440), true),
+    ];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 2 });
+    expect((await run(stub, ruleId, first.written, source)).stats).toEqual(nothingToDo(2));
+  });
+
+  it("moves a block from before the window with its event when the buffer goes down", async () => {
+    // With 60 minutes after it, the block reaches into the window; with 30 it ends before it.
+    const { stub, ruleId } = await bufferRule("acc-edge-lower", { bufferAfter: 60 });
+    const source = [graphEvent("night", at(-100), at(-40))];
+    const first = await run(stub, ruleId, [], source);
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify({ bufferAfter: 30 }), ruleId)
+      .run();
+    const second = await run(stub, ruleId, first.written, source);
+    expect(second.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+    const moved = (first.written as Record<string, unknown>[]).map((block, index) => ({
+      ...block,
+      ...(second.written[index] as object),
+    }));
+    expect((await run(stub, ruleId, moved, source)).stats).toEqual(nothingToDo(0));
+  });
+
+  it("deletes such a block when the buffer goes down to 0, as the read is then narrower", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-zero", { bufferAfter: 30 });
+    const source = [graphEvent("night", at(-60), at(-10))];
+    const first = await run(stub, ruleId, [], source);
+    await env.DB.prepare("UPDATE rules SET options = '{}' WHERE id = ?").bind(ruleId).run();
+    const second = await run(stub, ruleId, first.written, source);
+    expect(second.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 0 });
+  });
+
+  it("writes nothing new from the hours before the window without a buffer", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-plain", { skipAllDay: false });
+    const source = [
+      graphEvent("yesterday", at(-1440), at(0), true),
+      graphEvent("evening", at(-120), at(-60)),
+      graphEvent("midnight", at(0), at(0)),
+    ];
+    // The windowed fake reads like the provider: an event that ends at 00:00 UTC is outside.
+    expect((await run(stub, ruleId, [], source)).stats).toEqual(nothingToDo(0));
+  });
+
+  it("writes no block for an event in the margin whose block ends before the window", async () => {
+    // The event ends 220 minutes before 00:00 UTC; with 30 minutes after it, so does its block.
+    const { stub, ruleId } = await bufferRule("acc-edge-margin", { bufferAfter: 30 });
+    const source = [graphEvent("evening", at(-230), at(-220))];
+    expect((await run(stub, ruleId, [], source)).stats).toEqual(nothingToDo(0));
+  });
+
+  it("deletes the block of a deleted vacation that started yesterday", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-vacation", { skipAllDay: false });
+    const source = [graphEvent("vacation", at(-1440), at(6 * 1440), true)];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    expect((await run(stub, ruleId, first.written, [])).stats).toMatchObject({ delete: 1 });
+  });
+
+  it("deletes the block of a running event once a filter leaves it out", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-filter", { detailLevel: "title" });
+    const source = [graphEvent("trip", at(-600), at(3 * 1440))];
+    const first = await run(stub, ruleId, [], source);
+    expect(first.stats).toMatchObject({ create: 1 });
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify({ detailLevel: "title", skipTentative: true }), ruleId)
+      .run();
+    const tentative = [{ ...source[0], showAs: "tentative" }];
+    expect((await run(stub, ruleId, first.written, tentative)).stats).toMatchObject({ delete: 1 });
+  });
+
+  it("reads the source once for rules with different buffers", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-shared", { bufferAfter: 30 });
+    const windowOf = (url: string) => {
+      const params = new URL(url).searchParams;
+      return `${params.get("startDateTime")}|${params.get("endDateTime")}`;
+    };
+    const calls = fakeGraph([], { source: [], windowed: true });
+    await stub.runRule(ruleId, { dryRun: true });
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify({ bufferBefore: 120 }), ruleId)
+      .run();
+    await stub.runRule(ruleId, { dryRun: true });
+    const reads = calls.filter((call) =>
+      call.url.includes(`/calendars/${SOURCE_CAL}/calendarView`),
+    );
+    expect(reads).toHaveLength(1);
+    const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    expect(windowOf(reads[0]?.url ?? "").split("|")[0]).toBe(
+      new Date(day.getTime() - 240 * 60_000).toISOString(),
+    );
+  });
+
+  it("reads the sync window and no margin for a rule without a buffer", async () => {
+    const { stub, ruleId } = await bufferRule("acc-edge-narrow", {});
+    const calls = fakeGraph([], { source: [], windowed: true });
+    await stub.runRule(ruleId, { dryRun: true });
+    const read = calls.find((call) => call.url.includes(`/calendars/${SOURCE_CAL}/calendarView`));
+    const params = new URL(read?.url ?? "https://x").searchParams;
+    expect(params.get("startDateTime")).toBe(at(0).toISOString());
+    expect(params.get("endDateTime")).toBe(at(90 * 1440).toISOString());
   });
 });
 

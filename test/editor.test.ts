@@ -7,6 +7,8 @@ import {
   setBlockColor,
   setDirection,
   setGroupMembership,
+  setRuleDetails,
+  setSourceCalendar,
   shortNames,
 } from "../src/editor";
 import { BASE, signIn } from "./helpers";
@@ -559,5 +561,230 @@ describe("check with real events", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("Next sync: 2 new, 0 changed, 0 removed");
+  });
+});
+
+describe("block buffer per source", () => {
+  const optionsOf = async (userId: string, from: string, to: string) =>
+    (await loadEditorState(env, userId)).directions.find((d) => d.from === from && d.to === to)
+      ?.options;
+  /** Buffers of every rule from an account, as "before,after". */
+  const buffersFrom = async (userId: string, accountId: string) => {
+    const { results } = await env.DB.prepare(
+      `SELECT json_extract(r.options, '$.bufferBefore') || ',' ||
+              json_extract(r.options, '$.bufferAfter') AS buffer
+       FROM rules r JOIN calendars sc ON sc.id = r.source_calendar_id
+       WHERE r.user_id = ? AND sc.account_id = ? ORDER BY r.id`,
+    )
+      .bind(userId, accountId)
+      .all<{ buffer: string }>();
+    return results.map((row) => row.buffer);
+  };
+  const saver = (cookie: string) => (fields: Record<string, string>) =>
+    exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields),
+    });
+  /** The buffer row of a source card. */
+  const bufferRow = async (cookie: string, from: string) => {
+    const html = await (
+      await exports.default.fetch(`${BASE}/rules?open=${from}`, { headers: { cookie } })
+    ).text();
+    const card = html.split(`id="src-${from}"`)[1]?.split("</details>\n")[0] ?? "";
+    return card.match(/<form[^>]*source-buffer[\s\S]*?<\/form>/)?.[0] ?? "";
+  };
+
+  it("saves one buffer for every rule of a source from the page, and refuses invalid values", async () => {
+    const { user, cookie, w, o, g } = await setup("buf");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, w, o, "title");
+    await setDirection(env, user, g, w, "busy");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'side', 'Side', 1, 0, 0)",
+    )
+      .bind(`${w}-side`, w)
+      .run();
+    await setSourceCalendar(env, user, `${w}-side`, true);
+    expect(await buffersFrom(user.id, w)).toHaveLength(4);
+    const save = saver(cookie);
+
+    const saved = await save({ [`bufferBefore.${w}`]: "30", [`bufferAfter.${w}`]: "30" });
+    expect(saved.status).toBe(204);
+    expect(await buffersFrom(user.id, w)).toEqual(["30,30", "30,30", "30,30", "30,30"]);
+    // Another source keeps its own.
+    expect(await buffersFrom(user.id, g)).toEqual(["0,0"]);
+
+    const row = await bufferRow(cookie, w);
+    expect(row).toContain("30 min. before and after");
+    expect(row).toMatch(/name="bufferBefore"[^>]*value="30"/);
+    expect(row).toMatch(/name="bufferAfter"[^>]*value="30"/);
+    expect(await bufferRow(cookie, g)).toContain("No buffer");
+
+    // A missing field is 0.
+    expect((await save({ [`bufferBefore.${w}`]: "15" })).status).toBe(204);
+    expect(await bufferRow(cookie, w)).toContain("15 min. before<");
+
+    // Settings for all rules keep the buffer of each source.
+    await save({ settings: "1", "settings.daysAhead": "30" });
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, daysAhead: 30 });
+
+    for (const value of ["241", "-5", "1.5", "abc"]) {
+      const refused = await save({ [`bufferAfter.${w}`]: value });
+      expect(refused.status).toBe(400);
+      expect(await refused.text()).toBe(
+        "A buffer is a whole number of minutes from 0 to 240. Nothing was saved.",
+      );
+    }
+    expect(await buffersFrom(user.id, w)).toEqual(["15,0", "15,0", "15,0", "15,0"]);
+  });
+
+  it('shows "differs" for rules with different buffers, and a save sets one for all', async () => {
+    const { user, cookie, w, o, g } = await setup("bufmix");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, w, o, "busy");
+    // Rules from before the buffer belonged to the source can differ.
+    await env.DB.prepare(
+      `UPDATE rules SET options = json_set(options, '$.bufferBefore', 10)
+       WHERE target_calendar_id = ?`,
+    )
+      .bind(`${g}-cal`)
+      .run();
+    const row = await bufferRow(cookie, w);
+    expect(row).toContain(">differs<");
+    expect(row).toMatch(/name="bufferBefore"[^>]*required[^>]*value=""/);
+
+    // A save of other things leaves the buffers as they are.
+    const save = saver(cookie);
+    expect((await save({ [`choice.${g}.${w}`]: "busy" })).status).toBe(204);
+    expect((await buffersFrom(user.id, w)).sort()).toEqual(["0,0", "10,0"]);
+
+    expect((await save({ [`bufferBefore.${w}`]: "5", [`bufferAfter.${w}`]: "5" })).status).toBe(
+      204,
+    );
+    expect(await buffersFrom(user.id, w)).toEqual(["5,5", "5,5"]);
+    expect(await bufferRow(cookie, w)).toContain("5 min. before and after");
+  });
+
+  it("gives a new direction of a source the source's buffer", async () => {
+    const { user, cookie, w, o, g } = await setup("bufnew");
+    await setDirection(env, user, w, g, "busy");
+    expect((await saver(cookie)({ [`bufferBefore.${w}`]: "20" })).status).toBe(204);
+    await setDirection(env, user, w, o, "title");
+    expect(await optionsOf(user.id, w, o)).toMatchObject({ bufferBefore: 20, bufferAfter: 0 });
+    // So do the group's rules.
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, o, true);
+    await setGroupMembership(env, user, g, true);
+    expect(await buffersFrom(user.id, w)).toEqual(["20,0", "20,0"]);
+    expect(await bufferRow(cookie, w)).toContain("20 min. before");
+    // The other sources had no buffer; their new group rules have none either.
+    expect(await buffersFrom(user.id, o)).toEqual(["0,0", "0,0"]);
+  });
+
+  it("saves nothing from a page save with one invalid value", async () => {
+    const { user, cookie, w, o, g } = await setup("bufall");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES ('bufall-team', ?, 'team', 'Team', 0, 0, 0)",
+    )
+      .bind(w)
+      .run();
+    await setDirection(env, user, w, g, "busy");
+    const save = saver(cookie);
+    const valid = {
+      "calendar.bufall-team": "1",
+      [`choice.${w}.${o}`]: "title",
+      [`blockColor.${w}.${g}`]: "5",
+      [`bufferBefore.${w}`]: "15",
+      settings: "1",
+      "settings.daysAhead": "30",
+    };
+    for (const invalid of [
+      { [`bufferAfter.${w}`]: "300" },
+      { [`choice.${w}.${o}`]: "everything" },
+      { [`blockColor.${w}.${g}`]: "Focus" },
+      { [`bufferAfter.unknown`]: "5" },
+    ]) {
+      expect((await save({ ...valid, ...invalid })).status).toBe(400);
+    }
+    expect(await rulesOf(user.id)).toEqual([
+      expect.objectContaining({ source: w, target: g, level: "busy" }),
+    ]);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({
+      blockColor: "",
+      bufferBefore: 0,
+      bufferAfter: 0,
+      daysAhead: 90,
+    });
+    const calendar = await env.DB.prepare("SELECT is_source FROM calendars WHERE id = ?")
+      .bind("bufall-team")
+      .first<{ is_source: number }>();
+    expect(calendar?.is_source).toBe(0);
+
+    expect((await save(valid)).status).toBe(204);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ blockColor: "5", bufferBefore: 15 });
+    // The direction turned on in the same save got the buffer too.
+    expect(await optionsOf(user.id, w, o)).toMatchObject({ bufferBefore: 15 });
+  });
+
+  it("saves from the form without the editor script, and a reset keeps the buffer", async () => {
+    const { user, cookie, w, o, g } = await setup("bufform");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, w, g, "title");
+    await setDirection(env, user, w, o, "busy");
+    const response = await exports.default.fetch(`${BASE}/rules/source/buffer`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ from: w, bufferBefore: "240", bufferAfter: "" }),
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(`/rules?open=${w}#src-${w}`);
+    expect(await buffersFrom(user.id, w)).toEqual(["240,0", "240,0"]);
+
+    // The buffer belongs to the source; resetting one direction does not change it.
+    await resetDirection(env, user, w, g);
+    expect(await optionsOf(user.id, w, g)).toMatchObject({
+      detailLevel: "busy",
+      bufferBefore: 240,
+    });
+    expect(await buffersFrom(user.id, w)).toEqual(["240,0", "240,0"]);
+  });
+
+  it("refuses an invalid buffer from the form and stores nothing", async () => {
+    const { user, cookie, w, g } = await setup("bufbad");
+    await setDirection(env, user, w, g, "busy");
+    for (const fields of [
+      { from: w, bufferBefore: "999", bufferAfter: "10" },
+      { from: w, bufferBefore: "10", bufferAfter: "-5" },
+      { from: w, bufferBefore: "1.5", bufferAfter: "10" },
+      { from: w, bufferBefore: "10", bufferAfter: "abc" },
+      { from: "nobody", bufferBefore: "10", bufferAfter: "10" },
+    ]) {
+      const response = await exports.default.fetch(`${BASE}/rules/source/buffer`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(fields),
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(await buffersFrom(user.id, w)).toEqual(["0,0"]);
+    const buffer = { bufferBefore: 999, bufferAfter: 0 };
+    expect(await setRuleDetails(env, user, { sources: [{ from: w, options: buffer }] })).toBe(
+      false,
+    );
+    expect(await buffersFrom(user.id, w)).toEqual(["0,0"]);
+  });
+
+  it("stores the buffer of a source without rules on its account", async () => {
+    const { user, cookie, w } = await setup("bufoff");
+    expect(await bufferRow(cookie, w)).toContain("No buffer");
+    const buffer = { bufferBefore: 10, bufferAfter: 10 };
+    expect(await setRuleDetails(env, user, { sources: [{ from: w, options: buffer }] })).toBe(true);
+    expect(await buffersFrom(user.id, w)).toEqual([]);
+    expect(await bufferRow(cookie, w)).toContain("10 min. before and after");
   });
 });

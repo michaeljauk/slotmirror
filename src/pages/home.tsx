@@ -4,9 +4,16 @@ import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
-import { MAX_NAME_LENGTH, type EditorState } from "../editor";
+import { MAX_NAME_LENGTH, type EditorAccount, type EditorState } from "../editor";
 import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
-import { colorStyle, ReconnectNotice, reconnectUrl, SourcePills } from "./calendar-editor";
+import { ALL_WEEKDAYS, isTimeZone } from "../sync/working-hours";
+import {
+  colorStyle,
+  ReconnectNotice,
+  reconnectUrl,
+  SourcePills,
+  type Notice,
+} from "./calendar-editor";
 import type { CalendarRow } from "../calendars";
 import type { FeedSummary } from "../feeds";
 import { FeedSection } from "./feeds";
@@ -54,6 +61,98 @@ export function SignInPage(props: { providers: Record<Provider, boolean> }) {
   );
 }
 
+/** What the user typed into the settings of an account, shown again after a refused save. */
+export interface AccountSettingsDraft {
+  accountId: string;
+  name: string;
+  color: string;
+  hours: {
+    workDays: number[];
+    workStart: string;
+    workEnd: string;
+    untilMidnight: boolean;
+    workTimeZone: string;
+  } | null;
+}
+
+/**
+ * The working hours of an account: weekdays, a time range and its time zone. Without a stored
+ * zone the field shows the deployment's zone; the page script puts in the browser's. A draft
+ * shows what the user typed instead.
+ */
+function AccountHours(props: { account: EditorAccount; draft?: AccountSettingsDraft["hours"] }) {
+  const { t, timeZone } = useI18n();
+  const hours = props.account.workHours;
+  const draft = props.draft;
+  // Without hours no day is ticked, so that saving the name does not set hours by accident.
+  const days = new Set<number>(draft?.workDays ?? hours?.workDays ?? []);
+  const untilMidnight = draft ? draft.untilMidnight : hours?.workEnd === "24:00";
+  const start = draft ? draft.workStart : (hours?.workStart ?? "");
+  const end = draft ? draft.workEnd : untilMidnight ? "" : (hours?.workEnd ?? "");
+  const storedZone = hours?.workTimeZone ?? "";
+  const zone = draft ? draft.workTimeZone : storedZone || timeZone;
+  return (
+    <fieldset class="account-hours">
+      <legend>{t.accounts.workHoursLabel}</legend>
+      <input type="hidden" name="workHoursShown" value="1" />
+      <span class="weekday-row" role="group" aria-label={t.accounts.workHoursLabel}>
+        {ALL_WEEKDAYS.map((day) => (
+          <label class="weekday" title={t.editor.weekdayNames[day - 1]}>
+            <input
+              type="checkbox"
+              name="workDays"
+              value={String(day)}
+              checked={days.has(day)}
+              aria-label={t.editor.weekdayNames[day - 1]}
+            />
+            <span>{t.editor.weekdays[day - 1]}</span>
+          </label>
+        ))}
+      </span>
+      <span class="work-time">
+        <input
+          type="time"
+          name="workStart"
+          value={start}
+          aria-label={t.editor.workStart}
+          title={t.editor.workStart}
+        />
+        {"–"}
+        {/* A time field cannot hold 24:00; "until midnight" stands for it. The page script disables
+            the field then; without the script the server ignores it. */}
+        <input
+          type="time"
+          name="workEnd"
+          value={end}
+          aria-label={t.editor.workEnd}
+          title={t.editor.workEnd}
+        />
+        <label class="work-midnight">
+          <input type="checkbox" name="workUntilMidnight" value="1" checked={untilMidnight} />
+          {t.editor.workUntilMidnight}
+        </label>
+      </span>
+      <input
+        type="text"
+        name="workTimeZone"
+        class="work-zone"
+        maxlength={64}
+        value={zone}
+        data-browser-zone={draft || storedZone ? undefined : "1"}
+        aria-label={t.editor.workTimeZone}
+        title={t.editor.workTimeZone}
+        autocomplete="off"
+      />
+      {storedZone !== "" && !isTimeZone(storedZone) ? (
+        <p class="fineprint work-zone-unknown">{t.editor.workZoneUnknown(storedZone)}</p>
+      ) : null}
+      <p class="fineprint" title={t.accounts.workHoursTitle}>
+        {t.accounts.workHoursHint}
+      </p>
+    </fieldset>
+  );
+}
+
 export function HomePage(props: {
   user: CurrentUser;
   accounts: AccountRow[];
@@ -64,6 +163,11 @@ export function HomePage(props: {
   feeds: FeedSummary[];
   /** Calendars the user can put into a feed: those of their own accounts. */
   calendars: CalendarRow[];
+  notice?: Notice;
+  /** The account whose settings start open. */
+  openSettings?: string;
+  /** What the user typed into the settings that start open. */
+  draft?: AccountSettingsDraft;
 }) {
   const { t, formatDate, formatTimestamp, formatRelative } = useI18n();
 
@@ -121,6 +225,8 @@ export function HomePage(props: {
           </div>
         </div>
 
+        {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
+
         <div class="card">
           {props.accounts.length === 0 ? (
             <div class="empty">
@@ -131,8 +237,15 @@ export function HomePage(props: {
             <ul class="list">
               {props.accounts.map((account) => {
                 const editor = props.editor.accounts.find((a) => a.id === account.id);
+                const draft = props.draft?.accountId === account.id ? props.draft : undefined;
+                // The colour the form shows: the typed one after a refused save, else the stored.
+                const shownColor = draft
+                  ? draft.color
+                  : editor?.colorChosen
+                    ? editor.color
+                    : "auto";
                 return (
-                  <li>
+                  <li id={`account-${account.id}`}>
                     <span
                       class="provider-icon tinted"
                       style={editor ? colorStyle(editor) : undefined}
@@ -162,11 +275,11 @@ export function HomePage(props: {
                     ) : (
                       syncStatus(props.statuses.get(account.id))
                     )}
-                    <details class="rename">
+                    <details class="rename" open={props.openSettings === account.id}>
                       <summary class="link-button quiet">{t.accounts.rename}</summary>
                       <form
                         method="post"
-                        action={`/accounts/${account.id}/name`}
+                        action={`/accounts/${account.id}/settings`}
                         class="rename-form"
                       >
                         <label>
@@ -175,7 +288,7 @@ export function HomePage(props: {
                             type="text"
                             name="name"
                             maxlength={MAX_NAME_LENGTH}
-                            value={editor?.customName ?? ""}
+                            value={draft ? draft.name : (editor?.customName ?? "")}
                             placeholder={editor?.derivedName}
                           />
                         </label>
@@ -188,7 +301,7 @@ export function HomePage(props: {
                                 type="radio"
                                 name="color"
                                 value="auto"
-                                checked={!editor?.colorChosen}
+                                checked={shownColor === "auto"}
                               />
                               <span class="color-dot">{t.accounts.colorAuto}</span>
                             </label>
@@ -198,7 +311,7 @@ export function HomePage(props: {
                                   type="radio"
                                   name="color"
                                   value={key}
-                                  checked={editor?.colorChosen === true && editor.color === key}
+                                  checked={shownColor === key}
                                   aria-label={t.accounts.colorNames[key]}
                                 />
                                 <span
@@ -210,9 +323,23 @@ export function HomePage(props: {
                           </span>
                           <p class="fineprint">{t.accounts.colorHint}</p>
                         </fieldset>
-                        <button type="submit" class="button small">
-                          {t.accounts.save}
-                        </button>
+                        {editor ? <AccountHours account={editor} draft={draft?.hours} /> : null}
+                        {/* Enter submits with the first submit button, so Save comes first. */}
+                        <div class="rename-actions">
+                          <button type="submit" class="button small">
+                            {t.accounts.save}
+                          </button>
+                          {editor?.workHours ? (
+                            <button
+                              type="submit"
+                              name="workHours"
+                              value="none"
+                              class="link-button quiet"
+                            >
+                              {t.accounts.workHoursNone}
+                            </button>
+                          ) : null}
+                        </div>
                       </form>
                     </details>
                     <a class="link-button quiet" href={`/accounts/${account.id}/disconnect`}>

@@ -40,9 +40,14 @@ export const de: Messages = {
       count === 1 ? "1 Änderung fehlgeschlagen" : `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
     disconnect: "Trennen",
-    rename: "Name und Farbe",
+    rename: "Einstellungen",
+    workHoursLabel: "Arbeitszeit",
+    workHoursHint: "Gilt für alles, was in dieses Konto kopiert wird.",
+    workHoursTitle:
+      "Im Sync schaltest du sie pro Kalender ein. Ohne Arbeitszeit zählt der ganze Tag.",
+    workHoursNone: "Keine Arbeitszeit",
     colorLabel: "Farbe",
-    colorHint: "Kennzeichnet das Konto auf diesen Seiten. Deine Kalender ändert sie nicht.",
+    colorHint: "Nur auf diesen Seiten, nicht in deinen Kalendern.",
     colorAuto: "Automatisch",
     colorNames: {
       green: "Grün",
@@ -55,8 +60,7 @@ export const de: Messages = {
       slate: "Schiefergrau",
     },
     nameLabel: "Name",
-    nameHint:
-      "Erscheint in den Sync-Einstellungen. Leer lassen, um den Namen aus der Adresse zu nutzen.",
+    nameHint: "Leer lassen für den Namen aus der Adresse.",
     save: "Speichern",
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
@@ -128,7 +132,7 @@ export const de: Messages = {
     viewMatrix: "Übersicht",
     groupTitle: "Blocken sich gegenseitig",
     groupText: (count: number, markPrivate: boolean) =>
-      `Diese ${count} Kalender sehen voneinander nur „Belegt“${markPrivate ? ", als privat markiert" : ""}. Mehr Details stellst du unten pro Kalender ein.`,
+      `Diese ${count} Kalender sehen voneinander nur „Belegt“${markPrivate ? ", als privat markiert" : ""}.`,
     groupTooFew: "Wähle mindestens zwei Kalender.",
     groupAdd: "Zur Gruppe hinzufügen",
     groupRemove: "Aus der Gruppe nehmen",
@@ -137,7 +141,7 @@ export const de: Messages = {
     manage: "Bearbeiten",
     choices: { off: "Nicht", busy: "Als belegt", title: "Mit Titel", full: "Alles" },
     short: { off: "nicht", busy: "belegt", title: "Titel", full: "alles" },
-    looksLike: "So sieht es dort aus:",
+    looksLike: "Dort:",
     notThere: "taucht dort nicht auf",
     sampleWork: { title: "Angebot Q4 besprechen", detail: "Teams · Agenda, 3 Teilnehmer" },
     samplePrivate: { title: "Zahnarzt", detail: "Praxis Hauptplatz · Kontrolle" },
@@ -164,7 +168,7 @@ export const de: Messages = {
     stepChoose: "Lege hier fest, wohin die Termine jedes Kalenders gehen.",
     quickStartTitle: "Schnellstart",
     quickStartText: (count: number) =>
-      `Lass alle ${count} Kalender sich gegenseitig als „Belegt“ blocken. Danach kannst du einzelne Richtungen genauer einstellen, zum Beispiel Arbeitstermine mit Titel im Privatkalender.`,
+      `Alle ${count} Kalender blocken sich gegenseitig als „Belegt“. Details stellst du danach ein.`,
     quickStartButton: "Gegenseitig blocken",
     statusOk: (time: string) => `Alles synchron · ${time}`,
     changes: (count: number) => (count === 1 ? "1 Änderung" : `${count} Änderungen`),
@@ -181,13 +185,68 @@ export const de: Messages = {
     skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
     skipCategoriesPlaceholder: "Privat, Fokus",
     skipColorsLabel: "Google-Termine mit diesen Farben auslassen",
-    googleColor: (id: string) => `Google-Farbe ${id}`,
-    blockColorLabel: "Farbe dort:",
+    weekdays: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
+    weekdayNames: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
+    workStart: "Von",
+    workEnd: "Bis",
+    workTimeZone: "Zeitzone",
+    workUntilMidnight: "bis Mitternacht",
+    workZoneUnknown: (zone: string) =>
+      `Dieser Server kennt die Zeitzone ${zone} nicht. Bis du eine andere wählst, gelten die Zeiten in UTC.`,
+    onlyWorkHours: (name: string, hours: string) => `Nur in der Arbeitszeit von ${name} (${hours})`,
+    onlyWorkHoursHint:
+      "Nur Termine, die diese Zeiten berühren, werden kopiert, mit ihren vollen Zeiten.",
+    setWorkHours: "Arbeitszeit festlegen",
+    workHoursMissing: (name: string) =>
+      `${name} hat keine Arbeitszeit. Lege sie in den Kontoeinstellungen fest. Es wurde nichts gespeichert.`,
+    everyDay: "jeden Tag",
+    allDay: "ganztags",
+    workHoursErrors: {
+      days: "Arbeitszeit: Wähle mindestens einen Wochentag. Es wurde nichts gespeichert.",
+      time: "Arbeitszeit: Gib Beginn und Ende an, zum Beispiel 08:00 und 18:00, oder lass beide leer. Es wurde nichts gespeichert.",
+      order:
+        "Arbeitszeit: Das Ende muss nach dem Beginn liegen. Für das Tagesende wähle „bis Mitternacht“. Es wurde nichts gespeichert.",
+      zone: "Arbeitszeit: Unbekannte Zeitzone. Gib einen Namen wie Europe/Vienna ein. Es wurde nichts gespeichert.",
+    },
+    saveConflict:
+      "Diese Regeln wurden inzwischen geändert, zum Beispiel in einem anderen Tab. Lade die Seite neu und prüf sie.",
+    workHoursDirection:
+      "Diese Arbeitszeit gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
+    googleColor: (id: string) =>
+      [
+        "Lavendel",
+        "Salbei",
+        "Weintraube",
+        "Flamingo",
+        "Banane",
+        "Mandarine",
+        "Pfau",
+        "Graphit",
+        "Heidelbeere",
+        "Basilikum",
+        "Tomate",
+      ][Number(id) - 1] ?? `Google-Farbe ${id}`,
+    blockColorLabel: "Farbe der Kopien",
     blockColorNone: "Keine Farbe",
-    blockCategoryLabel: "Kategorie dort:",
-    blockCategoryPlaceholder: "Keine Kategorie",
+    blockCategoryLabel: "Outlook-Kategorie der Kopien",
+    blockCategoryPlaceholder: "Kategorie",
     blockCategoryHint:
       "Outlook zeigt eine Farbe, wenn es eine Kategorie mit diesem Namen gibt. Lege sie zuerst in Outlook an.",
+    bufferLabel: "Puffer",
+    bufferNone: "Kein Puffer",
+    bufferSummary: (before: number, after: number) =>
+      before === after
+        ? `${before} Min. davor und danach`
+        : [before > 0 ? `${before} Min. davor` : "", after > 0 ? `${after} Min. danach` : ""]
+            .filter(Boolean)
+            .join(", "),
+    bufferMixed: "unterschiedlich",
+    bufferMixedHint:
+      "Die Ziele dieses Kalenders haben verschiedene Puffer. Speichern setzt einen für alle.",
+    change: "ändern",
+    bufferBefore: "Min. davor",
+    bufferAfter: "Min. danach",
+    bufferHint: "Ganztägige Termine bekommen keinen Puffer.",
     blockCategoryComma:
       "Ein Kategoriename darf kein Komma enthalten: Outlook liest das Komma als Beginn einer zweiten Kategorie. Es wurde nichts gespeichert.",
     blockCategoryTooLong: (max: number) =>
@@ -195,24 +254,22 @@ export const de: Messages = {
     blockColorInvalid:
       "Diese Farbe passt nicht zum Kalender. Lade die Seite neu. Es wurde nichts gespeichert.",
     choiceInvalid: "Diese Auswahl gibt es nicht. Lade die Seite neu. Es wurde nichts gespeichert.",
+    bufferInvalid: (max: number) =>
+      `Ein Puffer ist eine ganze Zahl von Minuten zwischen 0 und ${max}. Es wurde nichts gespeichert.`,
     reconnectTitle: (email: string, provider: string) =>
       `Das ${provider}-Konto ${email} ist nicht mehr verbunden.`,
     reconnectText: "Bis du es neu verbindest, werden seine Kalender nicht synchronisiert.",
     reconnect: (email: string) => `${email} neu verbinden`,
     reconnectShort: "Neu verbinden",
-    calendarsFrom: (name: string) => `Kalender aus ${name}:`,
+    calendarsLabel: "Kalender",
     mainCalendar: "Hauptkalender",
-    noSource:
-      "Kein Kalender gewählt. Schalte mindestens einen ein, dann gehen seine Termine in die Kalender unten.",
+    noSource: "Kein Kalender gewählt. Schalte mindestens einen ein.",
     skipAllDayTitle: "Ganztägige Termine auslassen",
-    skipAllDayHint:
-      "Urlaub, Feiertage und Geburtstage würden sonst in den anderen Kalendern den ganzen Tag blocken.",
+    skipAllDayHint: "Sonst blocken Urlaub und Feiertage ganze Tage.",
     skipTentativeTitle: "Termine mit Vorbehalt auslassen",
-    skipTentativeHint:
-      "Einladungen, die du mit „Vielleicht“ beantwortet hast, und als vorläufig eingetragene Termine blocken dann nicht.",
+    skipTentativeHint: "„Vielleicht“-Antworten und vorläufige Termine blocken nicht.",
     markPrivateTitle: "Kopien als privat markieren",
-    markPrivateHint:
-      "Wer deinen Kalender einsehen kann, etwa Kollegen oder eine Assistenz, sieht „Privat“ statt des Titels. Du selbst siehst alles.",
+    markPrivateHint: "Andere sehen „Privat“ statt des Titels. Du siehst alles.",
     days: (days: number) => `${days} Tage`,
     cellChanged: "geändert",
     checking: "Wird geprüft …",

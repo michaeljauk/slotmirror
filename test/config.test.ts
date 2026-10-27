@@ -12,8 +12,14 @@ describe("parseRuleOptions", () => {
       skipTentative: false,
       skipDeclined: true,
       skipCategories: [],
+      workDays: [1, 2, 3, 4, 5, 6, 7],
+      workStart: "",
+      workEnd: "",
+      workTimeZone: "",
       markPrivate: true,
       blockColor: "",
+      bufferBefore: 0,
+      bufferAfter: 0,
       showOrigin: false,
       linkOrigin: false,
     });
@@ -25,6 +31,17 @@ describe("parseRuleOptions", () => {
       linkOrigin: false,
       originLocale: "de",
     });
+  });
+
+  it("accepts buffers from 0 to 240 whole minutes", () => {
+    expect(parseRuleOptions('{"bufferBefore": 240, "bufferAfter": 15}')).toMatchObject({
+      bufferBefore: 240,
+      bufferAfter: 15,
+    });
+    for (const value of ["241", "-1", "1.5", '"15"']) {
+      expect(() => parseRuleOptions(`{"bufferBefore": ${value}}`)).toThrow();
+      expect(() => parseRuleOptions(`{"bufferAfter": ${value}}`)).toThrow();
+    }
   });
 
   it("rejects a window beyond 365 days", () => {

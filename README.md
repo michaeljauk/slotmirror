@@ -29,11 +29,32 @@ tokens stay with you and not with a sync service.
   others only as "Busy", marked private.
 - **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
   with title, or everything. An example event shows the result before you save.
+- **Working hours.** Each account can have working hours: chosen weekdays and a time range, for
+  example Monday to Friday, 08:00 to 18:00, Europe/Vienna. You set them in the account settings. Per
+  calendar and target you can then mirror only the events inside the working hours of the target
+  account. An event is mirrored if it overlaps the range on one chosen day. Its block keeps the
+  event's real times; it is never cut to the range. An all-day event counts if one of its dates is a
+  chosen weekday. The end must be after the start; "until midnight" ends the range at the end of the
+  day, and a range over midnight is not possible. An account has no working hours until you set
+  them; the time zone field starts with the browser's zone, or the deployment's `TIME_ZONE` without
+  JavaScript. Turning them on or off does not change whether a direction in the block group is an
+  exception; the reset turns them off. On the two days a year when clocks change, a range that spans
+  the change is one hour shorter or longer in real time. A start or end in the skipped hour moves
+  forward by an hour; one in the repeated hour means its first occurrence, for the start and the end
+  alike. A range that ends at 02:30 on the night clocks go back therefore ends an hour before the
+  second 02:30.
 - **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
   colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
+- **A buffer around the blocks.** Per source calendar account, blocks can start up to 240 minutes
+  earlier and end up to 240 minutes later than the event, for example for travel time. The buffer
+  applies to every target of that account. The account keeps it while it has no targets, and new
+  directions and group rules from it take it. The default is 0. All-day events get no buffer. Where
+  buffered blocks overlap, each event keeps its own block. If one event reaches a calendar through
+  two directions with the same buffer, it gets one block. With different buffers it can get two, so
+  that the wider buffer is never lost.
 - **A colour per account.** Each account gets its own colour in the pages, automatically or
-  chosen under "Name and colour". It does not change any calendar.
+  chosen under "Settings". It does not change any calendar.
 - **Origin note.** A rule can name the source account in each block's description, for example
   "From: Work (Microsoft)", and add a link to the source event. An account without a name shows
   as "Microsoft account" or "Google account", never with its address. The link needs detail level
@@ -108,7 +129,7 @@ and makes their own choices. Nobody sees another user's calendars.
 | `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.             |
 | `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).      |
 | `ORG_NAME`                        | variable | Optional display name.                                                                     |
-| `TIME_ZONE`                       | variable | IANA time zone for dates in the dashboard, e.g. `Europe/Vienna`. Default `UTC`.            |
+| `TIME_ZONE`                       | variable | IANA time zone for dashboard dates and working hours, e.g. `Europe/Vienna`. Default `UTC`. |
 | `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
 | `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in; connecting accounts stays open.   |
 | `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.               |

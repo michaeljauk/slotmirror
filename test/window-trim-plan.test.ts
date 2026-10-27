@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ruleOptionsSchema } from "../src/config";
 import { desiredBlocks, planSync } from "../src/sync/plan";
-import { startsBeyond, syncWindow, targetReadWindow } from "../src/sync/rules";
+import { readWindow, startsBeyond, syncWindow, targetReadWindow } from "../src/sync/rules";
 import type { DesiredBlock, ExistingBlock, SourceEvent, SyncPlan } from "../src/sync/types";
 
 // A trim deletes the blocks beyond the sync window. The next run must not write them again, or
@@ -112,4 +112,81 @@ describe("a trim and the next run", () => {
       });
     }
   }
+});
+
+// A buffered rule reads the source wider and writes blocks that reach past the window end. A trim
+// after a lower `daysAhead` must keep the blocks the next run wants, and the run must not write
+// back what the trim deleted.
+describe("a trim after a lower daysAhead, with a buffer", () => {
+  async function bufferedRun(
+    target: Target,
+    events: SourceEvent[],
+    options: typeof OPTIONS,
+    sourceOffset: number,
+    now: Date,
+  ) {
+    const window = syncWindow(options, now);
+    const read = readWindow(window, options);
+    const targetRead = targetReadWindow(window);
+    const seen = events.filter((item) => inRead(item, read ?? window, sourceOffset));
+    const plan = planSync(await desiredBlocks("rule", seen, options), target.read(targetRead), {
+      sync: window,
+      target: targetRead,
+      read,
+    });
+    target.apply(plan);
+    return plan.stats;
+  }
+
+  const buffers = [
+    { bufferBefore: 0, bufferAfter: 240 },
+    { bufferBefore: 240, bufferAfter: 0 },
+    { bufferBefore: 240, bufferAfter: 240 },
+    { bufferBefore: 30, bufferAfter: 15 },
+  ];
+  for (const buffer of buffers) {
+    for (const zone of [-8, 0, 14]) {
+      it(`buffer ${buffer.bufferBefore}/${buffer.bufferAfter}, target at ${zone} h`, async () => {
+        const wide = ruleOptionsSchema.parse({ skipAllDay: false, daysAhead: 60, ...buffer });
+        const narrow = ruleOptionsSchema.parse({ skipAllDay: false, daysAhead: 30, ...buffer });
+        for (const time of ["00:00:00", "12:00:00", "23:59:59"]) {
+          const now = new Date(`2036-10-22T${time}Z`);
+          const end = syncWindow(narrow, now).end.getTime();
+          const events: SourceEvent[] = [
+            event("allday", date(end), date(end + DAY)),
+            event("allday-before", date(end - DAY), date(end)),
+          ];
+          for (const minutes of [-300, -240, -60, -1, 0, 1, 60, 239, 240, 300]) {
+            const start = end + minutes * 60_000;
+            events.push(event(`at${minutes}`, iso(start), iso(start + 30 * 60_000)));
+          }
+          const target = new Target(zone);
+          await bufferedRun(target, events, wide, 0, now);
+          // `daysAhead` goes down to 30; the trim deletes what starts at the new end or later.
+          const beyond = target
+            .read({ start: new Date(end), end: new Date(end + 400 * DAY) })
+            .filter((block) => startsBeyond(block, new Date(end)));
+          for (const block of beyond) target.blocks.delete(block.targetId);
+          const kept = target.blocks.size;
+          const first = await bufferedRun(target, events, narrow, 0, now);
+          expect({ time, first }).toMatchObject({ first: { create: 0, delete: 0 } });
+          expect(target.blocks.size).toBe(kept);
+          const second = await bufferedRun(target, events, narrow, 0, now);
+          expect({ time, second }).toMatchObject({ second: { create: 0, update: 0, delete: 0 } });
+        }
+      });
+    }
+  }
+
+  it("keeps a block that starts inside the window and ends beyond it", async () => {
+    const options = ruleOptionsSchema.parse({ daysAhead: 30, bufferAfter: 240 });
+    const now = new Date("2036-10-22T12:00:00Z");
+    const end = syncWindow(options, now).end.getTime();
+    const late = event("late", iso(end - 30 * 60_000), iso(end - 10 * 60_000));
+    const target = new Target(0);
+    expect(await bufferedRun(target, [late], options, 0, now)).toMatchObject({ create: 1 });
+    const [block] = target.read({ start: new Date(end), end: new Date(end + DAY) });
+    expect(block && Date.parse(block.end)).toBe(end + 230 * 60_000);
+    expect(block && startsBeyond(block, new Date(end))).toBe(false);
+  });
 });

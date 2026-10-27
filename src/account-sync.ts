@@ -10,7 +10,7 @@ import {
 } from "./providers/calendar-client";
 import { clientCredentials, oauthClient } from "./providers/oauth-clients";
 import { TokenError, type TokenResponse } from "./providers/oauth-token";
-import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
+import { claimsFrom, desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
 import {
   cleanupWindow,
   loadRule,
@@ -19,6 +19,7 @@ import {
   rulesRunningFromAlarm,
   rulesTargetingAccount,
   siblingRuleIds,
+  readWindow,
   startsBeyond,
   syncWindow,
   targetReadWindow,
@@ -1181,6 +1182,8 @@ export class AccountSync extends DurableObject<Env> {
     const effective = detailLevelFor(this.env, rule.options.detailLevel, rule.source, rule.target);
     const ruleOptions = { ...rule.options, detailLevel: effective.level };
     const withBody = ruleOptions.detailLevel === "full";
+    // A buffered rule reads the source wider than the sync window; see `readWindow`.
+    const read = readWindow(window, ruleOptions);
     // The origin note names the source account. Where any cap below "full" applies to the
     // direction, the org limits what crosses from this source, so the rule writes neither the note
     // nor the link, even if the cap does not lower this rule's level.
@@ -1190,11 +1193,11 @@ export class AccountSync extends DurableObject<Env> {
     const withLink = origin !== null && ruleOptions.linkOrigin && effective.level !== "busy";
     const sourceEvents =
       rule.source.accountId === this.accountId()
-        ? await this.readSourceEvents(rule.source.remoteCalendarId, window, withBody, {
+        ? await this.readSourceEvents(rule.source.remoteCalendarId, read ?? window, withBody, {
             withLink,
           })
         : await this.readOtherSource(rule.source.accountId, rule.source.remoteCalendarId, {
-            window,
+            window: read ?? window,
             withBody,
             withLink,
           });
@@ -1207,17 +1210,14 @@ export class AccountSync extends DurableObject<Env> {
       (await siblingRuleIds(this.env.DB, rule.id)).map((id) => ruleTagFor(id)),
     );
     const precedingTags = siblingTags.filter((tag) => tag < ruleTag);
+    // The target read is wider than the source read; see `targetReadWindow` and `planSync`.
     const targetRead = targetReadWindow(window);
     const blocks = await target.existingBlocks(rule.target.remoteCalendarId, targetRead, [
       ruleTag,
       ...precedingTags,
     ]);
     const existing = blocks.filter((block) => block.ruleTag === ruleTag);
-    const claimed = new Set(
-      blocks
-        .filter((block) => block.ruleTag !== ruleTag && block.dedupKey !== "")
-        .map((block) => block.dedupKey),
-    );
+    const claimed = claimsFrom(blocks.filter((block) => block.ruleTag !== ruleTag));
     const desired = await desiredBlocks(
       rule.id,
       sourceEvents,
@@ -1225,7 +1225,7 @@ export class AccountSync extends DurableObject<Env> {
       { scope: rule.userId, claimed },
       origin,
     );
-    const plan = planSync(desired, existing, { sync: window, target: targetRead });
+    const plan = planSync(desired, existing, { sync: window, target: targetRead, read });
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

@@ -1,8 +1,8 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setSettings } from "../src/editor";
-import { signIn } from "./helpers";
+import { loadEditorState, setAccountWorkHours, setRuleDetails, setSettings } from "../src/editor";
+import { countingEnv, signIn } from "./helpers";
 
 /** "Today" lies far in the future, so that no alarm fires while a test runs. */
 const NOW = new Date("2036-10-22T10:00:00Z");
@@ -24,70 +24,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
-
-/**
- * Counts what one invocation spends: D1 queries (a `batch()` counts as one) and Durable Object
- * RPC calls. The statements of a batch are counted separately.
- */
-function countingEnv() {
-  const counts = { d1: 0, batchStatements: 0, durable: [] as string[] };
-  const real = new WeakMap<object, D1PreparedStatement>();
-  const wrap = (statement: D1PreparedStatement): D1PreparedStatement => {
-    const proxy: D1PreparedStatement = new Proxy(statement, {
-      get(target, key) {
-        if (key === "bind") {
-          return (...values: unknown[]) => wrap(target.bind(...values));
-        }
-        if (key === "run" || key === "all" || key === "first" || key === "raw") {
-          return (...args: unknown[]) => {
-            counts.d1 += 1;
-            return (target[key] as (...a: unknown[]) => unknown)(...args);
-          };
-        }
-        const value = Reflect.get(target, key) as unknown;
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
-    real.set(proxy, statement);
-    return proxy;
-  };
-  const DB = new Proxy(env.DB, {
-    get(target, key) {
-      if (key === "prepare") return (sql: string) => wrap(target.prepare(sql));
-      if (key === "batch") {
-        return (statements: D1PreparedStatement[]) => {
-          counts.d1 += 1;
-          counts.batchStatements += statements.length;
-          return target.batch(statements.map((statement) => real.get(statement) ?? statement));
-        };
-      }
-      const value = Reflect.get(target, key) as unknown;
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-  const ACCOUNT_SYNC = new Proxy(env.ACCOUNT_SYNC, {
-    get(target, key) {
-      if (key === "getByName") {
-        return (name: string) =>
-          new Proxy(target.getByName(name), {
-            get(stub, method) {
-              if (typeof method !== "string") return Reflect.get(stub, method) as unknown;
-              // An RPC property is callable but has no `apply`, so call it as a method.
-              return (...args: unknown[]) => {
-                counts.durable.push(`${name}:${method}`);
-                return (stub as unknown as Record<string, (...a: unknown[]) => unknown>)[method]!(
-                  ...args,
-                );
-              };
-            },
-          });
-      }
-      const value = Reflect.get(target, key) as unknown;
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-  return { counts, env: { ...env, DB, ACCOUNT_SYNC } as Env };
-}
 
 interface RuleSpec {
   id: string;
@@ -167,8 +103,9 @@ describe("saving settings with many rules", () => {
 
     await setSettings(counted.env, user, { ...SETTINGS, daysAhead: 30, daysAheadShown: 365 });
 
-    // The 60 rule updates and the settings row go in one batch.
-    expect(counted.counts.batchStatements).toBe(61);
+    // The settings row and the 60 rule updates, each with its check against a concurrent change,
+    // go in one batch.
+    expect(counted.counts.batchStatements).toBe(1 + 60 * 2);
     expect(counted.counts.d1).toBeLessThanOrEqual(6);
     // One removal call and one sync request per target account, not one per rule.
     const removalCalls = counted.counts.durable.filter((call) => /:queueRemoval/.test(call));
@@ -216,6 +153,82 @@ describe("saving settings with many rules", () => {
       options: string;
     }>();
     expect(JSON.parse(rule?.options ?? "{}")).toEqual({ daysAhead: 365 });
+  });
+});
+
+describe("saving rule details with many rules", () => {
+  it("writes the buffer, colour and working hours of 60 rules in one batch", async () => {
+    // 30 source calendars on one account, two target accounts: 60 rules in two directions.
+    const sources = Array.from({ length: 30 }, (_, i) => `det-src-${i}`);
+    const user = await setup(
+      "det",
+      [
+        ...sources.map((id): [string, string, number] => [id, "det-s", 1]),
+        ["det-t1", "det-a1", 1],
+        ["det-t2", "det-a2", 1],
+      ],
+      sources.flatMap((source) =>
+        ["det-t1", "det-t2"].map((target) => ({
+          id: `det-${source}-${target}`,
+          source,
+          target,
+          daysAhead: 90,
+        })),
+      ),
+    );
+    await env.DB.batch([
+      env.DB.prepare("UPDATE calendars SET is_source = 1 WHERE account_id = 'det-s'"),
+      env.DB.prepare(
+        "UPDATE calendars SET is_default = 1 WHERE account_id IN ('det-a1', 'det-a2')",
+      ),
+    ]);
+    const office = {
+      workDays: [1, 2, 3, 4, 5],
+      workStart: "08:00",
+      workEnd: "18:00",
+      workTimeZone: "Europe/Vienna",
+    };
+    await setAccountWorkHours(env, user, "det-a1", office);
+    // The first load stores the account colours; count the saves only.
+    await loadEditorState(env, user.id);
+
+    const details = countingEnv();
+    expect(
+      await setRuleDetails(details.env, user, {
+        sources: [{ from: "det-s", options: { bufferBefore: 30, bufferAfter: 30 } }],
+        colors: [{ from: "det-s", to: "det-a1", value: "Focus" }],
+        workHours: [{ from: "det-s", to: "det-a1", on: true }],
+      }),
+    ).toBe(true);
+    // One batch reads the state. One writes the source's options and 60 rules, each rule with the
+    // check that nothing changed it since the read and its audit event.
+    expect(details.counts.d1).toBe(2);
+    expect(details.counts.batchStatements).toBe(4 + 1 + 60 * 3);
+    expect(details.counts.durable.sort()).toEqual(["det-a1:requestSync", "det-a2:requestSync"]);
+
+    const late = { ...office, workDays: [6, 7] };
+    const hours = countingEnv();
+    expect(await setAccountWorkHours(hours.env, user, "det-a1", late)).toBe(true);
+    // The account row and 30 rules, with their checks and audit events, in one batch.
+    expect(hours.counts.d1).toBe(2);
+    expect(hours.counts.batchStatements).toBe(4 + 1 + 30 * 3);
+    expect(hours.counts.durable).toEqual(["det-a1:requestSync"]);
+
+    const { results } = await env.DB.prepare(
+      `SELECT r.target_calendar_id AS target, r.options FROM rules r WHERE r.user_id = ?`,
+    )
+      .bind(user.id)
+      .all<{ target: string; options: string }>();
+    expect(results).toHaveLength(60);
+    for (const row of results) {
+      const options = JSON.parse(row.options) as Record<string, unknown>;
+      expect(options).toMatchObject({ bufferBefore: 30, bufferAfter: 30 });
+      if (row.target === "det-t1") {
+        expect(options).toMatchObject({ blockColor: "Focus", workDays: [6, 7] });
+      } else {
+        expect(options).toMatchObject({ blockColor: "", workDays: [1, 2, 3, 4, 5, 6, 7] });
+      }
+    }
   });
 });
 

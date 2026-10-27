@@ -364,6 +364,30 @@ describe("working hours of an account", () => {
   });
 });
 
+describe("copies without account hours", () => {
+  it("gives a copy no hours once the account has none", async () => {
+    const { user, w, g } = await setup("acctcopynone");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, g, w, "off");
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    await setSourceCalendar(env, user, `${g}-cal`, false);
+    // The account lost its hours without its rules, as after an earlier failure.
+    await env.DB.prepare("UPDATE accounts SET work_hours = NULL WHERE id = ?").bind(w).run();
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'g-side', 'Side', 1, 0, 0)",
+    )
+      .bind(`${g}-side`, g)
+      .run();
+    await setSourceCalendar(env, user, `${g}-side`, true);
+    const copy = await env.DB.prepare("SELECT options FROM rules WHERE source_calendar_id = ?")
+      .bind(`${g}-side`)
+      .first<{ options: string }>();
+    expect(JSON.parse(copy?.options ?? "{}")).toMatchObject(OFF);
+  });
+});
+
 describe("the account settings form", () => {
   /** The settings form of an account on the home page. */
   const settingsOf = (html: string, accountId: string) =>

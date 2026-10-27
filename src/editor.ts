@@ -1,4 +1,4 @@
-import { auditStatement, errorLogFields, recordAudit } from "./audit";
+import { auditStatement, errorLogFields, recordAudit, type AuditEvent } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
@@ -401,7 +401,8 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
  * stays; it is the choice per direction. The window applies only if the user changed it from the
  * one the form showed, and only in that direction: a higher window raises the rules below it, a
  * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
- * removal of the blocks beyond it, which no run reads any more.
+ * removal of the blocks beyond it, which no run reads any more. Throws `EditorConflict` if a rule
+ * changed since the read; then nothing is stored.
  */
 export async function setSettings(
   env: Env,
@@ -458,13 +459,15 @@ export async function setSettings(
       ...settings,
       daysAhead: windowOf(previous.daysAhead),
     });
-    // A parked exception stays parked.
+    // A parked exception stays parked. A rule that changed since the read fails the batch.
     const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;
     updates.push(
-      env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?").bind(
+      env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND options = ?").bind(
         JSON.stringify(stored),
         row.id,
+        row.options,
       ),
+      requireChange(env),
     );
     // A disabled rule has its blocks removed already; a read-only calendar refuses the deletes.
     if (options.daysAhead < previous.daysAhead && row.enabled === 1 && row.canEdit === 1) {
@@ -473,7 +476,7 @@ export async function setSettings(
       trims.set(row.targetAccountId, queue);
     }
   }
-  await env.DB.batch(updates);
+  await guardedBatch(env, updates);
   // One call per target account. Like every queueing, a failure is logged and does not fail the save.
   for (const [accountId, rules] of trims) {
     try {
@@ -872,10 +875,12 @@ export async function setRuleDetails(
       if (entry.from === from) patches.push({ to: entry.to, rule: entry.rule, patch: options });
     }
     // json_patch merges into what the account has, so that a concurrent save of another source
-    // option keeps its value. An account without stored options starts from what the page showed.
+    // option keeps its value. An account without stored options, or with broken ones, starts from
+    // what the page showed.
     accounts.push(
       env.DB.prepare(
-        `UPDATE accounts SET source_options = json_patch(COALESCE(source_options, ?), ?)
+        `UPDATE accounts SET source_options = json_patch(
+           CASE WHEN json_valid(source_options) THEN source_options ELSE ? END, ?)
          WHERE id = ? AND user_id = ?`,
       ).bind(JSON.stringify(current.options), JSON.stringify(options), from, user.id),
     );
@@ -921,18 +926,34 @@ export class EditorConflict extends Error {
   }
 }
 
+/** Text in the error of `requireChange`, so that no other failure counts as a conflict. */
+const UNCHANGED_ROW = "slotmirror-unchanged-row";
+
 /**
  * A statement that fails its batch, and so rolls back every write of the batch, if the statement
- * before it changed no row. SQLite has no RAISE outside triggers; json() of text that is not JSON
- * fails instead. The argument depends on changes(), so SQLite cannot evaluate it ahead of time.
+ * before it changed no row. SQLite has no RAISE outside triggers; json_extract() with an invalid
+ * path fails instead, and its error names the path. The path depends on changes(), so SQLite
+ * cannot evaluate it ahead of time.
  */
 function requireChange(env: Env): D1PreparedStatement {
-  return env.DB.prepare("SELECT json(CASE WHEN changes() > 0 THEN '1' ELSE 'unchanged' END)");
+  return env.DB.prepare(
+    `SELECT json_extract('{}', CASE WHEN changes() > 0 THEN '$' ELSE '${UNCHANGED_ROW}' END)`,
+  );
 }
 
 /** True for the failure of `requireChange`. */
 function isRequiredChangeMissing(error: unknown): boolean {
-  return error instanceof Error && /malformed JSON/i.test(error.message);
+  return error instanceof Error && error.message.includes(UNCHANGED_ROW);
+}
+
+/** Run a batch with `requireChange` guards; a failed guard throws `EditorConflict`. */
+async function guardedBatch(env: Env, statements: D1PreparedStatement[]): Promise<D1Result[]> {
+  try {
+    return await env.DB.batch(statements);
+  } catch (error) {
+    if (isRequiredChangeMissing(error)) throw new EditorConflict();
+    throw error;
+  }
 }
 
 /**
@@ -996,12 +1017,7 @@ async function writePatches(
     if (rule.enabled) targets.add(to);
   }
   if (statements.length === 0) return;
-  try {
-    await env.DB.batch(statements);
-  } catch (error) {
-    if (isRequiredChangeMissing(error)) throw new EditorConflict();
-    throw error;
-  }
+  await guardedBatch(env, statements);
   await requestSyncs(env, targets, syncs);
 }
 
@@ -1057,7 +1073,7 @@ async function queueRemoval(
 /**
  * Set one direction. "busy" between two group members becomes a group rule again; every other
  * choice is a custom rule. "off" removes the blocks; between group members it keeps a disabled
- * custom rule, so that the group does not recreate it.
+ * custom rule, so that the group does not recreate it. See `setDirections`.
  */
 export async function setDirection(
   env: Env,
@@ -1067,101 +1083,236 @@ export async function setDirection(
   choice: Choice,
   syncs?: Set<string>,
 ): Promise<void> {
+  await setDirections(env, user, [{ from: fromId, to: toId, choice }], syncs);
+}
+
+/** What happens after the write batch of `setDirections` for one of its statements. */
+type DirectionFollowUp =
+  /** An upsert: a new rule, or the rule of a concurrent request for the same pair. */
+  | { kind: "upsert"; index: number; id: string; to: string; target: RemovalTarget; choice: Choice }
+  /** A rule disabled or changed in place. */
+  | { kind: "updated"; ruleId: string; to: string; choice: Choice; remove?: RemovalTarget }
+  /** A rule deleted: its blocks go too. */
+  | { kind: "deleted"; index: number; ruleId: string; to: string; remove: RemovalTarget }
+  /** A parked exception that another choice replaced. */
+  | { kind: "unparked"; index: number; ruleId: string; to: string };
+
+interface RemovalTarget {
+  accountId: string;
+  remoteCalendarId: string;
+}
+
+/**
+ * Set several directions with one read and one write batch, so that a page save with many
+ * directions stays within the D1 queries of one invocation. See `setDirection` for each choice.
+ * A rule changes only if its options are still the ones that were read; otherwise the batch fails
+ * as a whole and this throws `EditorConflict`. After the batch, the removals of blocks go to each
+ * target account in one call, and the audit events follow in a second batch.
+ */
+export async function setDirections(
+  env: Env,
+  user: CurrentUser,
+  changes: { from: string; to: string; choice: Choice }[],
+  syncs?: Set<string>,
+): Promise<void> {
+  // A pair given twice counts once, with its last choice.
+  const latest = new Map(changes.map((change) => [`${change.from}>${change.to}`, change]));
+  if (latest.size === 0) return;
   const state = await loadEditorState(env, user.id);
-  const to = state.accounts.find((account) => account.id === toId);
-  const from = state.accounts.find((account) => account.id === fromId);
-  const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
-  if (!from || !to?.calendar || !direction) return;
-  // "Off" needs no write access, so that a rule never keeps writing into a read-only calendar.
-  if (choice !== "off" && !to.calendar.canEdit) return;
-  const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
-  const bothInGroup = from.inGroup && to.inGroup;
-  // The sync applies the caps anyway; storing the capped value keeps the page honest.
-  if (RANK[choice] > RANK[direction.maxChoice]) choice = direction.maxChoice;
+  const statements: D1PreparedStatement[] = [];
+  const followUps: DirectionFollowUp[] = [];
+  const targets = new Set<string>();
+  const push = (...added: D1PreparedStatement[]) => {
+    statements.push(...added);
+    return statements.length - added.length;
+  };
+  const upsert = (rule: {
+    id: string;
+    sourceCalendarId: string;
+    targetCalendarId: string;
+    options: RuleOptions;
+    origin: "group" | "custom";
+    enabled: boolean;
+  }) => push(upsertStatement(env, user, rule));
 
-  // A parked rule stands for "off". Another choice replaces it, so that it cannot bring back an
-  // old "off" when its calendar or the direction's last source comes back.
-  if (choice !== "off") {
-    for (const parked of direction.parked) {
-      const deleted = await env.DB.prepare(
-        "DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0",
-      )
-        .bind(parked.id, user.id)
-        .run();
-      if (deleted.meta.changes > 0) {
-        await audit(env, user, to.id, parked.id, "rule_deleted", { parked: "replaced" });
+  for (const change of latest.values()) {
+    const to = state.accounts.find((account) => account.id === change.to);
+    const from = state.accounts.find((account) => account.id === change.from);
+    const direction = state.directions.find((d) => d.from === change.from && d.to === change.to);
+    if (!from || !to?.calendar || !direction) continue;
+    let choice = change.choice;
+    // "Off" needs no write access, so that a rule never keeps writing into a read-only calendar.
+    if (choice !== "off" && !to.calendar.canEdit) continue;
+    const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
+    const bothInGroup = from.inGroup && to.inGroup;
+    // The sync applies the caps anyway; storing the capped value keeps the page honest.
+    if (RANK[choice] > RANK[direction.maxChoice]) choice = direction.maxChoice;
+
+    // A parked rule stands for "off". Another choice replaces it, so that it cannot bring back an
+    // old "off" when its calendar or the direction's last source comes back.
+    if (choice !== "off") {
+      for (const parked of direction.parked) {
+        const index = push(
+          env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0").bind(
+            parked.id,
+            user.id,
+          ),
+        );
+        followUps.push({ kind: "unparked", index, ruleId: parked.id, to: to.id });
       }
     }
-  }
 
-  for (const slot of direction.slots) {
-    const { rule } = slot;
-    if (choice === "off") {
-      if (!rule) {
-        // Between group members, a disabled exception keeps the group from adding the rule.
-        if (bothInGroup) {
-          const stored = await upsertRule(env, user, {
-            id: crypto.randomUUID(),
-            sourceCalendarId: slot.sourceCalendarId,
-            targetCalendarId: to.calendar.id,
-            options: newRuleOptions(state.settings, "busy"),
-            origin: "custom",
-            enabled: false,
-          });
-          // A concurrent request created the rule, and it can have written blocks already.
-          if (stored && !stored.created) {
-            await queueRemoval(env, stored.id, target);
-            await audit(env, user, to.id, stored.id, "rule_updated", { choice });
+    for (const slot of direction.slots) {
+      const { rule } = slot;
+      if (choice === "off") {
+        if (!rule) {
+          // Between group members, a disabled exception keeps the group from adding the rule.
+          if (bothInGroup) {
+            const id = crypto.randomUUID();
+            const index = upsert({
+              id,
+              sourceCalendarId: slot.sourceCalendarId,
+              targetCalendarId: to.calendar.id,
+              options: {
+                ...newRuleOptions(state.settings, "busy"),
+                ...newRuleSource(state, from.id),
+              },
+              origin: "custom",
+              enabled: false,
+            });
+            followUps.push({ kind: "upsert", index, id, to: to.id, target, choice });
           }
+          continue;
         }
+        if (!bothInGroup) {
+          const index = push(
+            env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?").bind(rule.id, user.id),
+          );
+          followUps.push({ kind: "deleted", index, ruleId: rule.id, to: to.id, remove: target });
+          continue;
+        }
+        push(
+          env.DB.prepare(
+            `UPDATE rules SET enabled = 0, origin = 'custom'
+             WHERE id = ? AND user_id = ? AND options = ?`,
+          ).bind(rule.id, user.id, rule.optionsJson),
+          requireChange(env),
+        );
+        followUps.push({ kind: "updated", ruleId: rule.id, to: to.id, choice, remove: target });
         continue;
       }
-      if (!bothInGroup) {
-        await deleteRuleWithBlocks(env, user, rule.id);
-        continue;
-      }
-      await queueRemoval(env, rule.id, target);
-      await env.DB.prepare(
-        "UPDATE rules SET enabled = 0, origin = 'custom' WHERE id = ? AND user_id = ?",
-      )
-        .bind(rule.id, user.id)
-        .run();
-      await audit(env, user, to.id, rule.id, "rule_updated", { choice });
-      continue;
-    }
 
-    // A new rule gets the options of its source, which all rules from the source share.
-    const options = {
-      ...(rule?.options ?? {
-        ...(direction.options ?? newRuleOptions(state.settings, choice)),
-        ...newRuleSource(state, fromId),
-      }),
-      detailLevel: choice,
-    };
-    const origin = groupOrigin(bothInGroup, true, options);
-    if (rule) {
-      await env.DB.prepare(
-        "UPDATE rules SET options = ?, enabled = 1, origin = ? WHERE id = ? AND user_id = ?",
-      )
-        .bind(JSON.stringify(options), origin, rule.id, user.id)
-        .run();
-      await audit(env, user, to.id, rule.id, "rule_updated", { choice });
-    } else {
-      const stored = await upsertRule(env, user, {
-        id: crypto.randomUUID(),
-        sourceCalendarId: slot.sourceCalendarId,
-        targetCalendarId: to.calendar.id,
-        options,
-        origin,
-        enabled: true,
-      });
-      if (stored) {
-        const kind = stored.created ? "rule_created" : "rule_updated";
-        await audit(env, user, to.id, stored.id, kind, { choice });
+      // A new rule gets the options of its source, which all rules from the source share.
+      const options = {
+        ...(rule?.options ?? {
+          ...(direction.options ?? newRuleOptions(state.settings, choice)),
+          ...newRuleSource(state, from.id),
+        }),
+        detailLevel: choice,
+      };
+      const origin = groupOrigin(bothInGroup, true, options);
+      if (rule) {
+        push(
+          env.DB.prepare(
+            `UPDATE rules SET options = ?, enabled = 1, origin = ?
+             WHERE id = ? AND user_id = ? AND options = ?`,
+          ).bind(JSON.stringify(options), origin, rule.id, user.id, rule.optionsJson),
+          requireChange(env),
+        );
+        followUps.push({ kind: "updated", ruleId: rule.id, to: to.id, choice });
+      } else {
+        const id = crypto.randomUUID();
+        const index = upsert({
+          id,
+          sourceCalendarId: slot.sourceCalendarId,
+          targetCalendarId: to.calendar.id,
+          options,
+          origin,
+          enabled: true,
+        });
+        followUps.push({ kind: "upsert", index, id, to: to.id, target, choice });
       }
+    }
+    if (choice !== "off") targets.add(to.id);
+  }
+  if (statements.length === 0) return;
+  const results = await guardedBatch(env, statements);
+
+  const removals = new Map<string, { ruleId: string; remoteCalendarId: string }[]>();
+  const remove = (ruleId: string, target: RemovalTarget) => {
+    const queue = removals.get(target.accountId) ?? [];
+    queue.push({ ruleId, remoteCalendarId: target.remoteCalendarId });
+    removals.set(target.accountId, queue);
+  };
+  const audits: AuditEvent[] = [];
+  const event = (
+    to: string,
+    ruleId: string,
+    kind: AuditEvent["kind"],
+    detail: NonNullable<AuditEvent["detail"]>,
+  ) => audits.push({ orgId: user.orgId, userId: user.id, accountId: to, ruleId, kind, detail });
+  const deleted: { ruleId: string; to: string; accountId: string }[] = [];
+  for (const followUp of followUps) {
+    switch (followUp.kind) {
+      case "upsert": {
+        const stored = results[followUp.index]?.results[0] as { id: string } | undefined;
+        if (!stored) break;
+        const created = stored.id === followUp.id;
+        // A concurrent request created the rule, and it can have written blocks already.
+        if (followUp.choice === "off") {
+          if (created) break;
+          remove(stored.id, followUp.target);
+        }
+        event(followUp.to, stored.id, created ? "rule_created" : "rule_updated", {
+          choice: followUp.choice,
+        });
+        break;
+      }
+      case "updated":
+        if (followUp.remove) remove(followUp.ruleId, followUp.remove);
+        event(followUp.to, followUp.ruleId, "rule_updated", { choice: followUp.choice });
+        break;
+      case "deleted":
+        // A concurrent request deleted the rule first; it queued the removal and wrote the audit.
+        if ((results[followUp.index]?.meta.changes ?? 0) === 0) break;
+        remove(followUp.ruleId, followUp.remove);
+        deleted.push({ ruleId: followUp.ruleId, to: followUp.to, ...followUp.remove });
+        break;
+      case "unparked":
+        // A parked exception writes no blocks, so there is nothing to remove.
+        if ((results[followUp.index]?.meta.changes ?? 0) === 0) break;
+        event(followUp.to, followUp.ruleId, "rule_deleted", { parked: "replaced" });
+        break;
     }
   }
-  if (choice !== "off") await requestSyncs(env, [to.id], syncs);
+  // One call per target account. Like every queueing, a failure is logged and noted in the audit.
+  const queued = new Map<string, boolean>();
+  for (const [accountId, rules] of removals) {
+    try {
+      await accountSync(env, accountId).queueRemovals(rules);
+      queued.set(accountId, true);
+    } catch (error) {
+      console.error("Queueing the removals failed", accountId, ...errorLogFields(error));
+      queued.set(accountId, false);
+    }
+  }
+  for (const { ruleId, to, accountId } of deleted) {
+    event(
+      to,
+      ruleId,
+      "rule_deleted",
+      queued.get(accountId) ? { cleanup: "queued" } : { cleanupFailed: true },
+    );
+  }
+  if (audits.length > 0) {
+    // The change is done; like `recordAudit`, a broken log must not fail the request.
+    try {
+      await env.DB.batch(audits.map((audit) => auditStatement(env.DB, audit)));
+    } catch (error) {
+      console.error("Audit write failed", "rule_updated", ...errorLogFields(error));
+    }
+  }
+  await requestSyncs(env, targets, syncs);
 }
 
 /**
@@ -1272,12 +1423,17 @@ export async function resetDirection(
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to?.calendar?.canEdit) return;
-  // The hours go first; outside the group the rules go anyway. One sync request at the end.
+  // The hours go first; outside the group the rules go anyway. One sync request at the end, also
+  // after a conflict: the steps before it stay written.
   const syncs = new Set<string>();
-  await setRuleDetails(env, user, { workHours: [{ from: fromId, to: toId, on: false }] }, syncs);
-  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off", syncs);
-  await setBlockColor(env, user, fromId, toId, "", syncs);
-  await requestSyncs(env, syncs);
+  try {
+    await setRuleDetails(env, user, { workHours: [{ from: fromId, to: toId, on: false }] }, syncs);
+    const choice = from.inGroup && to.inGroup ? "busy" : "off";
+    await setDirection(env, user, fromId, toId, choice, syncs);
+    await setBlockColor(env, user, fromId, toId, "", syncs);
+  } finally {
+    await requestSyncs(env, syncs);
+  }
 }
 
 /** A rule that a direction lacks, with the choice for the audit log. */
@@ -1314,7 +1470,7 @@ function missingRules(state: EditorState): MissingRule[] {
     if (!model && !(from.inGroup && to.inGroup)) continue;
     // A copy takes the current options of its source and the current hours of its target: a
     // parked model can be older than both.
-    const hours = model && hasWorkingHours(model.options) ? (to.workHours ?? {}) : {};
+    const hours = model && hasWorkingHours(model.options) ? (to.workHours ?? NO_WORKING_HOURS) : {};
     const options = {
       ...(model?.options ?? newRuleOptions(state.settings, "busy")),
       ...newRuleSource(state, from.id),
@@ -1581,9 +1737,10 @@ function hasDefaultOptions(
  * Insert a rule, or write this request's choice into the rule of the same pair. Two requests can
  * add the same pair at once, for example after a double click or from two tabs; the UNIQUE
  * constraint on the pair would refuse the second insert. Here the later request wins, as if it
- * came second. Returns the ID of the stored rule and whether this call created it.
+ * came second. The statement returns the ID of the stored rule; it is this rule's ID if the
+ * statement created it.
  */
-async function upsertRule(
+function upsertStatement(
   env: Env,
   user: CurrentUser,
   rule: {
@@ -1594,26 +1751,23 @@ async function upsertRule(
     origin: "group" | "custom";
     enabled: boolean;
   },
-): Promise<{ id: string; created: boolean } | null> {
-  const stored = await env.DB.prepare(
+): D1PreparedStatement {
+  return env.DB.prepare(
     `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (source_calendar_id, target_calendar_id) DO UPDATE SET
        options = excluded.options, enabled = excluded.enabled, origin = excluded.origin
      WHERE rules.user_id = excluded.user_id
      RETURNING id`,
-  )
-    .bind(
-      rule.id,
-      user.id,
-      rule.sourceCalendarId,
-      rule.targetCalendarId,
-      JSON.stringify(rule.options),
-      rule.enabled ? 1 : 0,
-      rule.origin,
-    )
-    .first<{ id: string }>();
-  return stored ? { id: stored.id, created: stored.id === rule.id } : null;
+  ).bind(
+    rule.id,
+    user.id,
+    rule.sourceCalendarId,
+    rule.targetCalendarId,
+    JSON.stringify(rule.options),
+    rule.enabled ? 1 : 0,
+    rule.origin,
+  );
 }
 
 async function audit(

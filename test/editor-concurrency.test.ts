@@ -8,6 +8,7 @@ import {
   setRuleDetails,
   type AccountWorkHours,
 } from "../src/editor";
+import type { CurrentUser } from "../src/users";
 import app from "../src/index";
 import { BASE, countingEnv, signIn } from "./helpers";
 
@@ -79,11 +80,14 @@ const optionsOf = async (ruleTarget: string) =>
     )?.options ?? "{}",
   ) as Record<string, unknown>;
 
-/** An environment in which another request changes a rule right before the first rule write. */
-function racingEnv(ruleTarget: string) {
+/**
+ * An environment in which another request changes the rule into `ruleTarget` right before the
+ * first batch with a statement that starts with `when`.
+ */
+function racingEnv(ruleTarget: string, when = "UPDATE rules SET options = ?") {
   let raced = false;
   return countingEnv(async (sql) => {
-    if (raced || !sql.some((text) => text.startsWith("UPDATE rules SET options = ?"))) return;
+    if (raced || !sql.some((text) => text.startsWith(when))) return;
     raced = true;
     await env.DB.prepare(
       "UPDATE rules SET options = json_set(options, '$.blockColor', '7') WHERE target_calendar_id = ?",
@@ -205,5 +209,213 @@ describe("sync requests of one page save", () => {
     expect([...syncs].sort()).toEqual([a, b, c, d].map((id) => `${id}:requestSync`).sort());
     // The sync requests come last, after every write and queued removal of the save.
     expect(counting.counts.durable.slice(-syncs.length)).toEqual(syncs);
+  });
+});
+
+/** The fields of a page save across 4 accounts: every direction, colour, buffer and hours. */
+function fullSave(ids: string[]): URLSearchParams {
+  const [, b, c] = ids as [string, string, string, string];
+  const fields: Record<string, string> = {
+    settings: "1",
+    "settings.daysAhead": "30",
+    "settings.daysAheadShown": "60",
+    "settings.blockTitle": "Busy",
+  };
+  for (const from of ids) {
+    fields[`bufferBefore.${from}`] = "15";
+    fields[`bufferAfter.${from}`] = "15";
+    for (const to of ids) {
+      if (from === to) continue;
+      fields[`choice.${from}.${to}`] = "title";
+      // Even accounts are Microsoft: a category; odd ones are Google: a colour ID.
+      fields[`blockColor.${from}.${to}`] = ids.indexOf(to) % 2 === 1 ? "5" : "Focus";
+      if (to === b || to === c) fields[`workHours.${from}.${to}`] = "1";
+    }
+  }
+  return new URLSearchParams(fields);
+}
+
+/** The settings window the user stored. */
+const storedWindow = async (user: CurrentUser) =>
+  (
+    JSON.parse(
+      (
+        await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+          .bind(user.id)
+          .first<{ json: string }>()
+      )?.json ?? "{}",
+    ) as { daysAhead?: number }
+  ).daysAhead;
+
+describe("guards on every rule write of a save", () => {
+  it("refuses a choice whose rule changed after the read", async () => {
+    const { user, cookie, ids } = await setup("racechoice", 2);
+    const [a, b] = ids as [string, string];
+    await setDirection(env, user, a, b, "busy");
+    const racing = racingEnv(`${b}-cal`, "UPDATE rules SET options = ?, enabled = 1");
+    const response = await send(
+      racing.env,
+      cookie,
+      "/rules/choices",
+      new URLSearchParams({ [`choice.${a}.${b}`]: "full" }),
+      true,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(CONFLICT);
+    expect(await optionsOf(`${b}-cal`)).toMatchObject({ detailLevel: "busy", blockColor: "7" });
+  });
+
+  it("refuses to turn off a group rule that changed after the read", async () => {
+    const { user, cookie, ids } = await setup("raceoff", 2);
+    const [a, b] = ids as [string, string];
+    await setGroupMemberships(env, user, [a, b], true);
+    const racing = racingEnv(`${b}-cal`, "UPDATE rules SET enabled = 0");
+    const response = await send(
+      racing.env,
+      cookie,
+      "/rules/choices",
+      new URLSearchParams({ [`choice.${a}.${b}`]: "off" }),
+      true,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(CONFLICT);
+    const rule = await env.DB.prepare(
+      "SELECT enabled, origin FROM rules WHERE target_calendar_id = ?",
+    )
+      .bind(`${b}-cal`)
+      .first<{ enabled: number; origin: string }>();
+    expect(rule).toEqual({ enabled: 1, origin: "group" });
+    expect(racing.counts.durable.filter((call) => call.endsWith(":queueRemovals"))).toEqual([]);
+  });
+
+  it("refuses settings whose rules changed after the read, and stores none of them", async () => {
+    const { user, cookie, ids } = await setup("racesettings", 3);
+    const [a, b, c] = ids as [string, string, string];
+    await setDirection(env, user, a, b, "busy");
+    await setDirection(env, user, a, c, "busy");
+    const racing = racingEnv(`${c}-cal`);
+    const response = await send(
+      racing.env,
+      cookie,
+      "/rules/choices",
+      new URLSearchParams({
+        settings: "1",
+        "settings.daysAhead": "30",
+        "settings.daysAheadShown": "90",
+        "settings.blockTitle": "Busy",
+      }),
+      true,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(CONFLICT);
+    expect(await optionsOf(`${b}-cal`)).toMatchObject({ daysAhead: 90 });
+    expect(await optionsOf(`${c}-cal`)).toMatchObject({ daysAhead: 90, blockColor: "7" });
+    expect(await storedWindow(user)).toBeUndefined();
+  });
+
+  it("stores the settings of a save whose details meet a conflict, and syncs what it wrote", async () => {
+    const { user, cookie, ids } = await setup("racedetails", 3);
+    const [a, b, c] = ids as [string, string, string];
+    await setDirection(env, user, a, b, "busy");
+    const racing = racingEnv(`${b}-cal`, "UPDATE accounts SET source_options");
+    const response = await send(
+      racing.env,
+      cookie,
+      "/rules/choices",
+      new URLSearchParams({
+        [`choice.${a}.${c}`]: "title",
+        [`bufferBefore.${a}`]: "30",
+        [`bufferAfter.${a}`]: "30",
+        settings: "1",
+        "settings.daysAhead": "30",
+        "settings.daysAheadShown": "90",
+        "settings.blockTitle": "Busy",
+      }),
+      true,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(CONFLICT);
+    // The choice and the settings came before the details and stay; the buffer does not.
+    expect(await optionsOf(`${c}-cal`)).toMatchObject({ detailLevel: "title", bufferBefore: 0 });
+    expect(await storedWindow(user)).toBe(30);
+    // The accounts of the writes that stay are asked to sync anyway.
+    const syncs = racing.counts.durable.filter((call) => call.endsWith(":requestSync"));
+    expect(syncs).toContain(`${c}:requestSync`);
+  });
+
+  it("syncs what a refused reset wrote before the conflict", async () => {
+    const { user, cookie, ids } = await setup("racereset", 2);
+    const [a, b] = ids as [string, string];
+    await setAccountWorkHours(env, user, b, OFFICE);
+    await setGroupMemberships(env, user, [a, b], true);
+    await setDirection(env, user, a, b, "title");
+    await setRuleDetails(env, user, { workHours: [{ from: a, to: b, on: true }] });
+    // The hours go first; the choice "busy" then meets the conflict.
+    const racing = racingEnv(`${b}-cal`, "UPDATE rules SET options = ?, enabled = 1");
+    const response = await send(
+      racing.env,
+      cookie,
+      "/rules/direction/reset",
+      new URLSearchParams({ from: a, to: b }),
+      true,
+    );
+    expect(response.status).toBe(400);
+    expect(await optionsOf(`${b}-cal`)).toMatchObject({ detailLevel: "title", workStart: "" });
+    expect(racing.counts.durable).toContain(`${b}:requestSync`);
+  });
+
+  it("counts only its own guard as a conflict", async () => {
+    const { user, cookie, ids } = await setup("raceother", 2);
+    const [a, b] = ids as [string, string];
+    await setDirection(env, user, a, b, "busy");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const failing = countingEnv(async (sql) => {
+      if (sql.some((text) => text.startsWith("UPDATE accounts SET source_options"))) {
+        throw new Error("D1_ERROR: malformed JSON: SQLITE_ERROR");
+      }
+    });
+    const response = await send(
+      failing.env,
+      cookie,
+      "/rules/choices",
+      new URLSearchParams({ [`bufferBefore.${a}`]: "30", [`bufferAfter.${a}`]: "30" }),
+      true,
+    );
+    expect(response.status).toBe(500);
+    // Broken stored source options count as none.
+    await env.DB.prepare("UPDATE accounts SET source_options = '{broken' WHERE id = ?")
+      .bind(a)
+      .run();
+    expect(
+      await setRuleDetails(env, user, {
+        sources: [{ from: a, options: { bufferBefore: 30, bufferAfter: 30 } }],
+      }),
+    ).toBe(true);
+    const state = await loadEditorState(env, user.id);
+    expect(state.accounts.find((account) => account.id === a)?.sourceOptions).toEqual({
+      bufferBefore: 30,
+      bufferAfter: 30,
+    });
+  });
+});
+
+describe("D1 budget of a page save", () => {
+  it("writes every direction of 4 accounts in a few queries", async () => {
+    const { user, cookie, ids } = await setup("budget4", 4);
+    await setGroupMemberships(env, user, ids, true);
+    await setAccountWorkHours(env, user, ids[1]!, OFFICE);
+    await setAccountWorkHours(env, user, ids[2]!, OFFICE);
+    // The first load stores the account colours; count the save only.
+    await loadEditorState(env, user.id);
+    const counting = countingEnv();
+    const response = await send(counting.env, cookie, "/rules/choices", fullSave(ids), true);
+    expect(response.status).toBe(204);
+    expect(counting.counts.d1).toBeLessThanOrEqual(15);
+    const state = await loadEditorState(env, user.id);
+    expect(state.directions).toHaveLength(12);
+    for (const direction of state.directions) {
+      expect(direction.choice).toBe("title");
+      expect(direction.options).toMatchObject({ bufferBefore: 15, daysAhead: 30 });
+    }
   });
 });

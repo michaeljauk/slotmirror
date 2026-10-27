@@ -14,6 +14,7 @@ import {
   resetDirection,
   ruleDetailsProblem,
   setDirection,
+  setDirections,
   setDefaultBlockTitle,
   setGroupMembership,
   setGroupMemberships,
@@ -210,7 +211,11 @@ rules.post("/direction", async (c) => {
   if (!(CHOICES as readonly string[]).includes(choice)) {
     return refuse(c, i18nFromContext(c).t.editor.choiceInvalid);
   }
-  await setDirection(c.env, currentUser(c), from, to, choice as Choice);
+  try {
+    await setDirection(c.env, currentUser(c), from, to, choice as Choice);
+  } catch (error) {
+    return refuseConflict(c, error);
+  }
   return backTo(c, from);
 });
 
@@ -272,16 +277,16 @@ rules.post("/choices", async (c) => {
     for (const { first, value } of calendars) {
       await setSourceCalendar(c.env, user, first, value === "1", syncs);
     }
-    for (const change of changes) {
-      await setDirection(c.env, user, change.from, change.to, change.choice, syncs);
-    }
-    // Rule details after the choices, so that a direction turned on in the same save has its
-    // rules. A direction that lost its last source in this save has no rules left to change.
-    await setRuleDetails(c.env, user, details, syncs);
+    await setDirections(c.env, user, changes, syncs);
+    // The settings before the details: a conflict in the details then keeps the settings, which
+    // the page shows apart from the cards.
     if (form.has("settings")) {
       const settings = settingsFrom(form, t.editor.defaultBlockTitle, "settings.");
       await setSettings(c.env, user, settings, syncs);
     }
+    // Rule details after the choices, so that a direction turned on in the same save has its
+    // rules. A direction that lost its last source in this save has no rules left to change.
+    await setRuleDetails(c.env, user, details, syncs);
   } catch (error) {
     return refuseConflict(c, error);
   } finally {
@@ -429,11 +434,12 @@ rules.post("/source-calendar/:calendarId", async (c) => {
 
 rules.post("/settings", async (c) => {
   const { t } = i18nFromContext(c);
-  await setSettings(
-    c.env,
-    currentUser(c),
-    settingsFrom(await c.req.formData(), t.editor.defaultBlockTitle),
-  );
+  const form = await c.req.formData();
+  try {
+    await setSettings(c.env, currentUser(c), settingsFrom(form, t.editor.defaultBlockTitle));
+  } catch (error) {
+    return refuseConflict(c, error);
+  }
   return c.redirect("/rules");
 });
 

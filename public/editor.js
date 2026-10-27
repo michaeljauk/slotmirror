@@ -319,7 +319,8 @@ document.addEventListener("change", (event) => {
         body,
         headers: { "x-fragment": "1" },
       });
-      // A refused save names its reason; nothing of it was written.
+      // A refused save names its reason. An invalid field refuses it before any write; a
+      // conflict with another tab can come after the choices and settings were written.
       if (response.status === 400) {
         bar.classList.remove("saving");
         refreshBar((await response.text()) || bar.dataset.failed);

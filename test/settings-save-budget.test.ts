@@ -103,8 +103,9 @@ describe("saving settings with many rules", () => {
 
     await setSettings(counted.env, user, { ...SETTINGS, daysAhead: 30, daysAheadShown: 365 });
 
-    // The 60 rule updates and the settings row go in one batch.
-    expect(counted.counts.batchStatements).toBe(61);
+    // The settings row and the 60 rule updates, each with its check against a concurrent change,
+    // go in one batch.
+    expect(counted.counts.batchStatements).toBe(1 + 60 * 2);
     expect(counted.counts.d1).toBeLessThanOrEqual(6);
     // One removal call and one sync request per target account, not one per rule.
     const removalCalls = counted.counts.durable.filter((call) => /:queueRemoval/.test(call));

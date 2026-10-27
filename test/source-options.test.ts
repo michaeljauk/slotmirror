@@ -181,6 +181,18 @@ describe("source options stored on the source account", () => {
     expect(JSON.parse(side?.options ?? "{}")).toMatchObject(BUFFER);
   });
 
+  it("gives an off exception the stored buffer, so that a later choice keeps it", async () => {
+    const { user, w, g } = await setup("srcoffexc");
+    await setRuleDetails(env, user, { sources: [{ from: w, options: BUFFER }] });
+    await setGroupMemberships(env, user, [w, g], true);
+    // Without its group rule, "off" creates the disabled exception from scratch.
+    await env.DB.prepare("DELETE FROM rules WHERE source_calendar_id = ?").bind(`${w}-cal`).run();
+    await setDirection(env, user, w, g, "off");
+    expect(await buffersFrom(user.id, w)).toEqual({ [g]: "30,15" });
+    await setDirection(env, user, w, g, "title");
+    expect(await buffersFrom(user.id, w)).toEqual({ [g]: "30,15" });
+  });
+
   it('shows "differs" when a rule differs from the stored buffer', async () => {
     const { user, cookie, w, g, o } = await setup("srcmixed");
     await setDirection(env, user, w, g, "busy");

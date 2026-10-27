@@ -1035,15 +1035,32 @@ export class AccountSync extends DurableObject<Env> {
     remoteCalendarId: string,
     { trim = false }: { trim?: boolean } = {},
   ): Promise<void> {
-    const job: Removal = {
+    await this.queueRemovals([{ ruleId, remoteCalendarId }], { trim });
+  }
+
+  /**
+   * Queue the removals of several rules in one call and one storage update, so that a save with
+   * many rules makes one Durable Object call per account. Same rules as `queueRemoval`; a job
+   * that is queued already, or repeated in `rules`, is not added twice.
+   */
+  async queueRemovals(
+    rules: { ruleId: string; remoteCalendarId: string }[],
+    { trim = false }: { trim?: boolean } = {},
+  ): Promise<void> {
+    if (rules.length === 0) return;
+    const jobs: Removal[] = rules.map(({ ruleId, remoteCalendarId }) => ({
       ruleId,
       remoteCalendarId,
       attempts: 0,
       ...(trim ? { trim: true as const } : {}),
-    };
-    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) =>
-      queue.some((queued) => sameRemoval(queued, job)) ? queue : [...queue, job],
-    );
+    }));
+    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) => {
+      const next = [...queue];
+      for (const job of jobs) {
+        if (!next.some((queued) => sameRemoval(queued, job))) next.push(job);
+      }
+      return next.length === queue.length ? queue : next;
+    });
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);

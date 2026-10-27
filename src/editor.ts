@@ -406,10 +406,15 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
       : settings.daysAhead > shown
         ? Math.max(previous, settings.daysAhead)
         : Math.min(previous, settings.daysAhead);
-  await env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?")
-    .bind(JSON.stringify(settings), user.id)
-    .run();
-  const targets = new Set<string>();
+  // One batch, so that the save stores all changes or none, and stays within the D1 queries of one
+  // invocation however many rules the user has.
+  const updates: D1PreparedStatement[] = [
+    env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?").bind(
+      JSON.stringify(settings),
+      user.id,
+    ),
+  ];
+  const trims = new Map<string, { ruleId: string; remoteCalendarId: string }[]>();
   for (const row of results) {
     const previous = parseRuleOptions(row.options);
     const options = ruleOptionsSchema.parse({
@@ -419,15 +424,27 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
     });
     // A parked exception stays parked.
     const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;
-    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
-      .bind(JSON.stringify(stored), row.id)
-      .run();
+    updates.push(
+      env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?").bind(
+        JSON.stringify(stored),
+        row.id,
+      ),
+    );
     // A disabled rule has its blocks removed already; a read-only calendar refuses the deletes.
     if (options.daysAhead < previous.daysAhead && row.enabled === 1 && row.canEdit === 1) {
-      const target = { accountId: row.targetAccountId, remoteCalendarId: row.remoteCalendarId };
-      await queueRemoval(env, row.id, target, { trim: true });
+      const queue = trims.get(row.targetAccountId) ?? [];
+      queue.push({ ruleId: row.id, remoteCalendarId: row.remoteCalendarId });
+      trims.set(row.targetAccountId, queue);
     }
-    targets.add(row.targetAccountId);
+  }
+  await env.DB.batch(updates);
+  // One call per target account. Like every queueing, a failure is logged and does not fail the save.
+  for (const [accountId, rules] of trims) {
+    try {
+      await accountSync(env, accountId).queueRemovals(rules, { trim: true });
+    } catch (error) {
+      console.error("Queueing the trims failed", accountId, ...errorLogFields(error));
+    }
   }
   await recordAudit(env.DB, {
     orgId: user.orgId,
@@ -442,7 +459,9 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
       skipCategories: settings.skipCategories.length,
     },
   });
-  for (const id of targets) await accountSync(env, id).requestSync();
+  for (const id of new Set(results.map((row) => row.targetAccountId))) {
+    await accountSync(env, id).requestSync();
+  }
 }
 
 /** Longest name an account can get. */

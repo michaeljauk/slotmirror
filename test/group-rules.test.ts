@@ -470,7 +470,16 @@ describe("unexpected errors", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     for (const error of [
       new SyntaxError("Unexpected token in 'Dentist with Alice'"),
-      new TokenError("invalid_grant", "AADSTS70000 for alice@work.example"),
+      new TokenError("invalid_grant"),
+      // Even a message that holds a description is not logged.
+      Object.assign(new TokenError("invalid_grant"), {
+        message: "AADSTS70000 for alice@work.example",
+      }),
+      // A TokenError after the Durable Object boundary: a plain Error with the own `code`.
+      Object.assign(new Error("invalid_grant: AADSTS50173 for user alice@work.example"), {
+        code: "invalid_grant",
+      }),
+      new Error("Failed for alice@work.example"),
     ]) {
       vi.spyOn(env.DB, "prepare").mockImplementation(() => {
         throw error;
@@ -499,11 +508,12 @@ describe("unexpected errors", () => {
     const html = await response.text();
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("Etwas ist schiefgelaufen");
+    // A D1 message is logged: it holds no bound values. The stack is only its frames.
     expect(errors).toHaveBeenCalledWith(
       "Request failed",
       "Error",
       "D1_ERROR: database is locked",
-      expect.stringContaining("D1_ERROR"),
+      expect.stringMatching(/^\s*at /),
     );
 
     const fragment = await exports.default.fetch(`${BASE}/rules/direction/check?lang=de`, {

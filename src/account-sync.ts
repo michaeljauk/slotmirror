@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { accountOwner, errorCode, recordAudit, type SyncRunDetail } from "./audit";
+import { accountOwner, errorCode, errorLogFields, recordAudit, type SyncRunDetail } from "./audit";
 import type { Provider } from "./config";
 import {
   calendarClient,
@@ -531,7 +531,7 @@ export class AccountSync extends DurableObject<Env> {
         throttled = true;
         delayMs = throttleDelay;
       } else {
-        console.error("Reading the change feed failed", calendarId, error);
+        console.error("Reading the change feed failed", calendarId, ...errorLogFields(error));
       }
     }
     if (!throttled) {
@@ -562,7 +562,7 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.delete(SYNC_REQUEST_RETRY_KEY);
       return true;
     } catch (error) {
-      console.error("Requesting a sync after a change failed", error);
+      console.error("Requesting a sync after a change failed", ...errorLogFields(error));
       const failed = error instanceof SyncRequestError ? error.accountIds : undefined;
       const pending = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
       // A pending retry keeps its attempts and time, so that new changes cannot extend it.
@@ -595,10 +595,13 @@ export class AccountSync extends DurableObject<Env> {
     } catch (error) {
       const attempts = retry.attempts + 1;
       if (attempts >= MAX_SYNC_REQUEST_ATTEMPTS) {
-        console.error("Requesting a sync after a change failed; giving up", error);
+        console.error(
+          "Requesting a sync after a change failed; giving up",
+          ...errorLogFields(error),
+        );
         await this.ctx.storage.delete(SYNC_REQUEST_RETRY_KEY);
       } else {
-        console.error("Requesting a sync after a change failed again", error);
+        console.error("Requesting a sync after a change failed again", ...errorLogFields(error));
         const accountIds = error instanceof SyncRequestError ? error.accountIds : retry.accountIds;
         await this.ctx.storage.put<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY, {
           ...(accountIds ? { accountIds } : {}),
@@ -725,11 +728,11 @@ export class AccountSync extends DurableObject<Env> {
           await client.unwatch(watch);
           this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
         } catch (error) {
-          console.error("Stopping a watch failed", watch.id, error);
+          console.error("Stopping a watch failed", watch.id, ...errorLogFields(error));
         }
       }
     } catch (error) {
-      console.error("Stopping watches failed", error);
+      console.error("Stopping watches failed", ...errorLogFields(error));
     }
   }
 
@@ -1135,7 +1138,7 @@ export class AccountSync extends DurableObject<Env> {
         outcome = "continue";
       }
     } catch (error) {
-      console.error("Queued removal failed", job.ruleId, error);
+      console.error("Queued removal failed", job.ruleId, ...errorLogFields(error));
       const throttleDelay = throttleDelayMs(error);
       if (throttleDelay !== null) {
         outcome = "throttled";
@@ -1280,7 +1283,7 @@ export class AccountSync extends DurableObject<Env> {
         delayMs = result.retryAfterMs ?? this.delays().nextRun;
       } catch (error) {
         // One broken rule must not stop the others; runRule has recorded the failure.
-        console.error("Rule run failed", ruleId, error);
+        console.error("Rule run failed", ruleId, ...errorLogFields(error));
         // A throttled read is retried after the wait instead of in the next cron cycle.
         const throttleDelay = throttleDelayMs(error);
         if (throttleDelay !== null && error instanceof SourceThrottledError) {
@@ -1452,7 +1455,7 @@ export class AccountSync extends DurableObject<Env> {
     for (const watch of stored) {
       if (needed.has(watch.calendarId)) continue;
       await client.unwatch(watch).catch((error: unknown) => {
-        console.error("Stopping a watch failed", watch.id, error);
+        console.error("Stopping a watch failed", watch.id, ...errorLogFields(error));
       });
       this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
       await this.ctx.storage.delete(`${SYNC_TOKEN_PREFIX}${watch.calendarId}`);
@@ -1479,7 +1482,7 @@ export class AccountSync extends DurableObject<Env> {
         // Google channels cannot be extended: the old one overlaps briefly, then stops.
         if (current) await client.unwatch(current).catch(() => undefined);
       } catch (error) {
-        console.error("Watching a calendar failed", calendarId, error);
+        console.error("Watching a calendar failed", calendarId, ...errorLogFields(error));
         // Without a watch, the cron polls this calendar every 10 minutes.
         await markWatched(calendarId, null);
       }
@@ -1491,7 +1494,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.ensureWatches();
     } catch (error) {
-      console.error("Keeping watches failed", error);
+      console.error("Keeping watches failed", ...errorLogFields(error));
     }
   }
 
@@ -1636,7 +1639,7 @@ export class AccountSync extends DurableObject<Env> {
         detail: { code: errorCode(error) },
       });
     } catch (lookupError) {
-      console.error("Audit lookup failed", ruleId, lookupError);
+      console.error("Audit lookup failed", ruleId, ...errorLogFields(lookupError));
     }
   }
 

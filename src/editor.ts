@@ -1,4 +1,4 @@
-import { auditStatement, recordAudit } from "./audit";
+import { auditStatement, errorLogFields, recordAudit } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
@@ -618,7 +618,7 @@ async function queueRemoval(
     await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId, options);
     return true;
   } catch (error) {
-    console.error("Queueing the removal failed", ruleId, error);
+    console.error("Queueing the removal failed", ruleId, ...errorLogFields(error));
     return false;
   }
 }
@@ -1075,7 +1075,7 @@ async function leaveGroup(
   try {
     await env.DB.batch(audits);
   } catch (error) {
-    console.error("Audit write failed", "group_changed", error);
+    console.error("Audit write failed", "group_changed", ...errorLogFields(error));
   }
 }
 

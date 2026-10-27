@@ -91,8 +91,103 @@ export async function recordAudit(db: D1Database, event: AuditEvent): Promise<vo
   try {
     await auditStatement(db, event).run();
   } catch (error) {
-    console.error("Audit write failed", event.kind, error);
+    console.error("Audit write failed", event.kind, ...errorLogFields(error));
   }
+}
+
+/**
+ * Messages this app throws itself. They hold no provider text and no user data, so they are safe
+ * to log and store. A Durable Object error reaches the Worker as a plain `Error`, so the UI and
+ * the audit log tell these apart by message.
+ */
+const STATIC_MESSAGES = new Set([
+  "Account has no tokens",
+  "Simulation is off",
+  "A rule runs in the instance of its target account",
+  "Token response carries no ID token",
+  "Batch too large",
+  "Google listed no sync token",
+  "Google address is not verified",
+  "Malformed ID token",
+  "ID token carries no email or preferred_username",
+  "Google event time has neither date nor dateTime",
+]);
+
+/**
+ * Static text with IDs, status codes or a time zone name: "Rule <id> not found",
+ * "Graph <what> failed: 403 <reason>". Also the messages of the runtime and of this app's own
+ * error classes. A V8 TypeError or RangeError can quote values and is not listed.
+ */
+const STATIC_PATTERNS = [
+  /^Rule [\w-]{1,64} not found$/,
+  // The zone name comes from the provider, not from the user.
+  /^Expected UTC times from Graph, got [A-Za-z0-9_/+ .-]{1,64}$/,
+  /^(Graph|Google) [A-Za-z $]{1,40} failed: \d{3}( [A-Za-z0-9_.-]{1,64})?$/,
+  /^Requesting a sync failed in \d{1,5} account\(s\)$/,
+  // workerd and the Workers platform. The first six strings are in the workerd binary; the
+  // subrequest and free-tier messages come from the platform and follow its documented wording.
+  /^Network connection lost\.$/,
+  /^Worker exceeded CPU time limit\.?$/,
+  /^internal error; reference = [\w-]{1,64}$/,
+  /^Durable Object storage operation exceeded timeout which caused object to be reset\.$/,
+  /^Durable Object waited for too long\. The call was canceled and the Durable Object was reset\.$/,
+  /^Durable Object storage (deleteAll\(\)|write) caused object to be reset; reference = [\w-]{1,64}$/,
+  /^Durable Object's isolate exceeded its memory limit due to overflowing the storage cache\.[ -~]{0,200}$/,
+  /^Too many subrequests( by single Worker invocation\.[ -~]{0,160}|\.)$/,
+  /^Exceeded allowed (rows read|rows written|duration) in Durable Objects free tier\.$/,
+];
+
+/**
+ * D1 messages that name tables and columns but quote no bound value: "D1_ERROR: UNIQUE
+ * constraint failed: users.email". D1_TYPE_ERROR can quote a bound value and is left out.
+ */
+const D1_MESSAGE = /^D1_ERROR: [A-Za-z0-9_ .,:()'*-]{1,160}$/;
+
+/**
+ * The message of an error, only if it cannot quote provider text or user data: a static message
+ * of this app or of the runtime, or a D1 message that holds no bound values.
+ */
+export function safeMessage(error: Error): string | undefined {
+  const { message } = error;
+  if (STATIC_MESSAGES.has(message) || STATIC_PATTERNS.some((pattern) => pattern.test(message))) {
+    return message;
+  }
+  if (D1_MESSAGE.test(message)) return message;
+  return undefined;
+}
+
+/** An own `code` property that survived the Durable Object boundary, if it looks like a code. */
+function safeCode(error: Error): string | undefined {
+  const code: unknown = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[a-z0-9_]{1,64}$/i.test(code) ? code : undefined;
+}
+
+const FRAME = /^\s+at (?:[^\n]* \()?[^\s()]+:\d+:\d+\)?$/;
+
+/**
+ * The stack frames, without the message and its extra lines. Only lines of the form
+ * "at <name> (<path>:<line>:<col>)" or "at <path>:<line>:<col>" count as frames.
+ */
+export function stackFrames(error: Error): string {
+  // The stack starts with "name: message". A message of several lines takes several lines.
+  const lines = (error.stack ?? "").split("\n").slice(error.message.split("\n").length);
+  return lines.filter((line) => FRAME.test(line)).join("\n");
+}
+
+/**
+ * What to log for an error: name, a safe code, a safe message and the stack frames. Never the raw
+ * message or stack. A provider's `error_description` can name the user, and a SyntaxError can
+ * quote the input. Spread the result into `console.error`.
+ */
+export function errorLogFields(error: unknown): string[] {
+  if (!(error instanceof Error)) return [typeof error];
+  const fields = [error.name];
+  const code = safeCode(error);
+  if (code) fields.push(code);
+  const message = safeMessage(error);
+  if (message) fields.push(message);
+  fields.push(stackFrames(error));
+  return fields;
 }
 
 /** A short code for an error, safe to store: no response bodies, no event content. */
@@ -100,9 +195,17 @@ export function errorCode(error: unknown): string {
   if (error instanceof TokenError) return `token_${error.code}`;
   if (error instanceof GraphError) return withReason(`graph_${error.status}`, error.reason);
   if (error instanceof GoogleApiError) return withReason(`google_${error.status}`, error.reason);
-  // Errors thrown by this app carry static messages. Other error types may echo input.
-  if (error instanceof Error && error.name === "Error") return error.message.slice(0, 120);
-  return error instanceof Error ? error.name : "unknown";
+  if (error instanceof Error) {
+    // Over the Durable Object boundary a subclass becomes a plain Error with its own properties.
+    if (error.name === "Error") {
+      // A TokenError that crossed the boundary: its message is its code.
+      const code = safeCode(error);
+      if (code && error.message.startsWith(code)) return `token_${code}`;
+      return safeMessage(error) ?? code ?? "Error";
+    }
+    return error.name;
+  }
+  return "unknown";
 }
 
 function withReason(code: string, reason: string | undefined): string {

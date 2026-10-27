@@ -1048,8 +1048,9 @@ export class AccountSync extends DurableObject<Env> {
     // A retry can come hours later. If the rule runs again by then, for example after a group
     // direction went back to busy with the same rule ID, its blocks are wanted again. The first
     // attempt skips this check: it runs right after the request that queued it, which may still
-    // be changing the rule.
-    if (job.attempts > 0 && (await this.ruleWritesAgain(job))) {
+    // be changing the rule. A retiring account skips it too: its rules may still be enabled if
+    // the request stopped before it deleted them, and its blocks must go.
+    if (job.attempts > 0 && !(await this.retiring()) && (await this.ruleWritesAgain(job))) {
       await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) =>
         current.filter((queued) => !sameRemoval(queued, job)),
       );

@@ -598,7 +598,11 @@ describe("block buffer per direction", () => {
     expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, daysAhead: 30 });
 
     for (const value of ["241", "-5", "1.5", "abc"]) {
-      expect((await save({ [`bufferAfter.${w}.${g}`]: value })).status).toBe(400);
+      const refused = await save({ [`bufferAfter.${w}.${g}`]: value });
+      expect(refused.status).toBe(400);
+      expect(await refused.text()).toBe(
+        "A buffer is a whole number of minutes from 0 to 240. Nothing was saved.",
+      );
     }
     expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 15, bufferAfter: 30 });
   });

@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
-import { recordAudit } from "../audit";
+import { errorLogFields, recordAudit } from "../audit";
 import { signInProviders, type Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
@@ -138,7 +138,7 @@ auth.get("/:provider/callback", async (c) => {
     });
     identity = client.identity(tokens);
   } catch (error) {
-    console.error(`${provider} token exchange failed`, error);
+    console.error(`${provider} token exchange failed`, ...errorLogFields(error));
     return message(c, 502, t.messages.signInFailed, t.messages.exchangeFailed(label));
   }
 

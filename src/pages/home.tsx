@@ -71,6 +71,13 @@ export function HomePage(props: {
     if (!status) return <span class="status">{t.accounts.notSynced}</span>;
     const time = formatRelative(status.at);
     const title = formatTimestamp(status.at);
+    if (status.state === "paused") {
+      return (
+        <span class="status" title={title}>
+          {`${t.accounts.syncPaused} · ${t.accounts.lastRunAt(time)}`}
+        </span>
+      );
+    }
     if (status.state === "ok") {
       return (
         <span class="status ok" title={title}>
@@ -164,7 +171,8 @@ export function HomePage(props: {
                             type="text"
                             name="name"
                             maxlength={MAX_NAME_LENGTH}
-                            value={editor?.name ?? ""}
+                            value={editor?.customName ?? ""}
+                            placeholder={editor?.derivedName}
                           />
                         </label>
                         <p class="fineprint">{t.accounts.nameHint}</p>

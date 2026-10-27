@@ -29,6 +29,7 @@
     if (group) {
       for (const button of group.querySelectorAll(".choice")) {
         button.classList.toggle("on", button.value === choice);
+        button.setAttribute("aria-pressed", String(button.value === choice));
       }
       for (const example of group.closest(".dest").querySelectorAll("[data-example]")) {
         example.hidden = example.dataset.example !== choice;
@@ -85,6 +86,7 @@
     chip.addEventListener("click", (event) => {
       event.preventDefault();
       const on = chip.classList.toggle("out") === false;
+      chip.setAttribute("aria-pressed", String(on));
       const key = `calendar:${chip.dataset.calendar}`;
       if (on === savedSources.get(chip.dataset.calendar)) pending.delete(key);
       else pending.set(key, on ? "1" : "0");
@@ -120,7 +122,12 @@
     };
     form.addEventListener("change", onChange);
     form.addEventListener("input", onChange);
-    form.addEventListener("submit", (event) => event.preventDefault());
+    // Enter in the category field saves every change of the page, as the bar does.
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      onChange();
+      if (pending.size > 0) void save();
+    });
   }
 
   // The buffers of a direction count as one change while they differ from the saved ones.
@@ -142,7 +149,12 @@
     };
     form.addEventListener("change", onChange);
     form.addEventListener("input", onChange);
-    form.addEventListener("submit", (event) => event.preventDefault());
+    // Enter in a buffer field saves every change of the page, as the bar does.
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      onChange();
+      if (pending.size > 0) void save();
+    });
   }
 
   // The settings form counts as one change while it differs from the saved settings.
@@ -156,6 +168,12 @@
   };
   settings?.addEventListener("change", onSettings);
   settings?.addEventListener("input", onSettings);
+  // Enter in a settings field would post the settings alone and lose every other change.
+  settings?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    onSettings();
+    if (pending.size > 0) void save();
+  });
 
   bar.querySelector(".edit-cancel").addEventListener("click", () => {
     const keys = [...pending.keys()];
@@ -164,6 +182,7 @@
       if (key.startsWith("calendar:")) {
         const chip = document.querySelector(`.cal-chip[data-calendar="${key.slice(9)}"]`);
         chip?.classList.toggle("out", !savedSources.get(key.slice(9)));
+        chip?.setAttribute("aria-pressed", String(savedSources.get(key.slice(9))));
         chip?.classList.remove("pending");
       } else if (key.startsWith("blockColor:")) {
         const form = document.querySelector(`form.block-color[data-key="${key.slice(11)}"]`);
@@ -181,7 +200,11 @@
     refreshBar();
   });
 
-  bar.querySelector(".edit-save").addEventListener("click", async () => {
+  bar.querySelector(".edit-save").addEventListener("click", () => void save());
+
+  /** Save every change of the page in one request. The server applies all of it or nothing. */
+  async function save() {
+    if (bar.classList.contains("saving")) return;
     // A buffer outside its limits, or text in a number field, stops the save with the browser's
     // own message; the server would refuse the whole save.
     const invalid = [...document.querySelectorAll("form.block-buffer input")].find(
@@ -225,6 +248,12 @@
         body,
         headers: { "x-fragment": "1" },
       });
+      // A refused save names its reason; nothing of it was written.
+      if (response.status === 400) {
+        bar.classList.remove("saving");
+        refreshBar((await response.text()) || bar.dataset.failed);
+        return;
+      }
       if (!response.ok) throw new Error(String(response.status));
       // Reload once, with the changed cards open, so that every label comes from the server.
       const open = [
@@ -240,7 +269,7 @@
       bar.classList.remove("saving");
       refreshBar(bar.dataset.failed);
     }
-  });
+  }
 
   // Leaving the page with unsaved changes asks first.
   window.addEventListener("beforeunload", (event) => {
@@ -264,13 +293,22 @@
       const result = form.querySelector(".preview-result");
       result.classList.remove("error");
       result.textContent = form.dataset.loading;
-      const response = await fetch(form.action, {
-        method: "POST",
-        body: new FormData(form),
-        headers: { "x-fragment": "1" },
-      });
-      result.textContent = await response.text();
-      result.classList.toggle("error", !response.ok);
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: new FormData(form),
+          headers: { "x-fragment": "1" },
+        });
+        // The server words its own results and refusals (400). Anything else, such as a 404 or a
+        // 500 page, gets the generic text.
+        const plain = response.headers.get("content-type")?.startsWith("text/plain");
+        const worded = plain && (response.ok || response.status === 400);
+        result.textContent = worded ? await response.text() : form.dataset.failed;
+        result.classList.toggle("error", !response.ok);
+      } catch {
+        result.textContent = form.dataset.failed;
+        result.classList.add("error");
+      }
     });
   }
 })();

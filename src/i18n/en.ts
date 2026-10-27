@@ -37,6 +37,8 @@ export const en = {
     inSync: (time: string) => `In sync · ${time}`,
     partlySynced: (time: string) => `Partly synced · ${time}`,
     syncFailed: (code: string) => `Sync failed: ${code}`,
+    syncPaused: "Sync paused",
+    lastRunAt: (time: string) => `Last run ${time}`,
     changesFailed: (count: number) => (count === 1 ? "1 change failed" : `${count} changes failed`),
     disconnect: "Disconnect",
     rename: "Name and colour",
@@ -108,7 +110,7 @@ export const en = {
       `Run finished: ${applied === 1 ? "1 change" : `${applied} changes`} written, ${failed} failed, ${remaining} left for the next run.`,
     invalid: "Choose two different calendars. The target calendar must be writable.",
     lastRun: (blocks: number, time: string, changes: number) =>
-      `${blocks} blocks · last run ${time} · ${changes} changes`,
+      `${blocks === 1 ? "1 block" : `${blocks} blocks`} · last run ${time} · ${changes === 1 ? "1 change" : `${changes} changes`}`,
     lastRunFailed: (time: string, code: string) => `last run failed · ${time} · ${code}`,
     privateNote: "Events marked private in the source never carry more than Busy.",
     capped: (level: string) => `Limited to ${level} by this deployment's policy`,
@@ -210,6 +212,7 @@ export const en = {
     cellChanged: "changed",
     checking: "Checking…",
     checkFailed: "The check failed. Try again later.",
+    checkStale: "This direction changed in the meantime. Reload the page.",
     checkNoTokens: "This account is no longer signed in. Connect it again on the accounts page.",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
       create + update + remove === 0

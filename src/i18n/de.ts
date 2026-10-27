@@ -34,6 +34,8 @@ export const de: Messages = {
     inSync: (time: string) => `Synchron · ${time}`,
     partlySynced: (time: string) => `Teilweise synchron · ${time}`,
     syncFailed: (code: string) => `Synchronisierung fehlgeschlagen: ${code}`,
+    syncPaused: "Synchronisierung pausiert",
+    lastRunAt: (time: string) => `Letzter Lauf ${time}`,
     changesFailed: (count: number) =>
       count === 1 ? "1 Änderung fehlgeschlagen" : `${count} Änderungen fehlgeschlagen`,
     notSynced: "Noch nicht synchronisiert",
@@ -109,7 +111,7 @@ export const de: Messages = {
     invalid:
       "Wähle zwei verschiedene Kalender. In den Zielkalender muss geschrieben werden dürfen.",
     lastRun: (blocks: number, time: string, changes: number) =>
-      `${blocks} Blöcke · letzter Lauf ${time} · ${changes} Änderungen`,
+      `${blocks === 1 ? "1 Block" : `${blocks} Blöcke`} · letzter Lauf ${time} · ${changes === 1 ? "1 Änderung" : `${changes} Änderungen`}`,
     lastRunFailed: (time: string, code: string) =>
       `letzter Lauf fehlgeschlagen · ${time} · ${code}`,
     capped: (level: string) => `Durch die Richtlinie dieser Installation begrenzt auf: ${level}`,
@@ -214,6 +216,7 @@ export const de: Messages = {
     cellChanged: "geändert",
     checking: "Wird geprüft …",
     checkFailed: "Die Prüfung ist fehlgeschlagen. Bitte später noch einmal.",
+    checkStale: "Diese Richtung hat sich inzwischen geändert. Lade die Seite neu.",
     checkNoTokens: "Dieses Konto ist nicht mehr angemeldet. Verbinde es auf der Kontenseite neu.",
     checkResult: (create: number, update: number, remove: number, unchanged: number) =>
       create + update + remove === 0

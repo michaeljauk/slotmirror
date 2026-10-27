@@ -129,9 +129,26 @@ export function useI18n(): I18n {
 export function useLanguageHref(locale: Locale): string {
   const page = useContext(LanguagePageContext);
   if (page === null) return `?lang=${locale}`;
-  const url = new URL(page, "https://page.invalid");
+  const fallback = `/?lang=${locale}`;
+  if (!isLocalPath(page)) return fallback;
+  let url: URL;
+  try {
+    // Tabs and newlines are dropped while parsing, so "/\t/x" reads as "//x", a host.
+    url = new URL(page, "https://page.invalid");
+  } catch {
+    return fallback;
+  }
   url.searchParams.set("lang", locale);
-  return `${url.pathname}${url.search}`;
+  // Parsing can turn a local path into "//host" again: "/.//host" becomes "//host".
+  return isLocalPath(url.pathname) ? `${url.pathname}${url.search}` : fallback;
+}
+
+/**
+ * True for a path on this site. "//host" and "/\\host" are links to another host in browsers,
+ * so they do not count.
+ */
+function isLocalPath(path: string): boolean {
+  return path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/\\");
 }
 
 /**

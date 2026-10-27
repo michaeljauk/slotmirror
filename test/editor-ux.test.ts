@@ -128,7 +128,7 @@ describe("page save is all or nothing", () => {
 });
 
 describe("sync status", () => {
-  it("forgets the failure of a rule that was deleted or turned off", async () => {
+  it("forgets the failure of a deleted rule, and shows a paused account as paused", async () => {
     const { user, cookie, w, o, g } = await setup("stalefail");
     await setDirection(env, user, w, o, "busy");
     await setDirection(env, user, w, g, "busy");
@@ -151,9 +151,45 @@ describe("sync status", () => {
     await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(toG!.id).run();
 
     const outcomes = await latestRuleOutcomes(env.DB, user.id);
-    expect(outcomes).toEqual([]);
-    expect(accountStatuses(outcomes).size).toBe(0);
+    expect(outcomes).toEqual([expect.objectContaining({ ruleId: toG!.id, enabled: false })]);
+    const statuses = accountStatuses(outcomes);
+    expect(statuses.get(o)).toBeUndefined();
+    expect(statuses.get(g)).toMatchObject({ state: "paused" });
     expect(await page(cookie)).not.toContain("graph_500");
+    const home = await page(cookie, "/");
+    expect(home).not.toContain("graph_500");
+    expect(home).toContain("Sync paused · Last run");
+  });
+
+  it("lets a running rule decide the status over a paused one", () => {
+    const outcome = (enabled: boolean, kind: "sync_run" | "sync_failed", at: string) => ({
+      ruleId: `${kind}-${at}`,
+      accountId: "acc",
+      kind,
+      createdAt: at,
+      enabled,
+      detail: kind === "sync_failed" ? { code: "x" } : { failed: 0, remaining: 0 },
+    });
+    const later = "2026-10-27T10:00:00.000Z";
+    const earlier = "2026-10-27T09:00:00.000Z";
+    expect(
+      accountStatuses([
+        outcome(false, "sync_failed", later),
+        outcome(true, "sync_run", earlier),
+      ]).get("acc"),
+    ).toMatchObject({ state: "ok", at: earlier });
+    expect(
+      accountStatuses([
+        outcome(true, "sync_run", earlier),
+        outcome(false, "sync_failed", later),
+      ]).get("acc"),
+    ).toMatchObject({ state: "ok", at: earlier });
+    expect(
+      accountStatuses([
+        outcome(false, "sync_run", earlier),
+        outcome(false, "sync_failed", later),
+      ]).get("acc"),
+    ).toEqual({ state: "paused", at: later });
   });
 });
 
@@ -310,5 +346,160 @@ describe("copy", () => {
     const text = await response.text();
     expect(text).not.toContain("Account has no tokens");
     expect(text).toContain("neu");
+  });
+});
+
+describe("polish", () => {
+  it("keeps the language switch on this site for a referrer path that starts with //", async () => {
+    const { cookie } = await setup("langslash");
+    for (const referer of [
+      `${BASE}//evil.example/x`,
+      `${BASE}/.//evil.example/x`,
+      `${BASE}//%5C`,
+    ]) {
+      const response = await post("/rules", cookie, new URLSearchParams({ source: "x" }), {
+        referer,
+      });
+      expect(response.status).toBe(400);
+      const html = await response.text();
+      expect(html).toContain('href="/?lang=de"');
+      expect(html).not.toContain('href="//');
+    }
+  });
+
+  it.each(["interaction_required", "consent_required"])(
+    "asks to reconnect when the token refresh answers %s",
+    async (code) => {
+      const { user, cookie, w, g } = await setup(`consent-${code}`);
+      await setDirection(env, user, g, w, "busy");
+      // The target's access token is expired; the refresh asks for a new sign-in.
+      await env.ACCOUNT_SYNC.getByName(w).storeTokens(
+        w,
+        { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() - 1000 },
+        "microsoft",
+      );
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes("/oauth2/")) {
+          return Response.json({ error: code, error_description: "AADSTS" }, { status: 400 });
+        }
+        if (url.includes("googleapis.com/calendar")) return Response.json({ items: [] });
+        return Response.json({ value: [] });
+      });
+      const response = await post(
+        "/rules/direction/check",
+        cookie,
+        new URLSearchParams({ from: g, to: w }),
+        { "x-fragment": "1" },
+      );
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe(
+        "This account is no longer signed in. Connect it again on the accounts page.",
+      );
+    },
+  );
+
+  it("answers a check of a direction without rules in words", async () => {
+    const { cookie, w, o } = await setup("stalecheck");
+    const response = await post(
+      "/rules/direction/check",
+      cookie,
+      new URLSearchParams({ from: w, to: o }),
+      { "x-fragment": "1", ...GERMAN },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(
+      "Diese Richtung hat sich inzwischen geändert. Lade die Seite neu.",
+    );
+  });
+
+  it("keeps a block title the user chose when the page loads", async () => {
+    const { user, cookie } = await setup("titlechosen");
+    await post(
+      "/rules/choices",
+      cookie,
+      new URLSearchParams({
+        settings: "1",
+        "settings.daysAhead": "90",
+        "settings.blockTitle": "Mine",
+      }),
+      { "x-fragment": "1" },
+    );
+    const html = await page(cookie, "/rules", GERMAN);
+    const row = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ json: string }>();
+    expect(JSON.parse(row?.json ?? "{}")).toMatchObject({ blockTitle: "Mine" });
+    // A direction without rules shows the title from the settings in its example.
+    expect(html).toContain("<b>Mine</b>");
+    expect(html).not.toContain("<b>Busy</b>");
+    expect(html).not.toContain("<b>Belegt</b>");
+  });
+
+  it("uses the German default for an empty block title of a German user", async () => {
+    const { user, cookie, w, o } = await setup("titleempty");
+    await setDirection(env, user, w, o, "busy");
+    await post(
+      "/rules/choices",
+      cookie,
+      new URLSearchParams({
+        settings: "1",
+        "settings.daysAhead": "90",
+        "settings.blockTitle": " ",
+      }),
+      { "x-fragment": "1", ...GERMAN },
+    );
+    const [rule] = await rulesOf(user.id);
+    expect(JSON.parse(rule!.options)).toMatchObject({ blockTitle: "Belegt" });
+  });
+
+  it("treats a stored name equal to the derived one as automatic", async () => {
+    const { cookie, w } = await setup("legacyname");
+    await env.DB.prepare("UPDATE accounts SET display_name = 'work' WHERE id = ?").bind(w).run();
+    expect(await page(cookie, "/")).toContain(
+      'name="name" maxlength="40" value="" placeholder="work"',
+    );
+
+    await post(`/accounts/${w}/name`, cookie, new URLSearchParams({ name: "" }));
+    const row = await env.DB.prepare("SELECT display_name AS name FROM accounts WHERE id = ?")
+      .bind(w)
+      .first<{ name: string | null }>();
+    expect(row?.name).toBeNull();
+    // The name on the pages stays "work", so the log records no rename.
+    const renamed = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM audit_events WHERE account_id = ? AND kind = 'account_renamed'",
+    )
+      .bind(w)
+      .first<{ n: number }>();
+    expect(renamed?.n).toBe(0);
+  });
+
+  it("refuses a category longer than Outlook allows, with the limit", async () => {
+    const { user, cookie, w, o } = await setup("longcat");
+    const response = await post(
+      "/rules/choices",
+      cookie,
+      new URLSearchParams({
+        [`choice.${w}.${o}`]: "busy",
+        [`blockColor.${w}.${o}`]: "x".repeat(101),
+      }),
+      { "x-fragment": "1" },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(
+      "A category name can have at most 100 characters. Nothing was saved.",
+    );
+    expect(await rulesOf(user.id)).toEqual([]);
+  });
+
+  it("uses the singular in the last-run line", async () => {
+    const { i18nFor } = await import("../src/i18n");
+    expect(i18nFor("en").t.rules.lastRun(1, "now", 1)).toBe("1 block · last run now · 1 change");
+    expect(i18nFor("de").t.rules.lastRun(1, "jetzt", 1)).toBe(
+      "1 Block · letzter Lauf jetzt · 1 Änderung",
+    );
+    expect(i18nFor("de").t.rules.lastRun(2, "jetzt", 3)).toBe(
+      "2 Blöcke · letzter Lauf jetzt · 3 Änderungen",
+    );
   });
 });

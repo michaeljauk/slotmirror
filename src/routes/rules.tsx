@@ -61,11 +61,13 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
 /** One line for the whole page: the newest run, or the first failure. */
 function SyncStatus(props: { outcomes: Awaited<ReturnType<typeof latestRuleOutcomes>> }) {
   const { t, formatRelative, formatTimestamp } = i18nForStatus();
-  if (props.outcomes.length === 0) return null;
-  const failed = props.outcomes.find(
+  // A paused rule's last run is history; the line shows the rules that run.
+  const outcomes = props.outcomes.filter((outcome) => outcome.enabled);
+  if (outcomes.length === 0) return null;
+  const failed = outcomes.find(
     (outcome) => outcome.kind === "sync_failed" || (outcome.detail.failed ?? 0) > 0,
   );
-  const newest = props.outcomes.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+  const newest = outcomes.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
   const shown = failed ?? newest;
   return (
     <span class={failed ? "status error" : "status ok"} title={formatTimestamp(shown.createdAt)}>
@@ -208,7 +210,8 @@ rules.post("/direction", async (c) => {
 
 // All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
 // "choice.<from>.<to>", "blockColor.<from>.<to>" and "settings.<name>". Every field is checked
-// before the first write, so that a save applies all of it or nothing.
+// before the first write, so that an invalid field refuses the whole save. The writes are not one
+// transaction: a D1 or Durable Object failure can still stop them part-way.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const { t } = i18nFromContext(c);
@@ -335,15 +338,21 @@ rules.post("/settings", async (c) => {
   return c.redirect("/rules");
 });
 
+/** Token errors after which only a new sign-in helps; the same codes as in AccountSync. */
+const RECONNECT_MESSAGES = [
+  "Account has no tokens",
+  "invalid_grant",
+  "interaction_required",
+  "consent_required",
+];
+
 /**
  * A failed run or check in the user's words. The error crosses the Durable Object boundary, so
  * only its message is left. A missing or refused token means the account must connect again.
  */
 function runErrorText(t: Messages, error: unknown): string {
   const message = error instanceof Error ? error.message : "";
-  if (message.includes("Account has no tokens") || message.includes("invalid_grant")) {
-    return t.editor.checkNoTokens;
-  }
+  if (RECONNECT_MESSAGES.some((text) => message.includes(text))) return t.editor.checkNoTokens;
   return t.editor.checkFailed;
 }
 
@@ -360,7 +369,8 @@ rules.post("/direction/check", async (c) => {
   const ruleIds = (direction?.slots ?? []).flatMap((slot) =>
     slot.rule?.enabled ? [slot.rule.id] : [],
   );
-  if (ruleIds.length === 0) return c.notFound();
+  // A page from before a change can offer a check for a direction that no longer runs.
+  if (ruleIds.length === 0) return refuse(c, t.editor.checkStale);
   const sum = { create: 0, update: 0, delete: 0, unchanged: 0 };
   try {
     for (const ruleId of ruleIds) {

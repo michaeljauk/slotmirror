@@ -251,9 +251,11 @@
           body: new FormData(form),
           headers: { "x-fragment": "1" },
         });
-        // The server words its own errors; anything else, such as a 500 page, gets the generic text.
+        // The server words its own results and refusals (400). Anything else, such as a 404 or a
+        // 500 page, gets the generic text.
         const plain = response.headers.get("content-type")?.startsWith("text/plain");
-        result.textContent = plain ? await response.text() : form.dataset.failed;
+        const worded = plain && (response.ok || response.status === 400);
+        result.textContent = worded ? await response.text() : form.dataset.failed;
         result.classList.toggle("error", !response.ok);
       } catch {
         result.textContent = form.dataset.failed;

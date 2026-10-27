@@ -43,6 +43,8 @@ function Example(props: {
   target: EditorAccount;
   direction: EditorDirection;
   choice: Choice;
+  /** Title of busy blocks from the settings, for a direction without rules. */
+  settingsTitle: string;
 }) {
   const { t } = useI18n();
   const choice = props.choice;
@@ -50,7 +52,7 @@ function Example(props: {
   const sample = PRIVATE_DOMAINS.test(props.source.email)
     ? t.editor.samplePrivate
     : t.editor.sampleWork;
-  const busyTitle = props.direction.options?.blockTitle ?? "Busy";
+  const busyTitle = props.direction.options?.blockTitle ?? props.settingsTitle;
   // Google fills an event with its colour; the example does the same.
   const fill = googleFill(props.target, props.direction);
   return (
@@ -142,6 +144,8 @@ function SettingsCard(props: { state: EditorState }) {
         <strong>{t.editor.settingsTitle}</strong>
         <span class="group-text">{t.editor.settingsLead}</span>
       </div>
+      {/* A save of other settings keeps each rule's window; see setSettings. */}
+      <input type="hidden" name="daysAheadShown" value={String(settings.daysAhead)} />
       <div class="settings-row">
         <span class="settings-label">{t.editor.window}</span>
         <span class="choices">
@@ -161,7 +165,13 @@ function SettingsCard(props: { state: EditorState }) {
       <label class="settings-field">
         <span class="switch-title">{t.editor.blockTitleLabel}</span>
         <span class="switch-hint">{t.editor.blockTitleHint}</span>
-        <input type="text" name="blockTitle" maxlength={255} value={settings.blockTitle} />
+        <input
+          type="text"
+          name="blockTitle"
+          maxlength={255}
+          value={settings.blockTitle}
+          placeholder={t.editor.defaultBlockTitle}
+        />
       </label>
       <label class="settings-field">
         <span class="switch-title">{t.editor.skipCategoriesLabel}</span>
@@ -227,6 +237,7 @@ function GroupCard(props: { state: EditorState }) {
             <button
               type="submit"
               class={account.inGroup ? "member" : "member out"}
+              aria-pressed={account.inGroup ? "true" : "false"}
               title={account.inGroup ? t.editor.groupRemove : t.editor.groupAdd}
             >
               <AccountName account={account} />
@@ -234,7 +245,11 @@ function GroupCard(props: { state: EditorState }) {
           </form>
         ))}
       </div>
-      <p class="group-text">{members > 1 ? t.editor.groupText(members) : t.editor.groupTooFew}</p>
+      <p class="group-text">
+        {members > 1
+          ? t.editor.groupText(members, props.state.settings.markPrivate)
+          : t.editor.groupTooFew}
+      </p>
     </div>
   );
 }
@@ -329,6 +344,7 @@ function DestinationRow(props: {
             name="choice"
             value={choice}
             class={choice === direction.effective ? "choice on" : "choice"}
+            aria-pressed={choice === direction.effective ? "true" : "false"}
             disabled={
               RANK[choice] > RANK[direction.maxChoice] ||
               (!canEdit && choice !== "off" && choice !== direction.effective)
@@ -343,7 +359,13 @@ function DestinationRow(props: {
         {/* Every choice is rendered, so that the editor script can switch without a request. */}
         {CHOICES.map((choice) => (
           <span data-example={choice} hidden={choice !== direction.effective}>
-            <Example source={source} target={target} direction={direction} choice={choice} />
+            <Example
+              source={source}
+              target={target}
+              direction={direction}
+              choice={choice}
+              settingsTitle={props.state.settings.blockTitle}
+            />
           </span>
         ))}
       </div>
@@ -365,6 +387,7 @@ function DestinationRow(props: {
           action="/rules/direction/check"
           class="dest-note faint preview-form"
           data-loading={t.editor.checking}
+          data-failed={t.editor.checkFailed}
         >
           <input type="hidden" name="from" value={source.id} />
           <input type="hidden" name="to" value={target.id} />
@@ -417,6 +440,7 @@ export function SourceCard(props: { state: EditorState; source: EditorAccount; o
               <button
                 type="submit"
                 class={calendar.isSource ? "member cal-chip" : "member cal-chip out"}
+                aria-pressed={calendar.isSource ? "true" : "false"}
                 data-calendar={calendar.id}
               >
                 {calendar.isMain ? t.editor.mainCalendar : calendar.name}

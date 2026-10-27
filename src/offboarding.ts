@@ -1,4 +1,4 @@
-import { recordAudit } from "./audit";
+import { errorLogFields, recordAudit } from "./audit";
 import { accountSync } from "./durable";
 import { deleteEmptyFeeds, revokeFeeds } from "./feeds";
 
@@ -19,7 +19,7 @@ async function queueRemovals(
       await accountSync(env, rule.targetAccountId).queueRemoval(rule.ruleId, rule.remoteCalendarId);
     } catch (error) {
       failed++;
-      console.error("Queueing a removal failed", rule.ruleId, error);
+      console.error("Queueing a removal failed", rule.ruleId, ...errorLogFields(error));
     }
   }
   return failed;

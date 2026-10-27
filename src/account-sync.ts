@@ -14,6 +14,7 @@ import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/p
 import {
   cleanupWindow,
   loadRule,
+  ruleRunsFromAlarm,
   rulesTargetingAccount,
   siblingRuleIds,
   syncWindow,
@@ -58,9 +59,16 @@ const RULE_QUEUE_KEY = "ruleQueue";
 
 /**
  * Durable Object storage key: queued rules whose source account throttled, with the time before
- * which they do not run again. The other queued rules run meanwhile.
+ * which they do not run again. The other queued rules run meanwhile. The entry stays until the
+ * rule leaves the queue, so that a rule whose wait is over still counts as one that waited.
  */
 const RULE_NOT_BEFORE_KEY = "ruleNotBefore";
+
+/**
+ * While only waiting rules are queued, the alarm checks again at least this often, so that
+ * requested syncs and other work do not wait for the longest `Retry-After` of five minutes.
+ */
+const WAITING_RULES_CHECK_MS = 30_000;
 
 /** Result of a source read over RPC. See `readSourceForRule()`. */
 type SourceRead = { events: SourceEvent[] } | { throttled: { message: string; waitMs: number } };
@@ -1141,7 +1149,8 @@ export class AccountSync extends DurableObject<Env> {
     const ruleId = queue.find((id) => (notBefore[id] ?? 0) <= Date.now());
     if (!ruleId) {
       // Every queued rule waits for a throttled source account.
-      await this.setSyncAlarm(Math.min(...queue.map((id) => notBefore[id] ?? 0)));
+      const at = Math.min(...queue.map((id) => notBefore[id] ?? 0));
+      await this.setSyncAlarm(await this.waitingRulesAlarm(at, Date.now()));
       return;
     }
     const waited = notBefore[ruleId] !== undefined;
@@ -1150,27 +1159,31 @@ export class AccountSync extends DurableObject<Env> {
     let changedBlocks = false;
     let deferUntil: number | undefined;
     let delayMs = this.delays().nextRun;
-    try {
-      const result = await this.runRuleAfterOthers(ruleId);
-      unfinished = result.remaining > 0;
-      // An update or a delete can free a dedup key that kept a later rule from writing a block.
-      // A rule that waited for its source may run after the later rules, so its creates count too.
-      const { create, update, delete: deleted } = result.stats;
-      changedBlocks = update > 0 || deleted > 0 || (waited && create > 0);
-      delayMs = result.retryAfterMs ?? this.delays().nextRun;
-    } catch (error) {
-      // One broken rule must not stop the others; runRule has recorded the failure.
-      console.error("Rule run failed", ruleId, error);
-      // A throttled read is retried after the wait instead of in the next cron cycle.
-      const throttleDelay = throttleDelayMs(error);
-      if (throttleDelay !== null && error instanceof SourceThrottledError) {
-        // Another account's mailbox throttled. The other rules may still read and write this
-        // account, so only this rule waits, behind them.
-        deferUntil = Date.now() + throttleDelay;
-      } else if (throttleDelay !== null) {
-        // This account's mailbox throttled; every queued rule writes into it, so all wait.
-        unfinished = true;
-        delayMs = throttleDelay;
+    // A rule disabled or removed while queued leaves the queue without a run and without an audit
+    // event. Its removal may be queued already, and a run would write its blocks again.
+    if (await ruleRunsFromAlarm(this.env.DB, ruleId)) {
+      try {
+        const result = await this.runRuleAfterOthers(ruleId);
+        unfinished = result.remaining > 0;
+        // An update or a delete can free a dedup key that kept a later rule from writing a block.
+        // A rule that waited for its source may run after the later rules, so its creates count.
+        const { create, update, delete: deleted } = result.stats;
+        changedBlocks = update > 0 || deleted > 0 || (waited && create > 0);
+        delayMs = result.retryAfterMs ?? this.delays().nextRun;
+      } catch (error) {
+        // One broken rule must not stop the others; runRule has recorded the failure.
+        console.error("Rule run failed", ruleId, error);
+        // A throttled read is retried after the wait instead of in the next cron cycle.
+        const throttleDelay = throttleDelayMs(error);
+        if (throttleDelay !== null && error instanceof SourceThrottledError) {
+          // Another account's mailbox throttled. The other rules may still read and write this
+          // account, so only this rule waits, behind them.
+          deferUntil = Date.now() + throttleDelay;
+        } else if (throttleDelay !== null) {
+          // This account's mailbox throttled; every queued rule writes into it, so all wait.
+          unfinished = true;
+          delayMs = throttleDelay;
+        }
       }
     }
 
@@ -1188,11 +1201,12 @@ export class AccountSync extends DurableObject<Env> {
       ];
       return followers.length > 0 ? inPrecedenceOrder(merged) : merged;
     });
-    const waits = await this.storeRuleWaits(next, ruleId, deferUntil);
+    const waits = await this.storeRuleWaits(next, ruleId, { deferUntil, keepOwn: unfinished });
     if (next.length > 0) {
       // No queued rule runs before its own wait or before the queue's next run.
       const earliest = Date.now() + delayMs;
-      await this.setSyncAlarm(Math.min(...next.map((id) => Math.max(earliest, waits[id] ?? 0))));
+      const at = Math.min(...next.map((id) => Math.max(earliest, waits[id] ?? 0)));
+      await this.setSyncAlarm(await this.waitingRulesAlarm(at, earliest));
     } else {
       // A sync requested during the queue starts a full cycle. It waits for the debounce, so that
       // a stream of notifications still collapses.
@@ -1206,22 +1220,39 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * Keep the waits of the queued rules: set `deferUntil` for `ruleId`, drop its old wait, and drop
-   * the waits of rules that left the queue. Returns the stored waits.
+   * Keep the waits of the queued rules: set `deferUntil` for `ruleId`, and drop the waits of rules
+   * that left the queue. The old wait of `ruleId` stays only with `keepOwn`, for a rule that stays
+   * queued with work left. Returns the stored waits.
    */
   private async storeRuleWaits(
     queue: string[],
     ruleId: string,
-    deferUntil: number | undefined,
+    { deferUntil, keepOwn }: { deferUntil: number | undefined; keepOwn: boolean },
   ): Promise<Record<string, number>> {
     const stored = (await this.ctx.storage.get<Record<string, number>>(RULE_NOT_BEFORE_KEY)) ?? {};
     const waits = Object.fromEntries(
-      Object.entries(stored).filter(([id]) => id !== ruleId && queue.includes(id)),
+      Object.entries(stored).filter(([id]) => queue.includes(id) && (id !== ruleId || keepOwn)),
     );
     if (deferUntil !== undefined) waits[ruleId] = deferUntil;
     if (Object.keys(waits).length > 0) await this.ctx.storage.put(RULE_NOT_BEFORE_KEY, waits);
     else await this.ctx.storage.delete(RULE_NOT_BEFORE_KEY);
     return waits;
+  }
+
+  /**
+   * The alarm for the queue when its next rule may run at `at`, but no earlier than `earliest`. If
+   * only a source wait holds the queue, the alarm comes back within WAITING_RULES_CHECK_MS, or for a
+   * removal or a retry that is due earlier. Only future times count, so the alarm cannot loop.
+   */
+  private async waitingRulesAlarm(at: number, earliest: number): Promise<number> {
+    if (at <= earliest) return at;
+    const now = Date.now();
+    const removal = nextRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []);
+    const retry = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
+    const other = [now + WAITING_RULES_CHECK_MS, removal?.notBefore, retry?.at].filter(
+      (time): time is number => time !== undefined && time > now,
+    );
+    return Math.max(earliest, Math.min(at, ...other));
   }
 
   /**

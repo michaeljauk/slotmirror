@@ -1015,6 +1015,35 @@ describe("alarm queue", () => {
     expect(queue).toEqual([second]);
   });
 
+  it("drops a queued rule that was disabled without a run, but runs it by hand", async () => {
+    const { stub, ruleId } = await setupRule("acc-disabled");
+    await stub.storeTokens("acc-disabled", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const calls = fakeGraph();
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [ruleId]);
+      await state.storage.put("ruleNotBefore", { [ruleId]: Date.now() - 1 });
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    // As in a group change: its blocks are queued for removal, then the rule is disabled.
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+
+    await runDurableObjectAlarm(stub);
+
+    expect(calls).toHaveLength(0);
+    expect(await auditOf(ruleId)).toEqual([]);
+    expect(
+      await runInDurableObject(stub, (_instance, state) =>
+        state.storage.get(["ruleQueue", "ruleNotBefore"]),
+      ),
+    ).toEqual(new Map());
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats.create).toBe(15);
+    expect((await stub.runRule(ruleId)).applied).toBe(15);
+  });
+
   it("queues the later rules into the same calendar after a rule moved a block", async () => {
     const { stub, ruleId } = await setupRule("acc-follow-move");
     await env.DB.batch([
@@ -1296,54 +1325,114 @@ describe("throttling", () => {
     expect(await alarmIn(stub)).toBeLessThanOrEqual(7_000);
   });
 
-  it("queues the later rules again after a rule that waited for its source writes blocks", async () => {
-    const { user } = await signIn("owner@example.com");
-    await bareAccount("acc-late");
-    await bareAccount("acc-late-other");
-    // The rule from the throttled account takes precedence; the other rule runs before it.
-    const [first, second] = await inPrecedenceOrder(["acc-late-rule-a", "acc-late-rule-b"]);
-    if (!first || !second) throw new Error("no rules");
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-late-src', 'acc-late', ?, 'Work'), ('acc-late-dst', 'acc-late', ?, 'Test'), ('acc-late-other-src', 'acc-late-other', 'remote-throttled', 'Other')",
-      ).bind(SOURCE_CAL, TARGET_CAL),
-      env.DB.prepare(
-        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, 'acc-late-other-src', 'acc-late-dst'), (?, ?, 'acc-late-src', 'acc-late-dst')",
-      ).bind(first, user.id, second, user.id),
-    ]);
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    let throttling = true;
-    const store = statefulGraph({
-      [SOURCE_CAL]: fixture.value,
-      "remote-throttled": () =>
-        throttling
-          ? new Response("busy", { status: 429, headers: { "Retry-After": "7" } })
-          : Response.json({ value: fixture.value }),
+  it.each([
+    ["", false],
+    [", also after its own mailbox throttled in between", true],
+  ])(
+    "queues the later rules again after a rule that waited for its source writes blocks%s",
+    async (_, ownThrottle) => {
+      const id = ownThrottle ? "acc-late-own" : "acc-late";
+      const { user } = await signIn("owner@example.com");
+      await bareAccount(id);
+      await bareAccount(`${id}-other`);
+      // The rule from the throttled account takes precedence; the other rule runs before it.
+      const [first, second] = await inPrecedenceOrder([`${id}-rule-a`, `${id}-rule-b`]);
+      if (!first || !second) throw new Error("no rules");
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?1 || '-src', ?1, ?2, 'Work'), (?1 || '-dst', ?1, ?3, 'Test'), (?1 || '-other-src', ?1 || '-other', 'remote-throttled', 'Other')",
+        ).bind(id, SOURCE_CAL, TARGET_CAL),
+        env.DB.prepare(
+          "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?1, ?3, ?4 || '-other-src', ?4 || '-dst'), (?2, ?3, ?4 || '-src', ?4 || '-dst')",
+        ).bind(first, second, user.id, id),
+      ]);
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      let throttling = true;
+      const store = statefulGraph({
+        [SOURCE_CAL]: fixture.value,
+        "remote-throttled": () =>
+          throttling
+            ? new Response("busy", { status: 429, headers: { "Retry-After": "7" } })
+            : Response.json({ value: fixture.value }),
+      });
+      const stub = env.ACCOUNT_SYNC.getByName(id);
+      const queue = () =>
+        runInDurableObject(stub, (_instance, state) => state.storage.get<string[]>("ruleQueue"));
+      await runInDurableObject(stub, async (_instance, state) => {
+        await state.storage.put("ruleQueue", [first, second]);
+        await state.storage.setAlarm(Date.now() + 60_000);
+      });
+
+      await runDurableObjectAlarm(stub);
+      await runDurableObjectAlarm(stub);
+      expect(await queue()).toEqual([first]);
+      const blocks = store.size;
+      expect(blocks).toBeGreaterThan(0);
+
+      // The wait is over and the source answers. The rule writes the same blocks, which the later
+      // rule must now leave to it.
+      throttling = false;
+      await runInDurableObject(stub, (_instance, state) =>
+        state.storage.put("ruleNotBefore", { [first]: Date.now() - 1 }),
+      );
+      if (ownThrottle) {
+        // The next run fails on this account's own mailbox. The rule stays first in the queue and
+        // must still count as one that waited.
+        const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+        let throttleOnce = true;
+        vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (throttleOnce && url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
+            throttleOnce = false;
+            return new Response("busy", { status: 429, headers: { "Retry-After": "3" } });
+          }
+          return answer(input, init);
+        });
+        await runDurableObjectAlarm(stub);
+        expect(await queue()).toEqual([first]);
+      }
+      await runDurableObjectAlarm(stub);
+      expect(await queue()).toEqual([second]);
+      await runDurableObjectAlarm(stub);
+      expect(store.size).toBe(blocks);
+    },
+  );
+
+  it("keeps the alarm for other work while only waiting rules are queued", async () => {
+    const { stub, ruleId } = await setupRule("acc-wait-alarm");
+    await stub.storeTokens("acc-wait-alarm", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
     });
-    const stub = env.ACCOUNT_SYNC.getByName("acc-late");
-    const queue = () =>
-      runInDurableObject(stub, (_instance, state) => state.storage.get<string[]>("ruleQueue"));
+    const calls = fakeGraph();
     await runInDurableObject(stub, async (_instance, state) => {
-      await state.storage.put("ruleQueue", [first, second]);
+      await state.storage.put("ruleQueue", [ruleId]);
+      await state.storage.put("ruleNotBefore", { [ruleId]: Date.now() + 300_000 });
       await state.storage.setAlarm(Date.now() + 60_000);
     });
 
+    // Nothing else waits: the alarm checks again within 30 seconds, not after five minutes.
     await runDurableObjectAlarm(stub);
-    await runDurableObjectAlarm(stub);
-    expect(await queue()).toEqual([first]);
-    const blocks = store.size;
-    expect(blocks).toBeGreaterThan(0);
+    expect(calls).toHaveLength(0);
+    expect(await alarmIn(stub)).toBeGreaterThan(25_000);
+    expect(await alarmIn(stub)).toBeLessThanOrEqual(30_000);
 
-    // The wait is over and the source answers. The rule writes the same blocks, which the later
-    // rule must now leave to it.
-    throttling = false;
+    // A removal that waits after a failed attempt is due earlier: the alarm is set for it.
     await runInDurableObject(stub, (_instance, state) =>
-      state.storage.put("ruleNotBefore", { [first]: Date.now() - 1 }),
+      state.storage.put("removalQueue", [
+        {
+          ruleId: "gone-rule",
+          remoteCalendarId: TARGET_CAL,
+          attempts: 1,
+          notBefore: Date.now() + 10_000,
+        },
+      ]),
     );
     await runDurableObjectAlarm(stub);
-    expect(await queue()).toEqual([second]);
-    await runDurableObjectAlarm(stub);
-    expect(store.size).toBe(blocks);
+    expect(calls).toHaveLength(0);
+    expect(await alarmIn(stub)).toBeGreaterThan(5_000);
+    expect(await alarmIn(stub)).toBeLessThanOrEqual(10_000);
   });
 
   it("holds every rule when the read of this account's own mailbox is throttled", async () => {

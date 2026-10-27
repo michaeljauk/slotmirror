@@ -157,6 +157,29 @@ describe("desiredBlocks", () => {
   });
 });
 
+describe("hashes", () => {
+  async function sha256Prefix(text: string): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest).slice(0, 16), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+  }
+
+  it("are the first 16 bytes of SHA-256, on a repeated run and for long contents", async () => {
+    const [event] = sourceEvents(bySubject("FBS single"));
+    const long = { ...event!, body: "x".repeat(1000) };
+    for (const source of [event!, long]) {
+      const first = await desiredBlocks(RULE, [source], options({ detailLevel: "full" }));
+      const again = await desiredBlocks(RULE, [source], options({ detailLevel: "full" }));
+      expect(again).toEqual(first);
+      const { marker, contentHash, dedupKey, ...content } = first[0]!;
+      expect(contentHash).toBe(await sha256Prefix(JSON.stringify(content)));
+      expect(marker).toBe(await sha256Prefix(`${RULE}\u0000${source.occurrenceKey}`));
+      expect(dedupKey).toMatch(/^[0-9a-f]{32}$/);
+    }
+  });
+});
+
 describe("planSync", () => {
   it("creates every block on the first run", async () => {
     const plan = planSync(await desiredBlocks(RULE, sourceEvents(), options()), []);

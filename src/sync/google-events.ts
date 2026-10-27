@@ -1,5 +1,7 @@
 import * as z from "zod/mini";
 import { markerValueFor, parseMarkerValue } from "./graph-events";
+import { isoInstant } from "./iso-time";
+import { isObject, isOptionalString } from "./quick-check";
 import type { DesiredBlock, SourceEvent } from "./types";
 
 /** Key in `extendedProperties.private` that marks blocks written by slotmirror. */
@@ -47,6 +49,71 @@ export const googleEventSchema = z.object({
 
 export type GoogleEvent = z.infer<typeof googleEventSchema>;
 
+/**
+ * Validate a Google event against `googleEventSchema`. A quick check accepts the usual event
+ * without the schema; anything else goes to the schema, which accepts it or throws its usual error.
+ */
+export function parseGoogleEvent(raw: unknown): GoogleEvent {
+  return isGoogleEvent(raw) ? raw : googleEventSchema.parse(raw);
+}
+
+/**
+ * True only if `googleEventSchema` accepts the event. It may reject events that the schema
+ * accepts, never the reverse. A test compares both on many variants.
+ */
+function isGoogleEvent(raw: unknown): raw is GoogleEvent {
+  if (!isObject(raw)) return false;
+  const { originalStartTime, extendedProperties } = raw;
+  return (
+    typeof raw.id === "string" &&
+    isOptionalString(raw.status) &&
+    isOptionalString(raw.summary) &&
+    isOptionalString(raw.location) &&
+    isOptionalString(raw.description) &&
+    isEventTime(raw.start) &&
+    isEventTime(raw.end) &&
+    isOptionalString(raw.recurringEventId) &&
+    (originalStartTime === undefined || isEventTime(originalStartTime)) &&
+    isOptionalString(raw.transparency) &&
+    isOptionalString(raw.visibility) &&
+    isOptionalString(raw.colorId) &&
+    (raw.attendees === undefined || isAttendeeArray(raw.attendees)) &&
+    (extendedProperties === undefined ||
+      (isObject(extendedProperties) &&
+        (extendedProperties.private === undefined || isStringRecord(extendedProperties.private))))
+  );
+}
+
+function isEventTime(value: unknown): boolean {
+  return isObject(value) && isOptionalString(value.date) && isOptionalString(value.dateTime);
+}
+
+/** Indexes every slot, so that a hole fails as in the schema. */
+function isAttendeeArray(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  for (let i = 0; i < value.length; i++) {
+    const attendee: unknown = value[i];
+    if (!isObject(attendee)) return false;
+    if (attendee.self !== undefined && typeof attendee.self !== "boolean") return false;
+    if (!isOptionalString(attendee.responseStatus)) return false;
+  }
+  return true;
+}
+
+/**
+ * A plain object with enumerable string values only, as JSON yields it. The schema copies such an
+ * object unchanged; anything else goes to the schema.
+ */
+function isStringRecord(value: unknown): boolean {
+  if (!isObject(value) || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  for (const key of Object.getOwnPropertyNames(value)) {
+    if (!Object.prototype.propertyIsEnumerable.call(value, key)) return false;
+    if (typeof value[key] !== "string") return false;
+  }
+  return true;
+}
+
 /** `fields` for events.list; keeps responses small. `description` only when a rule needs it. */
 export function googleEventFields(withBody: boolean): string {
   const item = [
@@ -73,7 +140,11 @@ export function googleEventFields(withBody: boolean): string {
  * cancelled occurrences, which Google lists with `status: cancelled`.
  */
 export function fromGoogleEvent(raw: unknown): SourceEvent | null {
-  const event = googleEventSchema.parse(raw);
+  return googleSourceEvent(parseGoogleEvent(raw));
+}
+
+/** `fromGoogleEvent` for an event that `parseGoogleEvent` returned. */
+export function googleSourceEvent(event: GoogleEvent): SourceEvent | null {
   if (event.status === "cancelled") return null;
 
   const allDay = event.start.date !== undefined;
@@ -107,7 +178,12 @@ export function fromGoogleEvent(raw: unknown): SourceEvent | null {
 
 /** Marker value and dedup key of a block, if the event is one of ours. */
 export function googleMarker(raw: unknown) {
-  const properties = googleEventSchema.parse(raw).extendedProperties?.private;
+  return googleEventMarker(parseGoogleEvent(raw));
+}
+
+/** `googleMarker` for an event that `parseGoogleEvent` returned. */
+export function googleEventMarker(event: GoogleEvent) {
+  const properties = event.extendedProperties?.private;
   const value = markerValue(properties);
   if (value === undefined) return null;
   return { ...parseMarkerValue(value), dedupKey: properties?.[GOOGLE_DEDUP_KEY] ?? "" };
@@ -117,7 +193,7 @@ export function googleMarker(raw: unknown) {
 function toTime(value: { date?: string; dateTime?: string }): string {
   if (value.date) return value.date;
   if (!value.dateTime) throw new Error("Google event time has neither date nor dateTime");
-  return new Date(value.dateTime).toISOString();
+  return isoInstant(value.dateTime);
 }
 
 /** Google event body for a block. No attendees, so that no invitations are sent. */

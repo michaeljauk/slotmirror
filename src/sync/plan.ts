@@ -10,14 +10,27 @@ import type {
 
 /** Decide whether a rule mirrors a source event at all. */
 export function isIncluded(event: SourceEvent, options: RuleOptions): boolean {
+  return included(event, options, skippedCategories(options));
+}
+
+/** The skipped categories of a rule, trimmed and in lower case; null if it skips none. */
+function skippedCategories(options: RuleOptions): ReadonlySet<string> | null {
+  if (options.skipCategories.length === 0) return null;
+  return new Set(options.skipCategories.map((name) => name.trim().toLowerCase()));
+}
+
+function included(
+  event: SourceEvent,
+  options: RuleOptions,
+  skipped: ReadonlySet<string> | null,
+): boolean {
   if (event.isMirror) return false;
   if (options.skipAllDay && event.allDay) return false;
   if (options.skipDeclined && event.declined) return false;
   if (options.skipFree && event.showAs === "free") return false;
   if (options.skipTentative && event.showAs === "tentative") return false;
-  if (options.skipCategories.length > 0) {
-    const skipped = new Set(options.skipCategories.map((name) => name.trim().toLowerCase()));
-    if (event.categories.some((name) => skipped.has(name.trim().toLowerCase()))) return false;
+  if (skipped && event.categories.some((name) => skipped.has(name.trim().toLowerCase()))) {
+    return false;
   }
   return true;
 }
@@ -44,7 +57,11 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
 
 /** Marker for a block: SHA-256 of rule ID and occurrence key, so no source ID leaves the source. */
 export async function markerFor(ruleId: string, occurrenceKey: string): Promise<string> {
-  return shortHash(`${ruleId}\u0000${occurrenceKey}`);
+  return shortHash(markerText(ruleId, occurrenceKey));
+}
+
+function markerText(ruleId: string, occurrenceKey: string): string {
+  return `${ruleId}\u0000${occurrenceKey}`;
 }
 
 /**
@@ -72,6 +89,10 @@ export async function inPrecedenceOrder(ruleIds: string[]): Promise<string[]> {
  * block never stands in for a busy one, and an open block never for a private one.
  */
 export async function dedupKeyFor(scope: string, content: BlockContent): Promise<string> {
+  return shortHash(dedupText(scope, content));
+}
+
+function dedupText(scope: string, content: BlockContent): string {
   const subject = content.subject.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
   const allDay = content.allDay ? "all-day" : "timed";
   const privacy = content.isPrivate ? "private" : "open";
@@ -85,14 +106,41 @@ export async function dedupKeyFor(scope: string, content: BlockContent): Promise
     content.showAs,
     privacy,
   ];
-  return shortHash(parts.join("\u0000"));
+  return parts.join("\u0000");
 }
 
+/** First 16 bytes of the SHA-256 of `text`, as 32 hex digits. */
 async function shortHash(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(digest).slice(0, 16), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
+  const hash = cachedHash(text);
+  return typeof hash === "string" ? hash : await hash;
+}
+
+const HEX = Array.from({ length: 256 }, (_, byte) => byte.toString(16).padStart(2, "0"));
+const encoder = new TextEncoder();
+
+/**
+ * Hashes of recent inputs. A rule runs every few minutes over mostly the same events, so most
+ * hashes of a run repeat those of the run before. The cache lives in memory only. It is bounded,
+ * and it keeps no long inputs, such as content hashes of events with a body.
+ */
+const hashCache = new Map<string, string>();
+const HASH_CACHE_ENTRIES = 10_000;
+const HASH_CACHE_INPUT_LENGTH = 400;
+
+/** Like `shortHash`, but without a promise if the hash is cached. */
+function cachedHash(text: string): string | Promise<string> {
+  const cached = hashCache.get(text);
+  if (cached !== undefined) return cached;
+  return crypto.subtle.digest("SHA-256", encoder.encode(text)).then((digest) => {
+    const bytes = new Uint8Array(digest, 0, 16);
+    let hash = "";
+    for (const byte of bytes) hash += HEX[byte];
+    if (text.length <= HASH_CACHE_INPUT_LENGTH) {
+      if (hashCache.size >= HASH_CACHE_ENTRIES) hashCache.clear();
+      hashCache.set(text, hash);
+    }
+    return hash;
+  });
 }
 
 /**
@@ -109,13 +157,19 @@ export async function desiredBlocks(
   dedup: { scope: string; claimed?: ReadonlySet<string> } = { scope: "" },
 ): Promise<DesiredBlock[]> {
   const blocks = new Map<string, DesiredBlock>();
+  const skipped = skippedCategories(options);
+  // Most hashes are cached; the loop awaits only those that are not.
   for (const event of events) {
-    if (!isIncluded(event, options)) continue;
+    if (!included(event, options, skipped)) continue;
     const content = blockContent(event, options);
-    const dedupKey = await dedupKeyFor(dedup.scope, content);
+    const dedupHash = cachedHash(dedupText(dedup.scope, content));
+    const dedupKey = typeof dedupHash === "string" ? dedupHash : await dedupHash;
     if (dedup.claimed?.has(dedupKey)) continue;
-    const marker = await markerFor(ruleId, event.occurrenceKey);
-    const contentHash = await shortHash(JSON.stringify(content));
+    const markerHash = cachedHash(markerText(ruleId, event.occurrenceKey));
+    const marker = typeof markerHash === "string" ? markerHash : await markerHash;
+    const contentText = JSON.stringify(content);
+    const contentHashed = cachedHash(contentText);
+    const contentHash = typeof contentHashed === "string" ? contentHashed : await contentHashed;
     blocks.set(marker, { marker, contentHash, dedupKey, ...content });
   }
   return [...blocks.values()];

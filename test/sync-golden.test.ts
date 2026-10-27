@@ -580,6 +580,7 @@ async function fixture() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("golden output of the sync engine", () => {
@@ -792,6 +793,9 @@ describe("golden output of the sync engine", () => {
   });
 
   it("writes the same batches in full rule runs across accounts and providers", async () => {
+    // The plan keeps blocks outside the sync window, so the output depends on the date of the run.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(BASE);
     const { graphRaw, googleRaw } = await fixture();
     const { user } = await signIn("owner@example.com");
     const org = await env.DB.prepare("SELECT org_id AS orgId FROM users WHERE id = ?")
@@ -950,7 +954,11 @@ const GOLDEN: Record<string, string> = {
   errors: "b34457994a2f55a7ce058535217f3ea5ba454f6440155624f27d647cd314fee7",
 };
 
+/**
+ * Digests of the full rule runs on the fixture's base date. They differ from the output before the
+ * CPU optimisations only where the plan keeps timed blocks outside the sync window.
+ */
 const GOLDEN_RUNS = {
-  results: "2d7372afef887705a39c70e981b6c6383ee4305b7d713ef79843295ef8f8658f",
-  batches: "ab1a1392a8716a823b6b3d6f14d5e3300a26669aa99aaf1ca826327053233820",
+  results: "d674af13045f075d46e1251f62015f9416daed4ee99c3da3bf2b725b22d67537",
+  batches: "781626c422566cf22087ad775d1c36467137d411ed626a660e09cdc5073e508b",
 };

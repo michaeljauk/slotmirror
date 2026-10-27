@@ -52,6 +52,8 @@ export interface EditorAccount {
   calendars: { id: string; name: string; isMain: boolean; isSource: boolean }[];
   /** Working hours of the account (see `setAccountWorkHours`); null if it has none. */
   workHours: AccountWorkHours | null;
+  /** Options of the account as a source (see `SourceOptions`); null if it never stored any. */
+  sourceOptions: SourceOptions | null;
 }
 
 /** The rule of one source calendar within a direction; null if it has none yet. */
@@ -104,6 +106,8 @@ export interface EditorState {
   settings: SyncSettings;
   /** Rules that do not run between two main calendars. The editor lists them, so none hides. */
   others: { ruleId: string; source: string; target: string; choice: Choice }[];
+  /** Every rule of the user, with its source and target account, for changes per account. */
+  rules: { from: string; to: string; rule: SlotRule }[];
 }
 
 const PUBLIC_PROVIDERS: Record<string, string> = {
@@ -152,6 +156,7 @@ interface AccountRow {
   needsReconnect: number;
   color: string | null;
   workHours: string | null;
+  sourceOptions: string | null;
 }
 
 interface CalendarRow {
@@ -183,7 +188,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
     env.DB.prepare(
       `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
               display_name AS displayName, needs_reconnect AS needsReconnect, color,
-              work_hours AS workHours
+              work_hours AS workHours, source_options AS sourceOptions
        FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
     ).bind(userId),
     env.DB.prepare(
@@ -252,6 +257,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
         isSource: calendar.isSource === 1,
       })),
       workHours: parseAccountHours(row.workHours),
+      sourceOptions: parseSourceOptions(row.sourceOptions),
     };
   });
 
@@ -336,7 +342,19 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
     json,
     ruleRows.map((row) => parseRuleOptions(row.options)),
   );
-  return { accounts, directions, others, settings: { ...parseSettings(json), daysAhead } };
+  const rules = ruleRows.map((row) => ({
+    from: row.sourceAccountId,
+    to: row.targetAccountId,
+    rule: {
+      id: row.id,
+      enabled: row.enabled === 1,
+      origin: row.origin,
+      options: parseRuleOptions(row.options),
+      optionsJson: row.options,
+    },
+  }));
+  const settings = { ...parseSettings(json), daysAhead };
+  return { accounts, directions, others, rules, settings };
 }
 
 /**
@@ -385,7 +403,12 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
  * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
  * removal of the blocks beyond it, which no run reads any more.
  */
-export async function setSettings(env: Env, user: CurrentUser, form: SettingsForm): Promise<void> {
+export async function setSettings(
+  env: Env,
+  user: CurrentUser,
+  form: SettingsForm,
+  syncs?: Set<string>,
+): Promise<void> {
   const { results } = await env.DB.prepare(
     `SELECT r.id, r.options, r.enabled, tc.can_edit AS canEdit, tc.account_id AS targetAccountId,
             tc.remote_id AS remoteCalendarId
@@ -472,9 +495,7 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
       skipCategories: settings.skipCategories.length,
     },
   });
-  for (const id of new Set(results.map((row) => row.targetAccountId))) {
-    await accountSync(env, id).requestSync();
-  }
+  await requestSyncs(env, new Set(results.map((row) => row.targetAccountId)), syncs);
 }
 
 /** Longest name an account can get. */
@@ -592,9 +613,11 @@ export function accountWorkHours(
 }
 
 /**
- * Set or clear the working hours of an account. Rules into the account that use working hours
- * get the new ones; with null they lose them. The account and its rules change in one batch.
- * Returns false if the account is not the user's.
+ * Set or clear the working hours of an account. Every rule into the account that uses working
+ * hours gets the new ones, with null it loses them: the rules of the directions, parked rules and
+ * rules into other calendars of the account. The account and its rules change in one batch.
+ * Returns false if the account is not the user's. Throws `EditorConflict` if a rule changed since
+ * the read.
  */
 export async function setAccountWorkHours(
   env: Env,
@@ -608,16 +631,10 @@ export async function setAccountWorkHours(
   if (hoursKey(account.workHours ?? NO_WORKING_HOURS) === hoursKey(hours ?? NO_WORKING_HOURS)) {
     return true;
   }
-  const patches: RulePatch[] = [];
-  for (const direction of state.directions) {
-    if (direction.to !== accountId) continue;
-    for (const { rule } of direction.slots) {
-      if (rule && hasWorkingHours(rule.options)) {
-        patches.push({ direction, rule, patch: hours ?? NO_WORKING_HOURS });
-      }
-    }
-  }
-  await writePatches(env, user, state, patches, [
+  const patches = state.rules
+    .filter(({ to, rule }) => to === accountId && hasWorkingHours(rule.options))
+    .map(({ to, rule }) => ({ to, rule, patch: hours ?? NO_WORKING_HOURS }));
+  await writePatches(env, user, patches, [
     env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = ? AND user_id = ?").bind(
       hours ? JSON.stringify(hours) : null,
       accountId,
@@ -628,16 +645,16 @@ export async function setAccountWorkHours(
 }
 
 /**
- * The origin of a rule: "group" for an enabled busy rule between two group members without
- * working hours, otherwise "custom". Working hours make an exception, like any choice but busy.
+ * The origin of a rule for a choice: "group" for an enabled busy rule between two group members,
+ * otherwise "custom". Details such as working hours, the colour or the buffer do not count: they
+ * never change the origin, so that turning them on and off cannot make an exception a group rule.
  */
 function groupOrigin(
   bothInGroup: boolean,
   enabled: boolean,
   options: RuleOptions,
 ): "group" | "custom" {
-  const busy = choiceOf(options, enabled) === "busy";
-  return bothInGroup && busy && !hasWorkingHours(options) ? "group" : "custom";
+  return bothInGroup && choiceOf(options, enabled) === "busy" ? "group" : "custom";
 }
 
 /**
@@ -681,36 +698,88 @@ export function blockColorFor(provider: Provider, value: string): string | null 
   return trimmed.length <= MAX_CATEGORY_LENGTH && !trimmed.includes(",") ? trimmed : null;
 }
 
+/**
+ * Options that belong to a source account, not to a direction: every rule from the account shares
+ * them. The account stores them, so that they stay while the account has no rules, and new rules
+ * from it take them. Another such option needs its key here and a field in the editor.
+ */
+export const SOURCE_OPTION_KEYS = ["bufferBefore", "bufferAfter"] as const;
+
+export type SourceOptionKey = (typeof SOURCE_OPTION_KEYS)[number];
+
+export type SourceOptions = Pick<RuleOptions, SourceOptionKey>;
+
 /** Buffers in minutes. A buffer that is missing keeps its value. */
 export type BlockBuffer = Partial<Pick<RuleOptions, "bufferBefore" | "bufferAfter">>;
 
+function pickSourceOptions(options: RuleOptions): SourceOptions {
+  return Object.fromEntries(SOURCE_OPTION_KEYS.map((key) => [key, options[key]])) as SourceOptions;
+}
+
+/** The stored source options of an account, or null if it has none or the JSON is broken. */
+function parseSourceOptions(json: string | null): SourceOptions | null {
+  if (!json) return null;
+  let parsed;
+  try {
+    parsed = ruleOptionsSchema.safeParse(JSON.parse(json));
+  } catch {
+    return null;
+  }
+  return parsed.success ? pickSourceOptions(parsed.data) : null;
+}
+
 /**
- * The buffer of a source account: the one that all rules of its directions share, "mixed" if they
- * differ, null if the account has no rules. The editor shows and writes one buffer per source.
+ * The source options of an account as the editor shows them: the stored ones, or else those of
+ * its first rule, or else the defaults. `mixed` names the options in which a rule from the account
+ * differs, such as rules from before the account stored its options. Null for an unknown account.
+ */
+export function sourceOptionsOf(
+  state: EditorState,
+  accountId: string,
+): { options: SourceOptions; mixed: SourceOptionKey[] } | null {
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (!account) return null;
+  const rules = state.rules.filter(({ from }) => from === accountId);
+  const first = rules[0]?.rule.options;
+  const options = account.sourceOptions ?? pickSourceOptions(first ?? ruleOptionsSchema.parse({}));
+  const mixed = SOURCE_OPTION_KEYS.filter((key) =>
+    rules.some(({ rule }) => rule.options[key] !== options[key]),
+  );
+  return { options, mixed };
+}
+
+/**
+ * The source options for a new rule from an account: the stored ones, or else those that all its
+ * rules share. Options in which its rules differ keep the value of the new rule's model.
+ */
+function newRuleSource(state: EditorState, accountId: string): Partial<SourceOptions> {
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (account?.sourceOptions) return account.sourceOptions;
+  const current = sourceOptionsOf(state, accountId);
+  if (!current) return {};
+  return Object.fromEntries(
+    SOURCE_OPTION_KEYS.filter((key) => !current.mixed.includes(key)).map((key) => [
+      key,
+      current.options[key],
+    ]),
+  );
+}
+
+/**
+ * The buffer of a source account, which all rules from it share: "mixed" if its rules differ,
+ * null for an unknown account. The editor shows and writes one buffer per source.
  */
 export function sourceBuffer(
   state: EditorState,
   accountId: string,
 ): Required<BlockBuffer> | "mixed" | null {
-  let first: Required<BlockBuffer> | null = null;
-  for (const direction of state.directions) {
-    if (direction.from !== accountId) continue;
-    for (const { rule } of direction.slots) {
-      if (!rule) continue;
-      const { bufferBefore, bufferAfter } = rule.options;
-      if (!first) first = { bufferBefore, bufferAfter };
-      else if (first.bufferBefore !== bufferBefore || first.bufferAfter !== bufferAfter) {
-        return "mixed";
-      }
-    }
+  const current = sourceOptionsOf(state, accountId);
+  if (!current) return null;
+  if (current.mixed.includes("bufferBefore") || current.mixed.includes("bufferAfter")) {
+    return "mixed";
   }
-  return first;
-}
-
-/** The buffer for a new rule of a source: the source's buffer, or none. */
-function newRuleBuffer(state: EditorState, accountId: string): BlockBuffer {
-  const buffer = sourceBuffer(state, accountId);
-  return buffer === "mixed" || buffer === null ? {} : buffer;
+  const { bufferBefore, bufferAfter } = current.options;
+  return { bufferBefore, bufferAfter };
 }
 
 /**
@@ -718,18 +787,18 @@ function newRuleBuffer(state: EditorState, accountId: string): BlockBuffer {
  * - `colors`: the block colour of one direction.
  * - `workHours`: per direction, true copies the target account's working hours into the rules,
  *   false clears them.
- * - `buffers`: per source account, one buffer for every rule of its directions.
+ * - `sources`: per source account, options for the account and every rule from it.
  */
 export interface RuleDetails {
   colors?: { from: string; to: string; value: string }[];
   workHours?: { from: string; to: string; on: boolean }[];
-  buffers?: { from: string; buffer: Required<BlockBuffer> }[];
+  sources?: { from: string; options: Partial<SourceOptions> }[];
 }
 
 /** Why rule details cannot be stored, or null if they can. */
 export type RuleDetailsProblem =
   | { kind: "color"; problem: "comma" | "tooLong" | "invalid" }
-  | { kind: "buffer" }
+  | { kind: "source" }
   | { kind: "noWorkHours"; account: string }
   /** The direction is not the user's, or no longer exists. */
   | { kind: "direction"; field: "color" | "workHours" };
@@ -749,9 +818,9 @@ export function ruleDetailsProblem(
     const problem = blockColorProblem(target.provider, value);
     if (problem) return { kind: "color", problem };
   }
-  for (const { from, buffer } of details.buffers ?? []) {
+  for (const { from, options } of details.sources ?? []) {
     const known = state.accounts.some((account) => account.id === from);
-    if (!known || !ruleOptionsSchema.safeParse(buffer).success) return { kind: "buffer" };
+    if (!known || !ruleOptionsSchema.safeParse(options).success) return { kind: "source" };
   }
   for (const { from, to, on } of details.workHours ?? []) {
     const target = state.accounts.find((account) => account.id === to);
@@ -769,20 +838,25 @@ export function ruleDetailsProblem(
  * Call it after the choices and source calendars of the same save, so that it reaches their new
  * rules. A direction without rules, for example one that lost its last source in the same save,
  * has nothing to change and is skipped. So is the copy of working hours from an account that has
- * none any more; its rules keep theirs. Returns false for details that `ruleDetailsProblem`
- * refuses against the current state.
+ * none any more; its rules keep theirs. Source options are stored on the account even if it has
+ * no rules. Returns false for details that `ruleDetailsProblem` refuses against the current state.
+ * Throws `EditorConflict` if a rule changed since the read; then nothing is stored.
  */
 export async function setRuleDetails(
   env: Env,
   user: CurrentUser,
   details: RuleDetails,
+  syncs?: Set<string>,
 ): Promise<boolean> {
   const state = await loadEditorState(env, user.id);
   const problem = ruleDetailsProblem(state, details);
   if (problem && problem.kind !== "direction" && problem.kind !== "noWorkHours") return false;
   const patches: RulePatch[] = [];
+  const accounts: D1PreparedStatement[] = [];
   const forDirection = (direction: EditorDirection, patch: Partial<RuleOptions>) => {
-    for (const { rule } of direction.slots) if (rule) patches.push({ direction, rule, patch });
+    for (const { rule } of direction.slots) {
+      if (rule) patches.push({ to: direction.to, rule, patch });
+    }
   };
   for (const { from, to, value } of details.colors ?? []) {
     const target = state.accounts.find((account) => account.id === to);
@@ -790,10 +864,21 @@ export async function setRuleDetails(
     const blockColor = target ? blockColorFor(target.provider, value) : null;
     if (direction && blockColor !== null) forDirection(direction, { blockColor });
   }
-  for (const { from, buffer } of details.buffers ?? []) {
-    for (const direction of state.directions) {
-      if (direction.from === from) forDirection(direction, buffer);
+  for (const { from, options } of details.sources ?? []) {
+    const current = sourceOptionsOf(state, from);
+    if (!current) continue;
+    // Every rule from the account: those of its directions, parked ones and manual ones.
+    for (const entry of state.rules) {
+      if (entry.from === from) patches.push({ to: entry.to, rule: entry.rule, patch: options });
     }
+    // json_patch merges into what the account has, so that a concurrent save of another source
+    // option keeps its value. An account without stored options starts from what the page showed.
+    accounts.push(
+      env.DB.prepare(
+        `UPDATE accounts SET source_options = json_patch(COALESCE(source_options, ?), ?)
+         WHERE id = ? AND user_id = ?`,
+      ).bind(JSON.stringify(current.options), JSON.stringify(options), from, user.id),
+    );
   }
   for (const { from, to, on } of details.workHours ?? []) {
     const target = state.accounts.find((account) => account.id === to);
@@ -802,7 +887,7 @@ export async function setRuleDetails(
     if (!on) forDirection(direction, NO_WORKING_HOURS);
     else if (target.workHours) forDirection(direction, target.workHours);
   }
-  await writePatches(env, user, state, patches);
+  await writePatches(env, user, patches, accounts, syncs);
   return true;
 }
 
@@ -813,29 +898,55 @@ export async function setBlockColor(
   fromId: string,
   toId: string,
   value: string,
+  syncs?: Set<string>,
 ): Promise<boolean> {
-  return setRuleDetails(env, user, { colors: [{ from: fromId, to: toId, value }] });
+  return setRuleDetails(env, user, { colors: [{ from: fromId, to: toId, value }] }, syncs);
 }
 
-/** A change of the options of one rule. Patches of the same rule apply in order. */
+/** A change of the options of one rule into account `to`. Patches of a rule apply in order. */
 interface RulePatch {
-  direction: EditorDirection;
+  to: string;
   rule: SlotRule;
   patch: Partial<RuleOptions>;
 }
 
 /**
+ * A save of the editor found rules that another request changed after this one read them, for
+ * example in another tab. Nothing of the batch that found it was stored.
+ */
+export class EditorConflict extends Error {
+  constructor() {
+    super("Rules changed since they were read");
+    this.name = "EditorConflict";
+  }
+}
+
+/**
+ * A statement that fails its batch, and so rolls back every write of the batch, if the statement
+ * before it changed no row. SQLite has no RAISE outside triggers; json() of text that is not JSON
+ * fails instead. The argument depends on changes(), so SQLite cannot evaluate it ahead of time.
+ */
+function requireChange(env: Env): D1PreparedStatement {
+  return env.DB.prepare("SELECT json(CASE WHEN changes() > 0 THEN '1' ELSE 'unchanged' END)");
+}
+
+/** True for the failure of `requireChange`. */
+function isRequiredChangeMissing(error: unknown): boolean {
+  return error instanceof Error && /malformed JSON/i.test(error.message);
+}
+
+/**
  * Write option patches and `before` in one D1 batch, with one audit event per changed rule, then
- * ask each target account with a changed rule to sync. Working hours make a group rule an
- * exception, so that the page offers the reset and leaving the group keeps them; without hours a
- * busy rule between group members is a group rule again. A parked rule stays parked.
+ * ask each target account with a changed enabled rule to sync, or add it to `syncs`. Each rule is
+ * written only if its options are still the ones that were read; otherwise the whole batch fails
+ * and this throws `EditorConflict`. The origin of a rule stays, and a parked rule stays parked.
  */
 async function writePatches(
   env: Env,
   user: CurrentUser,
-  state: EditorState,
   patches: RulePatch[],
   before: D1PreparedStatement[] = [],
+  syncs?: Set<string>,
 ): Promise<void> {
   const merged = new Map<string, RulePatch>();
   for (const entry of patches) {
@@ -847,7 +958,7 @@ async function writePatches(
   }
   const statements = [...before];
   const targets = new Set<string>();
-  for (const { direction, rule, patch } of merged.values()) {
+  for (const { to, rule, patch } of merged.values()) {
     const parsed = ruleOptionsSchema.safeParse({ ...rule.options, ...patch });
     if (!parsed.success) continue;
     const options = parsed.data;
@@ -859,40 +970,39 @@ async function writePatches(
       detail.bufferBefore = String(options.bufferBefore);
       detail.bufferAfter = String(options.bufferAfter);
     }
-    const hoursChanged = hoursKey(options) !== hoursKey(old);
-    if (hoursChanged) {
+    if (hoursKey(options) !== hoursKey(old)) {
       detail.workDays = options.workDays.join(",");
       detail.workStart = options.workStart;
       detail.workEnd = options.workEnd;
       detail.workTimeZone = options.workTimeZone;
     }
     if (Object.keys(detail).length === 0) continue;
-    const from = state.accounts.find((account) => account.id === direction.from);
-    const to = state.accounts.find((account) => account.id === direction.to);
-    const bothInGroup = Boolean(from?.inGroup && to?.inGroup);
-    const origin = hoursChanged ? groupOrigin(bothInGroup, rule.enabled, options) : rule.origin;
     const stored = isMarkedParked(rule.optionsJson) ? { ...options, parked: true } : options;
     statements.push(
-      env.DB.prepare("UPDATE rules SET options = ?, origin = ? WHERE id = ? AND user_id = ?").bind(
-        JSON.stringify(stored),
-        origin,
-        rule.id,
-        user.id,
-      ),
+      env.DB.prepare(
+        "UPDATE rules SET options = ? WHERE id = ? AND user_id = ? AND options = ?",
+      ).bind(JSON.stringify(stored), rule.id, user.id, rule.optionsJson),
+      requireChange(env),
       auditStatement(env.DB, {
         orgId: user.orgId,
         userId: user.id,
-        accountId: direction.to,
+        accountId: to,
         ruleId: rule.id,
         kind: "rule_updated",
         detail,
       }),
     );
-    targets.add(direction.to);
+    // A disabled rule writes no blocks, so its target has nothing to sync.
+    if (rule.enabled) targets.add(to);
   }
   if (statements.length === 0) return;
-  await env.DB.batch(statements);
-  await requestSyncs(env, targets);
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    if (isRequiredChangeMissing(error)) throw new EditorConflict();
+    throw error;
+  }
+  await requestSyncs(env, targets, syncs);
 }
 
 /** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */
@@ -955,6 +1065,7 @@ export async function setDirection(
   fromId: string,
   toId: string,
   choice: Choice,
+  syncs?: Set<string>,
 ): Promise<void> {
   const state = await loadEditorState(env, user.id);
   const to = state.accounts.find((account) => account.id === toId);
@@ -1019,13 +1130,12 @@ export async function setDirection(
       continue;
     }
 
-    // A direction's first rule gets the buffer of its source, which all rules of a source share.
+    // A new rule gets the options of its source, which all rules from the source share.
     const options = {
-      ...(rule?.options ??
-        direction.options ?? {
-          ...newRuleOptions(state.settings, choice),
-          ...newRuleBuffer(state, fromId),
-        }),
+      ...(rule?.options ?? {
+        ...(direction.options ?? newRuleOptions(state.settings, choice)),
+        ...newRuleSource(state, fromId),
+      }),
       detailLevel: choice,
     };
     const origin = groupOrigin(bothInGroup, true, options);
@@ -1051,7 +1161,7 @@ export async function setDirection(
       }
     }
   }
-  if (choice !== "off") await accountSync(env, to.id).requestSync();
+  if (choice !== "off") await requestSyncs(env, [to.id], syncs);
 }
 
 /**
@@ -1065,6 +1175,7 @@ export async function setSourceCalendar(
   user: CurrentUser,
   calendarId: string,
   isSource: boolean,
+  syncs?: Set<string>,
 ): Promise<void> {
   const updated = await env.DB.prepare(
     `UPDATE calendars SET is_source = ?
@@ -1119,18 +1230,24 @@ export async function setSourceCalendar(
       own.rule = null;
     }
   }
-  const results = await addMissingRules(env, user, state, [
-    ...stale.map(({ ruleId }) =>
-      env.DB.prepare(
-        `DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0
+  const results = await addMissingRules(
+    env,
+    user,
+    state,
+    [
+      ...stale.map(({ ruleId }) =>
+        env.DB.prepare(
+          `DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0
            AND json_extract(options, '$.parked') = 1`,
-      ).bind(ruleId, user.id),
-    ),
-    // The calendar is a source again: its rules that stay are no longer parked.
-    env.DB.prepare(
-      "UPDATE rules SET options = json_remove(options, '$.parked') WHERE source_calendar_id = ? AND user_id = ?",
-    ).bind(calendarId, user.id),
-  ]);
+        ).bind(ruleId, user.id),
+      ),
+      // The calendar is a source again: its rules that stay are no longer parked.
+      env.DB.prepare(
+        "UPDATE rules SET options = json_remove(options, '$.parked') WHERE source_calendar_id = ? AND user_id = ?",
+      ).bind(calendarId, user.id),
+    ],
+    syncs,
+  );
   const deleted = stale.filter((_, index) => (results[index]?.meta.changes ?? 0) > 0);
   for (const { ruleId, accountId } of deleted) {
     // An exception writes no blocks, so there is nothing to remove.
@@ -1155,11 +1272,12 @@ export async function resetDirection(
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to?.calendar?.canEdit) return;
-  // Working hours make a direction an exception, so they go first. Then the direction can rejoin
-  // the group, which mirrors at all times; outside the group the rules go anyway.
-  await setRuleDetails(env, user, { workHours: [{ from: fromId, to: toId, on: false }] });
-  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
-  await setBlockColor(env, user, fromId, toId, "");
+  // The hours go first; outside the group the rules go anyway. One sync request at the end.
+  const syncs = new Set<string>();
+  await setRuleDetails(env, user, { workHours: [{ from: fromId, to: toId, on: false }] }, syncs);
+  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off", syncs);
+  await setBlockColor(env, user, fromId, toId, "", syncs);
+  await requestSyncs(env, syncs);
 }
 
 /** A rule that a direction lacks, with the choice for the audit log. */
@@ -1194,6 +1312,14 @@ function missingRules(state: EditorState): MissingRule[] {
     if (!from || !to?.calendar?.canEdit || direction.elsewhere) continue;
     const model = direction.slots.find((slot) => slot.rule)?.rule ?? direction.parked[0];
     if (!model && !(from.inGroup && to.inGroup)) continue;
+    // A copy takes the current options of its source and the current hours of its target: a
+    // parked model can be older than both.
+    const hours = model && hasWorkingHours(model.options) ? (to.workHours ?? {}) : {};
+    const options = {
+      ...(model?.options ?? newRuleOptions(state.settings, "busy")),
+      ...newRuleSource(state, from.id),
+      ...hours,
+    };
     for (const slot of direction.slots) {
       if (slot.rule) continue;
       missing.push({
@@ -1201,10 +1327,7 @@ function missingRules(state: EditorState): MissingRule[] {
         sourceCalendarId: slot.sourceCalendarId,
         targetCalendarId: to.calendar.id,
         targetAccountId: to.id,
-        options: model?.options ?? {
-          ...newRuleOptions(state.settings, "busy"),
-          ...newRuleBuffer(state, from.id),
-        },
+        options,
         origin: model?.origin ?? "group",
         enabled: model?.enabled ?? true,
         choice: model ? choiceOf(model.options, model.enabled) : "busy",
@@ -1262,8 +1385,19 @@ function syncTargets(rules: MissingRule[], results: D1Result[], offset: number):
   return targets;
 }
 
-async function requestSyncs(env: Env, accountIds: Iterable<string>): Promise<void> {
-  for (const id of accountIds) await accountSync(env, id).requestSync();
+/**
+ * Ask accounts to sync, or add them to `syncs`, so that a save with several steps asks each
+ * account once, after its last write.
+ */
+export async function requestSyncs(
+  env: Env,
+  accountIds: Iterable<string>,
+  syncs?: Set<string>,
+): Promise<void> {
+  for (const id of accountIds) {
+    if (syncs) syncs.add(id);
+    else await accountSync(env, id).requestSync();
+  }
 }
 
 /**
@@ -1285,11 +1419,12 @@ async function addMissingRules(
   user: Pick<CurrentUser, "id" | "orgId">,
   state: EditorState,
   before: D1PreparedStatement[] = [],
+  syncs?: Set<string>,
 ): Promise<D1Result[]> {
   const missing = missingRules(state);
   if (missing.length === 0 && before.length === 0) return [];
   const results = await env.DB.batch([...before, ...insertStatements(env, user, missing)]);
-  await requestSyncs(env, syncTargets(missing, results, before.length));
+  await requestSyncs(env, syncTargets(missing, results, before.length), syncs);
   return results;
 }
 
@@ -1336,7 +1471,7 @@ export async function setGroupMemberships(
         rule?.origin === "custom" &&
         rule.enabled &&
         choiceOf(rule.options, true) === "busy" &&
-        hasDefaultOptions(rule.options, state.settings)
+        hasDefaultOptions(rule.options, state.settings, newRuleSource(state, direction.from))
       ) {
         // Only if the rule is unchanged: a concurrent request may have customised it.
         statements.push(
@@ -1430,10 +1565,15 @@ function groupChangedAudit(env: Env, user: CurrentUser, accountId: string, inGro
   });
 }
 
-function hasDefaultOptions(options: RuleOptions | null, settings: SyncSettings): boolean {
+/** True if a rule has the options of a new group rule: the settings and its source's options. */
+function hasDefaultOptions(
+  options: RuleOptions | null,
+  settings: SyncSettings,
+  source: Partial<SourceOptions>,
+): boolean {
   if (!options) return false;
   const { detailLevel: _level, ...rest } = options;
-  const { detailLevel: _default, ...defaults } = newRuleOptions(settings, "busy");
+  const { detailLevel: _default, ...defaults } = { ...newRuleOptions(settings, "busy"), ...source };
   return JSON.stringify(rest) === JSON.stringify(defaults);
 }
 

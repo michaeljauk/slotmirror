@@ -206,6 +206,8 @@ export const en = {
         "Working hours: the end must be after the start. For the end of the day, choose “until midnight”. Nothing was saved.",
       zone: "Working hours: unknown time zone. Enter a name such as Europe/Vienna. Nothing was saved.",
     },
+    saveConflict:
+      "These rules changed in the meantime, for example in another tab. Reload the page and check them.",
     workHoursDirection:
       "These working hours belong to a direction that no longer exists. Reload the page. Nothing was saved.",
     googleColor: (id: string) =>

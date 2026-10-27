@@ -1175,6 +1175,17 @@ details.rename summary::-webkit-details-marker {
   justify-self: start;
 }
 
+.rename-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.rename-actions .link-button {
+  font-size: 12.5px;
+}
+
 /* Editor polish */
 
 .dest-name {
@@ -1989,11 +2000,6 @@ details.source > .source-head .provider-icon,
 .work-time input[type="time"]:disabled {
   color: var(--faint);
   background: var(--bg);
-}
-
-.account-hours .link-button {
-  justify-self: start;
-  font-size: 12.5px;
 }
 
 /* Rows of a source card: a label on the left, the content on the right. */

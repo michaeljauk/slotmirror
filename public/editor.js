@@ -23,6 +23,11 @@ for (const field of document.querySelectorAll("input[name=workTimeZone][data-bro
   if (zone) field.value = zone;
 }
 // "Until midnight" stands for 24:00, which a time field cannot hold; it disables the end field.
+// The server renders the field enabled, so that it works without the script.
+for (const box of document.querySelectorAll("input[name=workUntilMidnight]:checked")) {
+  const end = box.form?.elements.workEnd;
+  if (end) end.disabled = true;
+}
 document.addEventListener("change", (event) => {
   if (event.target.name !== "workUntilMidnight") return;
   const end = event.target.form?.elements.workEnd;

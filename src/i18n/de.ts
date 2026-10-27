@@ -208,6 +208,8 @@ export const de: Messages = {
         "Arbeitszeit: Das Ende muss nach dem Beginn liegen. Für das Tagesende wähle „bis Mitternacht“. Es wurde nichts gespeichert.",
       zone: "Arbeitszeit: Unbekannte Zeitzone. Gib einen Namen wie Europe/Vienna ein. Es wurde nichts gespeichert.",
     },
+    saveConflict:
+      "Diese Regeln wurden inzwischen geändert, zum Beispiel in einem anderen Tab. Lade die Seite neu und prüf sie.",
     workHoursDirection:
       "Diese Arbeitszeit gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
     googleColor: (id: string) =>

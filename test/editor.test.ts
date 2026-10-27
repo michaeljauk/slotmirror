@@ -773,15 +773,18 @@ describe("block buffer per source", () => {
     }
     expect(await buffersFrom(user.id, w)).toEqual(["0,0"]);
     const buffer = { bufferBefore: 999, bufferAfter: 0 };
-    expect(await setRuleDetails(env, user, { buffers: [{ from: w, buffer }] })).toBe(false);
+    expect(await setRuleDetails(env, user, { sources: [{ from: w, options: buffer }] })).toBe(
+      false,
+    );
     expect(await buffersFrom(user.id, w)).toEqual(["0,0"]);
   });
 
-  it("shows no buffer for a source without rules, and stores nothing for it", async () => {
+  it("stores the buffer of a source without rules on its account", async () => {
     const { user, cookie, w } = await setup("bufoff");
-    expect(await bufferRow(cookie, w)).toBe("");
+    expect(await bufferRow(cookie, w)).toContain("No buffer");
     const buffer = { bufferBefore: 10, bufferAfter: 10 };
-    expect(await setRuleDetails(env, user, { buffers: [{ from: w, buffer }] })).toBe(true);
+    expect(await setRuleDetails(env, user, { sources: [{ from: w, options: buffer }] })).toBe(true);
     expect(await buffersFrom(user.id, w)).toEqual([]);
+    expect(await bufferRow(cookie, w)).toContain("10 min. before and after");
   });
 });

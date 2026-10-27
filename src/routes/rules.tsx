@@ -7,8 +7,10 @@ import { i18nFromContext, useI18n as i18nForStatus, type Messages } from "../i18
 import {
   CHOICES,
   deleteRuleWithBlocks,
+  EditorConflict,
   loadEditorState,
   MAX_CATEGORY_LENGTH,
+  requestSyncs,
   resetDirection,
   ruleDetailsProblem,
   setDirection,
@@ -194,6 +196,12 @@ function refuse(c: Context<AppEnv>, text: string) {
   return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
 }
 
+/** Refuse a save that met a change of another request (`EditorConflict`); rethrow the rest. */
+function refuseConflict(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof EditorConflict) return refuse(c, i18nFromContext(c).t.editor.saveConflict);
+  throw error;
+}
+
 rules.post("/direction", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
@@ -208,9 +216,10 @@ rules.post("/direction", async (c) => {
 
 // All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
 // "choice.<from>.<to>", "blockColor.<from>.<to>", "workHours.<from>.<to>" ("1" or "0"), the
-// buffer of a source "bufferBefore.<from>" and "bufferAfter.<from>", and "settings.<name>". Every field is checked before the first write, so that an invalid field
-// refuses the whole save. The writes are not one transaction: a D1 or Durable Object failure can
-// still stop them part-way.
+// buffer of a source "bufferBefore.<from>" and "bufferAfter.<from>", and "settings.<name>". Every
+// field is checked before the first write, so that an invalid field refuses the whole save. The
+// writes are not one transaction: a D1 or Durable Object failure, or a rule that another request
+// changed meanwhile, can still stop them part-way. Each account gets one sync request at the end.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
   const { t } = i18nFromContext(c);
@@ -249,7 +258,7 @@ rules.post("/choices", async (c) => {
   }
   const details: RuleDetails = {
     colors,
-    buffers: [...buffers].map(([from, buffer]) => ({ from, buffer })),
+    sources: [...buffers].map(([from, options]) => ({ from, options })),
     workHours: fields("workHours").flatMap(({ first, second, value }) =>
       second ? [{ from: first, to: second, on: value === "1" }] : [],
     ),
@@ -257,18 +266,27 @@ rules.post("/choices", async (c) => {
   const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
 
-  // Source calendars first, so that the choices below also reach newly chosen calendars.
-  for (const { first, value } of calendars) {
-    await setSourceCalendar(c.env, user, first, value === "1");
-  }
-  for (const change of changes) {
-    await setDirection(c.env, user, change.from, change.to, change.choice);
-  }
-  // Rule details after the choices, so that a direction turned on in the same save has its rules.
-  // A direction that lost its last source in this save has no rules left to change.
-  await setRuleDetails(c.env, user, details);
-  if (form.has("settings")) {
-    await setSettings(c.env, user, settingsFrom(form, t.editor.defaultBlockTitle, "settings."));
+  const syncs = new Set<string>();
+  try {
+    // Source calendars first, so that the choices below also reach newly chosen calendars.
+    for (const { first, value } of calendars) {
+      await setSourceCalendar(c.env, user, first, value === "1", syncs);
+    }
+    for (const change of changes) {
+      await setDirection(c.env, user, change.from, change.to, change.choice, syncs);
+    }
+    // Rule details after the choices, so that a direction turned on in the same save has its
+    // rules. A direction that lost its last source in this save has no rules left to change.
+    await setRuleDetails(c.env, user, details, syncs);
+    if (form.has("settings")) {
+      const settings = settingsFrom(form, t.editor.defaultBlockTitle, "settings.");
+      await setSettings(c.env, user, settings, syncs);
+    }
+  } catch (error) {
+    return refuseConflict(c, error);
+  } finally {
+    // Writes before a failure stay, so their accounts sync as well.
+    await requestSyncs(c.env, syncs);
   }
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
@@ -293,7 +311,7 @@ function ruleDetailsError(t: Messages, problem: RuleDetailsProblem): string {
       if (problem.problem === "comma") return t.editor.blockCategoryComma;
       if (problem.problem === "tooLong") return t.editor.blockCategoryTooLong(MAX_CATEGORY_LENGTH);
       return t.editor.blockColorInvalid;
-    case "buffer":
+    case "source":
       return t.editor.bufferInvalid(MAX_BUFFER_MINUTES);
     case "noWorkHours":
       return t.editor.workHoursMissing(problem.account);
@@ -316,7 +334,11 @@ rules.post("/direction/details", async (c) => {
   };
   const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
-  await setRuleDetails(c.env, user, details);
+  try {
+    await setRuleDetails(c.env, user, details);
+  } catch (error) {
+    return refuseConflict(c, error);
+  }
   return backTo(c, from);
 });
 
@@ -333,10 +355,10 @@ rules.post("/source/buffer", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
   const details: RuleDetails = {
-    buffers: [
+    sources: [
       {
         from,
-        buffer: {
+        options: {
           bufferBefore: minutes(formText(form, "bufferBefore")),
           bufferAfter: minutes(formText(form, "bufferAfter")),
         },
@@ -345,14 +367,22 @@ rules.post("/source/buffer", async (c) => {
   };
   const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
-  await setRuleDetails(c.env, user, details);
+  try {
+    await setRuleDetails(c.env, user, details);
+  } catch (error) {
+    return refuseConflict(c, error);
+  }
   return backTo(c, from);
 });
 
 rules.post("/direction/reset", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
-  await resetDirection(c.env, currentUser(c), from, formText(form, "to"));
+  try {
+    await resetDirection(c.env, currentUser(c), from, formText(form, "to"));
+  } catch (error) {
+    return refuseConflict(c, error);
+  }
   return backTo(c, from);
 });
 

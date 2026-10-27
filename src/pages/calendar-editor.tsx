@@ -543,7 +543,8 @@ function SourceBuffer(props: { state: EditorState; source: EditorAccount }) {
   const { t } = useI18n();
   const { state, source } = props;
   const buffer = sourceBuffer(state, source.id);
-  if (buffer === null) return null;
+  // The account keeps its buffer without rules; without a source calendar it has nothing to apply.
+  if (buffer === null || !source.calendars.some((calendar) => calendar.isSource)) return null;
   const mixed = buffer === "mixed";
   const summary = mixed
     ? t.editor.bufferMixed

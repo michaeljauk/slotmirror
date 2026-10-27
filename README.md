@@ -37,17 +37,19 @@ tokens stay with you and not with a sync service.
   chosen weekday. The end must be after the start; "until midnight" ends the range at the end of the
   day, and a range over midnight is not possible. An account has no working hours until you set
   them; the time zone field starts with the browser's zone, or the deployment's `TIME_ZONE` without
-  JavaScript. Working hours make a direction in the block group an exception, with a reset. On the
-  two days a year when clocks change, a range that spans the change is one hour shorter or longer in
-  real time. A start or end in the skipped hour moves forward by an hour; one in the repeated hour
-  means its first occurrence, for the start and the end alike. A range that ends at 02:30 on the
-  night clocks go back therefore ends an hour before the second 02:30.
+  JavaScript. Turning them on or off does not change whether a direction in the block group is an
+  exception; the reset turns them off. On the two days a year when clocks change, a range that spans
+  the change is one hour shorter or longer in real time. A start or end in the skipped hour moves
+  forward by an hour; one in the repeated hour means its first occurrence, for the start and the end
+  alike. A range that ends at 02:30 on the night clocks go back therefore ends an hour before the
+  second 02:30.
 - **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
   colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
 - **A buffer around the blocks.** Per source calendar account, blocks can start up to 240 minutes
   earlier and end up to 240 minutes later than the event, for example for travel time. The buffer
-  applies to every target of that account. The default is 0. All-day events get no buffer. Where
+  applies to every target of that account. The account keeps it while it has no targets, and new
+  directions and group rules from it take it. The default is 0. All-day events get no buffer. Where
   buffered blocks overlap, each event keeps its own block. If one event reaches a calendar through
   two directions with the same buffer, it gets one block. With different buffers it can get two, so
   that the wider buffer is never lost.

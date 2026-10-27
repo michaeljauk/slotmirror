@@ -300,6 +300,132 @@ describe("working hours of an account", () => {
     expect(await setAccountWorkHours(env, other.user, w, OFFICE)).toBe(false);
     expect(await accountHoursOf(user.id, w)).toBeNull();
   });
+
+  it("gives parked rules and rules outside the directions the new hours", async () => {
+    const { user, w, g } = await setup("acctstale2");
+    const late = { ...OFFICE, workStart: "12:00", workEnd: "20:00" };
+    await setAccountWorkHours(env, user, w, OFFICE);
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, g, w, "off");
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    // A manual rule between two other calendars, with hours from before. No direction covers it.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'w-extra', 'Extra', 1, 0, 0)",
+      ).bind(`${w}-extra`, w),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'g-other', 'Other', 1, 0, 0)",
+      ).bind(`${g}-other`, g),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin) VALUES ('stale2-extra', ?, ?, ?, ?, 1, 'custom')",
+      ).bind(user.id, `${g}-other`, `${w}-extra`, JSON.stringify(OFFICE)),
+    ]);
+    await setSourceCalendar(env, user, `${g}-cal`, false);
+    expect(await setAccountWorkHours(env, user, w, late)).toBe(true);
+    const [parked] = await rulesOf(user.id, g, w);
+    expect(JSON.parse(parked?.options ?? "{}")).toMatchObject({ ...late, parked: true });
+
+    await setSourceCalendar(env, user, `${g}-cal`, true);
+    await setDirection(env, user, g, w, "busy");
+    const back = (await rulesOf(user.id, g, w)).find((rule) => rule.id !== "stale2-extra");
+    expect(JSON.parse(back?.options ?? "{}")).toMatchObject(late);
+    const extra = await env.DB.prepare(
+      "SELECT options FROM rules WHERE id = 'stale2-extra'",
+    ).first<{
+      options: string;
+    }>();
+    expect(JSON.parse(extra?.options ?? "{}")).toMatchObject(late);
+  });
+
+  it("gives a copy from a parked rule the account's current hours", async () => {
+    const { user, w, g } = await setup("acctcopy");
+    const late = { ...OFFICE, workStart: "12:00", workEnd: "20:00" };
+    await setAccountWorkHours(env, user, w, OFFICE);
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, g, w, "off");
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    await setSourceCalendar(env, user, `${g}-cal`, false);
+    // The account's hours changed without its rules, as after an earlier failure.
+    await env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = ?")
+      .bind(JSON.stringify(late), w)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, 'g-side', 'Side', 1, 0, 0)",
+    )
+      .bind(`${g}-side`, g)
+      .run();
+    await setSourceCalendar(env, user, `${g}-side`, true);
+    const copy = await env.DB.prepare("SELECT options FROM rules WHERE source_calendar_id = ?")
+      .bind(`${g}-side`)
+      .first<{ options: string }>();
+    expect(JSON.parse(copy?.options ?? "{}")).toMatchObject(late);
+  });
+});
+
+describe("the account settings form", () => {
+  /** The settings form of an account on the home page. */
+  const settingsOf = (html: string, accountId: string) =>
+    html.split(`id="account-${accountId}"`)[1]?.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
+
+  it("saves with Enter: the first submit button is the save button", async () => {
+    const { user, cookie, w } = await setup("acctenter");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    const form = settingsOf(await page(cookie, "/"), w);
+    expect(form).toContain("No working hours");
+    const buttons = form.match(/<button[^>]*>/g) ?? [];
+    const submits = buttons.filter((button) => !/type="button"/.test(button));
+    // Enter submits with the first submit button of the form, so that one must not clear.
+    expect(submits[0]).not.toContain('name="workHours"');
+    expect(submits.some((button) => button.includes('value="none"'))).toBe(true);
+  });
+
+  it("leaves the end field enabled without the script, and the script disables it", async () => {
+    const { user, cookie, w } = await setup("acctmid");
+    await setAccountWorkHours(env, user, w, { ...OFFICE, workEnd: "24:00" });
+    const fieldset = hoursFieldset(await page(cookie, "/"), w);
+    expect(fieldset).toMatch(/name="workUntilMidnight"[^>]*checked/);
+    expect(fieldset.match(/<input[^>]*name="workEnd"[^>]*>/)?.[0]).not.toContain("disabled");
+    expect(String(editorScript)).toContain("input[name=workUntilMidnight]:checked");
+  });
+
+  it("shows what the user typed after a refused save", async () => {
+    const { cookie, w } = await setup("accttyped");
+    const body = settingsForm(
+      { workStart: "18:00", workEnd: "08:00", workTimeZone: "Europe/Berlin", name: "Desk" },
+      ["2", "4"],
+    );
+    body.set("color", "indigo");
+    const response = await post(`/accounts/${w}/settings`, cookie, body);
+    expect(response.status).toBe(400);
+    const html = await response.text();
+    const fieldset = hoursFieldset(html, w);
+    expect(fieldset).toMatch(/name="workStart"[^>]*value="18:00"/);
+    expect(fieldset).toMatch(/name="workEnd"[^>]*value="08:00"/);
+    expect(fieldset).toMatch(/name="workTimeZone"[^>]*value="Europe\/Berlin"/);
+    expect(fieldset).not.toContain("data-browser-zone");
+    const checked = [...fieldset.matchAll(/<input[^>]*name="workDays"[^>]*>/g)]
+      .filter(([input]) => /checked/.test(input))
+      .map(([input]) => input.match(/value="(\d)"/)?.[1]);
+    expect(checked).toEqual(["2", "4"]);
+    const form = settingsOf(html, w);
+    expect(form).toMatch(/name="name"[^>]*value="Desk"/);
+    expect(form).toMatch(/name="color"[^>]*value="indigo"[^>]*checked/);
+  });
+
+  it("answers an account of another user with 404 and changes nothing", async () => {
+    const { user, w } = await setup("acctowner");
+    const other = await setup("acctintruder");
+    const body = settingsForm({ workStart: "08:00", workEnd: "18:00", name: "Taken" }, ["1"]);
+    body.set("color", "indigo");
+    const response = await post(`/accounts/${w}/settings`, other.cookie, body);
+    expect(response.status).toBe(404);
+    const account = (await loadEditorState(env, user.id)).accounts.find((a) => a.id === w);
+    expect(account?.workHours).toBeNull();
+    expect(account?.customName).toBeNull();
+    expect(account?.colorChosen).toBe(false);
+  });
 });
 
 describe("working hours per target", () => {
@@ -474,45 +600,55 @@ describe("routes of pages opened before the editor rebuild", () => {
 });
 
 describe("working hours in the block group", () => {
-  it("make a group direction an exception, which the reset returns to the group", async () => {
-    const { user, cookie, w, g } = await setup("hoursgroup");
+  const origins = async (userId: string, from: string, to: string) =>
+    (await rulesOf(userId, from, to)).map((rule) => rule.origin);
+
+  it("leave the origin of a group rule as it is, and the reset clears them", async () => {
+    const { user, w, g } = await setup("hoursgroup");
     await setAccountWorkHours(env, user, w, OFFICE);
     await setGroupMembership(env, user, w, true);
     await setGroupMembership(env, user, g, true);
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
+    expect(await origins(user.id, g, w)).toEqual(["group"]);
 
     await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
-    const html = await page(cookie, `/rules?open=${g}`);
-    const resets = html.match(/<form[^>]*\/rules\/direction\/reset[\s\S]*?<\/form>/g) ?? [];
-    expect(resets.some((form) => form.includes(`name="to" value="${w}"`))).toBe(true);
-
-    // Choosing busy again keeps the exception while the direction has hours.
-    await setDirection(env, user, g, w, "busy");
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
-
-    await resetDirection(env, user, g, w);
-    const [rule] = await rulesOf(user.id, g, w);
-    expect(rule?.origin).toBe("group");
-    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
-  });
-
-  it("return a direction to the group when the hours are turned off or the account's go", async () => {
-    const { user, w, g } = await setup("hoursclear");
-    await setAccountWorkHours(env, user, w, OFFICE);
-    await setGroupMembership(env, user, w, true);
-    await setGroupMembership(env, user, g, true);
-    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
+    expect(await origins(user.id, g, w)).toEqual(["group"]);
+    expect(await optionsOf(user.id, g, w)).toMatchObject(OFFICE);
     await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: false }] });
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
+    expect(await origins(user.id, g, w)).toEqual(["group"]);
 
     await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     await setAccountWorkHours(env, user, w, null);
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
-    // A group rule goes with the group.
+    expect(await origins(user.id, g, w)).toEqual(["group"]);
+    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
+
+    await setAccountWorkHours(env, user, w, OFFICE);
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    await resetDirection(env, user, g, w);
+    expect(await origins(user.id, g, w)).toEqual(["group"]);
+    expect(await optionsOf(user.id, g, w)).toMatchObject(OFF);
+  });
+
+  it("keep an exception an exception when they go on and off", async () => {
+    const { user, w, g } = await setup("hoursexc");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    // A custom busy rule from before the group: its colour keeps it out of the group.
+    await setDirection(env, user, g, w, "busy");
+    await setRuleDetails(env, user, { colors: [{ from: g, to: w, value: "5" }] });
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    expect(await origins(user.id, g, w)).toEqual(["custom"]);
+
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
+    expect(await origins(user.id, g, w)).toEqual(["custom"]);
+    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: false }] });
+    expect(await origins(user.id, g, w)).toEqual(["custom"]);
+    await setAccountWorkHours(env, user, w, null);
+    expect(await origins(user.id, g, w)).toEqual(["custom"]);
+
+    // An exception survives leaving the group; the group rule of the other direction goes.
     await setGroupMembership(env, user, g, false);
-    expect(await rulesOf(user.id, g, w)).toEqual([]);
+    expect(await origins(user.id, g, w)).toEqual(["custom"]);
+    expect(await rulesOf(user.id, w, g)).toEqual([]);
   });
 
   it("return to the group when busy and no hours are saved together", async () => {
@@ -522,32 +658,14 @@ describe("working hours in the block group", () => {
     await setGroupMembership(env, user, g, true);
     await setDirection(env, user, g, w, "title");
     await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
+    expect(await origins(user.id, g, w)).toEqual(["custom"]);
     const response = await save(cookie, {
       [`choice.${g}.${w}`]: "busy",
       [`workHours.${g}.${w}`]: "0",
     });
     expect(response.status).toBe(204);
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["group"]);
+    expect(await origins(user.id, g, w)).toEqual(["group"]);
     expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFF, detailLevel: "busy" });
-
-    // A choice other than busy stays an exception when the hours go.
-    await setDirection(env, user, g, w, "title");
-    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
-    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: false }] });
-    expect((await rulesOf(user.id, g, w)).map((rule) => rule.origin)).toEqual(["custom"]);
-  });
-
-  it("survive leaving the group, like any exception", async () => {
-    const { user, w, g } = await setup("hoursleave");
-    await setAccountWorkHours(env, user, w, OFFICE);
-    await setGroupMembership(env, user, w, true);
-    await setGroupMembership(env, user, g, true);
-    await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
-    await setGroupMembership(env, user, g, false);
-    expect(await optionsOf(user.id, g, w)).toMatchObject(OFFICE);
-    // The direction without hours was a group rule and goes with the group.
-    expect(await rulesOf(user.id, w, g)).toEqual([]);
   });
 });
 

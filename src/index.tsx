@@ -19,7 +19,7 @@ import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
 import { DeleteUserPage } from "./pages/delete-user";
 import { DisconnectPage } from "./pages/disconnect";
-import { HomePage, SignInPage, type AccountRow } from "./pages/home";
+import { HomePage, SignInPage, type AccountRow, type AccountSettingsDraft } from "./pages/home";
 import type { Notice } from "./pages/calendar-editor";
 import { MessagePage } from "./pages/message";
 import { PrivacyPage } from "./pages/privacy";
@@ -31,6 +31,7 @@ import { rules } from "./routes/rules";
 import { ACCOUNT_COLOR_KEYS } from "./colors";
 import {
   accountWorkHours,
+  EditorConflict,
   loadEditorState,
   renameAccount,
   setAccountColor,
@@ -161,7 +162,7 @@ app.get("/", async (c) => {
 async function renderHome(
   c: Context<AppEnv>,
   user: CurrentUser,
-  options: { notice?: Notice; openSettings?: string } = {},
+  options: { notice?: Notice; openSettings?: string; draft?: AccountSettingsDraft } = {},
   status: 200 | 400 = 200,
 ) {
   const { providers } = setupStatus(c.env);
@@ -190,6 +191,7 @@ async function renderHome(
       calendars={calendars}
       notice={options.notice}
       openSettings={options.openSettings}
+      draft={options.draft}
     />,
     status,
   );
@@ -215,8 +217,31 @@ function workHoursFrom(form: FormData): AccountWorkHours | null {
   return { workDays, workStart, workEnd, workTimeZone: text("workTimeZone") };
 }
 
+/** What the user typed into the settings form of an account, to show it again after a refusal. */
+function settingsDraft(accountId: string, form: FormData): AccountSettingsDraft {
+  const text = (name: string) => {
+    const value = form.get(name);
+    return typeof value === "string" ? value : "";
+  };
+  return {
+    accountId,
+    name: text("name"),
+    color: text("color") || "auto",
+    hours: form.has("workHoursShown")
+      ? {
+          workDays: form.getAll("workDays").map((value) => Number(value)),
+          workStart: text("workStart"),
+          workEnd: text("workEnd"),
+          untilMidnight: form.has("workUntilMidnight"),
+          workTimeZone: text("workTimeZone"),
+        }
+      : null,
+  };
+}
+
 // The settings of an account: name, colour and working hours. Every field is checked before the
-// first write. "/name" is the address of the form before the working hours came.
+// first write, and the hours, which can meet a concurrent change, are written first. "/name" is
+// the address of the form before the working hours came.
 for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
   app.post(path, async (c) => {
     const user = c.get("user");
@@ -228,14 +253,30 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     const color = form.has("color") ? accountColorField.safeParse(form.get("color")) : null;
     if (color && !color.success) return c.text("Bad colour", 400);
     const hours = form.has("workHoursShown") ? accountWorkHours(c.env, workHoursFrom(form)) : null;
-    if (hours && "problem" in hours) {
-      const notice = { kind: "error" as const, text: t.editor.workHoursErrors[hours.problem] };
-      return renderHome(c, user, { notice, openSettings: accountId }, 400);
-    }
+    const refuse = (text: string) =>
+      renderHome(
+        c,
+        user,
+        {
+          notice: { kind: "error", text },
+          openSettings: accountId,
+          draft: settingsDraft(accountId, form),
+        },
+        400,
+      );
+    if (hours && "problem" in hours) return refuse(t.editor.workHoursErrors[hours.problem]);
     const owned = await c.env.DB.prepare("SELECT 1 FROM accounts WHERE id = ? AND user_id = ?")
       .bind(accountId, user.id)
       .first();
     if (!owned) return c.notFound();
+    if (hours) {
+      try {
+        await setAccountWorkHours(c.env, user, accountId, hours.hours);
+      } catch (error) {
+        if (error instanceof EditorConflict) return refuse(t.editor.saveConflict);
+        throw error;
+      }
+    }
     if (color) {
       await setAccountColor(c.env, user, accountId, color.data === "auto" ? null : color.data);
     }
@@ -243,7 +284,6 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     if (form.has("name")) {
       await renameAccount(c.env, user, accountId, typeof name === "string" ? name : "");
     }
-    if (hours) await setAccountWorkHours(c.env, user, accountId, hours.hours);
     return c.redirect(`/#account-${encodeURIComponent(accountId)}`);
   });
 }

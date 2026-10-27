@@ -203,7 +203,7 @@ describe("working hours of an account", () => {
     const german = await post(
       `/accounts/${w}/settings`,
       cookie,
-      settingsForm({ workStart: "08:00", workEnd: "18:00" }, []),
+      settingsForm({ workStart: "08:00", workEnd: "18:00", name: "Renamed" }, []),
       { "accept-language": "de" },
     );
     expect(await german.text()).toContain("Arbeitszeit: Wähle mindestens einen Wochentag.");

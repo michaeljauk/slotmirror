@@ -138,7 +138,7 @@ export function ReconnectNotice(props: {
             {t.editor.reconnectText}
           </span>
           <a
-            class="button small primary"
+            class="button small"
             href={reconnectUrl(account)}
             aria-label={t.editor.reconnect(account.email)}
           >

@@ -14,7 +14,7 @@ import { desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/p
 import {
   cleanupWindow,
   loadRule,
-  ruleRunsFromAlarm,
+  rulesRunningFromAlarm,
   rulesTargetingAccount,
   siblingRuleIds,
   syncWindow,
@@ -65,10 +65,16 @@ const RULE_QUEUE_KEY = "ruleQueue";
 const RULE_NOT_BEFORE_KEY = "ruleNotBefore";
 
 /**
- * While only waiting rules are queued, the alarm checks again at least this often, so that
- * requested syncs and other work do not wait for the longest `Retry-After` of five minutes.
+ * While only waiting rules are queued, the alarm comes back at least this often. Removals, retries
+ * of sync requests, change checks and rules that a tick queues then do not wait for the longest
+ * `Retry-After` of five minutes. A requested full cycle and change notifications still wait until
+ * the queue is empty. Cost: up to 10 wakes per 5 minutes, each with one D1 query and no provider
+ * call.
  */
 const WAITING_RULES_CHECK_MS = 30_000;
+
+/** If D1 fails to tell which queued rules may run, the alarm tries again after this long. */
+const RULE_LOOKUP_RETRY_MS = 30_000;
 
 /** Result of a source read over RPC. See `readSourceForRule()`. */
 type SourceRead = { events: SourceEvent[] } | { throttled: { message: string; waitMs: number } };
@@ -1146,11 +1152,17 @@ export class AccountSync extends DurableObject<Env> {
     }
     const notBefore =
       (await this.ctx.storage.get<Record<string, number>>(RULE_NOT_BEFORE_KEY)) ?? {};
-    const ruleId = queue.find((id) => (notBefore[id] ?? 0) <= Date.now());
-    if (!ruleId) {
+    const due = queue.find((id) => (notBefore[id] ?? 0) <= Date.now());
+    // A rule disabled or removed while queued leaves the queue without a run and without an audit
+    // event. Its removal may be queued already, and a run would write its blocks again.
+    const running = await this.rulesRunningFromAlarm(due === undefined ? queue : [due]);
+    if (!running) return;
+    // If every queued rule waits, a stopped one leaves the queue now instead of at its wait's end.
+    const ruleId = due ?? queue.find((id) => !running.has(id));
+    if (ruleId === undefined) {
       // Every queued rule waits for a throttled source account.
       const at = Math.min(...queue.map((id) => notBefore[id] ?? 0));
-      await this.setSyncAlarm(await this.waitingRulesAlarm(at, Date.now()));
+      await this.setSyncAlarm(await this.waitingRulesAlarm(at, Date.now() + this.delays().nextRun));
       return;
     }
     const waited = notBefore[ruleId] !== undefined;
@@ -1159,9 +1171,7 @@ export class AccountSync extends DurableObject<Env> {
     let changedBlocks = false;
     let deferUntil: number | undefined;
     let delayMs = this.delays().nextRun;
-    // A rule disabled or removed while queued leaves the queue without a run and without an audit
-    // event. Its removal may be queued already, and a run would write its blocks again.
-    if (await ruleRunsFromAlarm(this.env.DB, ruleId)) {
+    if (running.has(ruleId)) {
       try {
         const result = await this.runRuleAfterOthers(ruleId);
         unfinished = result.remaining > 0;
@@ -1240,18 +1250,34 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
+   * The rules of `ruleIds` that the alarm may run. If D1 fails, the queue stays as it is, the alarm
+   * tries again later, and this returns null: dropping the rule would lose its run.
+   */
+  private async rulesRunningFromAlarm(ruleIds: string[]): Promise<Set<string> | null> {
+    try {
+      return await rulesRunningFromAlarm(this.env.DB, ruleIds);
+    } catch (error) {
+      console.error("Rule lookup failed", errorCode(error));
+      await this.setSyncAlarm(Date.now() + RULE_LOOKUP_RETRY_MS);
+      return null;
+    }
+  }
+
+  /**
    * The alarm for the queue when its next rule may run at `at`, but no earlier than `earliest`. If
    * only a source wait holds the queue, the alarm comes back within WAITING_RULES_CHECK_MS, or for a
-   * removal or a retry that is due earlier. Only future times count, so the alarm cannot loop.
+   * removal or a retry that is due earlier. A removal without a wait is due now. Every time is
+   * raised to `earliest`, which lies in the future, so the alarm cannot loop.
    */
   private async waitingRulesAlarm(at: number, earliest: number): Promise<number> {
-    if (at <= earliest) return at;
-    const now = Date.now();
+    if (at <= earliest) return earliest;
     const removal = nextRemoval((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? []);
     const retry = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
-    const other = [now + WAITING_RULES_CHECK_MS, removal?.notBefore, retry?.at].filter(
-      (time): time is number => time !== undefined && time > now,
-    );
+    const other = [
+      Date.now() + WAITING_RULES_CHECK_MS,
+      ...(removal ? [removal.notBefore ?? 0] : []),
+      ...(retry ? [retry.at] : []),
+    ];
     return Math.max(earliest, Math.min(at, ...other));
   }
 

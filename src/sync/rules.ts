@@ -81,18 +81,22 @@ export async function loadRule(db: D1Database, ruleId: string): Promise<RuleCont
 }
 
 /**
- * True if the alarm may run the rule: it exists, is enabled, and its user is active. A queued rule
- * can be disabled or removed before its turn; the editor then queues the removal of its blocks.
+ * The rules of `ruleIds` that the alarm may run: they exist, are enabled, and their user is active.
+ * A queued rule can be disabled or removed before its turn; the editor then queues the removal of
+ * its blocks.
  */
-export async function ruleRunsFromAlarm(db: D1Database, ruleId: string): Promise<boolean> {
-  const row = await db
+export async function rulesRunningFromAlarm(
+  db: D1Database,
+  ruleIds: string[],
+): Promise<Set<string>> {
+  const { results } = await db
     .prepare(
-      `SELECT 1 AS ok FROM rules r JOIN users u ON u.id = r.user_id
-       WHERE r.id = ? AND r.enabled = 1 AND u.active = 1`,
+      `SELECT r.id FROM rules r JOIN users u ON u.id = r.user_id
+       WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1 AND u.active = 1`,
     )
-    .bind(ruleId)
-    .first<{ ok: number }>();
-  return row !== null;
+    .bind(JSON.stringify(ruleIds))
+    .all<{ id: string }>();
+  return new Set(results.map((row) => row.id));
 }
 
 /**

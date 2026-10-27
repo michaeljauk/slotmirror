@@ -14,6 +14,8 @@ export interface AdminUserRow {
   role: Role;
   lastSignInAt: string | null;
   accounts: number;
+  /** Accounts of the user whose refresh token the provider refused. */
+  needsReconnect: number;
 }
 
 /** Users of the admin's org with their number of connected accounts. No calendar data. */
@@ -30,6 +32,7 @@ export function AdminPage(props: {
     ...props.org.domains.map((domain) => `@${domain}`),
     ...(props.org.tenantCount > 0 ? [t.admin.tenants(props.org.tenantCount)] : []),
   ];
+  const affected = props.users.filter((row) => row.needsReconnect > 0).length;
   const capText = (level: DetailCaps["toExternal"]) =>
     level === "full" ? t.admin.capNone : t.admin.capAtMost(t.rules.detailLevels[level]);
   return (
@@ -41,6 +44,13 @@ export function AdminPage(props: {
             <p class="lead">{t.admin.lead}</p>
           </div>
         </div>
+        {affected > 0 ? (
+          <div class="reconnect-notice" role="status">
+            <p>
+              <span>{t.admin.reconnectSummary(affected)}</span>
+            </p>
+          </div>
+        ) : null}
         <div class="card">
           <table class="table">
             <thead>
@@ -62,7 +72,12 @@ export function AdminPage(props: {
                     </span>
                     {row.active === 0 ? <span class="badge">{t.admin.inactive}</span> : null}
                   </td>
-                  <td>{row.accounts}</td>
+                  <td>
+                    {row.accounts}
+                    {row.needsReconnect > 0 ? (
+                      <span class="badge error">{t.admin.needsReconnect(row.needsReconnect)}</span>
+                    ) : null}
+                  </td>
                   <td class="muted">
                     {row.lastSignInAt ? formatTimestamp(row.lastSignInAt) : t.admin.never}
                   </td>

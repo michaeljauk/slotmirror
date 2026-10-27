@@ -21,6 +21,8 @@ interface RuleEnd {
   /** Address and Entra tenant of the account; they decide whether it belongs to the org. */
   email: string;
   tenantId: string | null;
+  /** The provider refused the account's refresh token; see `accounts.needs_reconnect`. */
+  needsReconnect: boolean;
 }
 
 interface RuleRow {
@@ -35,20 +37,24 @@ interface RuleRow {
   sourceRemoteId: string;
   sourceEmail: string;
   sourceTenantId: string | null;
+  sourceNeedsReconnect: number;
   targetAccountId: string;
   targetProvider: string;
   targetName: string | null;
   targetRemoteId: string;
   targetEmail: string;
   targetTenantId: string | null;
+  targetNeedsReconnect: number;
 }
 
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
          sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId, sa.display_name AS sourceName,
+         sa.needs_reconnect AS sourceNeedsReconnect,
          ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
-         ta.email AS targetEmail, ta.tenant_id AS targetTenantId, ta.display_name AS targetName
+         ta.email AS targetEmail, ta.tenant_id AS targetTenantId, ta.display_name AS targetName,
+         ta.needs_reconnect AS targetNeedsReconnect
   FROM rules r
   JOIN users u ON u.id = r.user_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
@@ -70,6 +76,7 @@ function toContext(row: RuleRow): RuleContext {
       remoteCalendarId: row.sourceRemoteId,
       email: row.sourceEmail,
       tenantId: row.sourceTenantId,
+      needsReconnect: row.sourceNeedsReconnect === 1,
     },
     target: {
       accountId: row.targetAccountId,
@@ -78,6 +85,7 @@ function toContext(row: RuleRow): RuleContext {
       remoteCalendarId: row.targetRemoteId,
       email: row.targetEmail,
       tenantId: row.targetTenantId,
+      needsReconnect: row.targetNeedsReconnect === 1,
     },
   };
 }
@@ -133,14 +141,18 @@ export async function rulesRunningFromAlarm(
 
 /**
  * Enabled rules whose target calendar belongs to the account; they run in its Durable Object.
- * Rules of a deactivated user do not run.
+ * Rules of a deactivated user do not run. Rules from an account that needs reconnecting would
+ * only fail, so they wait until it is connected again.
  */
 export async function rulesTargetingAccount(db: D1Database, accountId: string): Promise<string[]> {
   const { results } = await db
     .prepare(
       `SELECT r.id FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN accounts sa ON sa.id = sc.account_id
        JOIN users u ON u.id = r.user_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 ORDER BY r.id`,
+       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
+       ORDER BY r.id`,
     )
     .bind(accountId)
     .all<{ id: string }>();

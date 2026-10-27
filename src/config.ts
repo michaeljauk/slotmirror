@@ -62,6 +62,12 @@ export function parseRuleOptions(json: string): RuleOptions {
 
 export type Provider = "microsoft" | "google";
 
+/** Product names stay untranslated. */
+export const PROVIDER_LABEL: Record<Provider, string> = {
+  microsoft: "Microsoft 365",
+  google: "Google",
+};
+
 export interface SetupStatus {
   /** At least one of ALLOWED_EMAILS, ALLOWED_DOMAINS, ADMIN_EMAILS admits someone. */
   accessConfigured: boolean;

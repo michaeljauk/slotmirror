@@ -331,7 +331,8 @@ app.get("/admin", async (c) => {
   // Metadata only: no calendar contents, no tokens.
   const { results } = await c.env.DB.prepare(
     `SELECT u.id, u.email, u.role, u.active, u.last_sign_in_at AS lastSignInAt,
-            COUNT(a.id) AS accounts
+            COUNT(a.id) AS accounts,
+            COALESCE(SUM(a.needs_reconnect), 0) AS needsReconnect
      FROM users u LEFT JOIN accounts a ON a.user_id = u.id
      WHERE u.org_id = ?
      GROUP BY u.id

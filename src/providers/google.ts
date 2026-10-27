@@ -17,6 +17,8 @@ export interface AuthorizeParams {
   scopes: string[];
   state: string;
   codeChallenge: string;
+  /** Address to preselect, e.g. the account to connect again. URLSearchParams encodes it. */
+  loginHint?: string;
   /** Connecting needs a refresh token; Google only returns one with offline access and consent. */
   offline: boolean;
 }
@@ -35,6 +37,7 @@ export function authorizeUrl(params: AuthorizeParams): string {
     ...(params.offline
       ? { access_type: "offline", prompt: "consent" }
       : { prompt: "select_account" }),
+    ...(params.loginHint ? { login_hint: params.loginHint } : {}),
   }).toString();
   return url.toString();
 }

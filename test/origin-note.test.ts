@@ -4,7 +4,7 @@
  * the blocks unchanged. The tests run real rule runs against a fake Graph and a fake Google that
  * keep the written blocks, in both directions between the providers.
  */
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renameAccount, setOriginNote } from "../src/editor";
@@ -215,6 +215,13 @@ function fakeProviders(sources: {
     fake.urls.push(url);
     if (url.includes("/oauth2/v2.0/token") || url.includes("oauth2.googleapis.com/token")) {
       fake.tokenCalls++;
+      // A refresh token called "refused" is refused, so that its account pauses.
+      const body = init?.body;
+      const text =
+        body instanceof URLSearchParams ? body.toString() : typeof body === "string" ? body : "";
+      if (text.includes("refused")) {
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
       return Response.json({ access_token: `a${fake.tokenCalls}`, expires_in: 60 });
     }
     const parsed = new URL(url);
@@ -807,6 +814,7 @@ describe("origin line", () => {
       remoteCalendarId: "c",
       email: "someone@example.com",
       tenantId: null,
+      needsReconnect: false,
     },
   });
 
@@ -832,6 +840,82 @@ describe("origin line", () => {
 
   it("uses the default locale for a language the deployment does not have", () => {
     expect(originLine(rule("Work", "google", "xx"))).toBe("From: Work (Google)");
+  });
+});
+
+describe("origin note and paused accounts", () => {
+  /** Let the account's next refresh be refused, so that it pauses until a reconnect. */
+  async function refuseNextRefresh(id: string, provider: "microsoft" | "google") {
+    await env.ACCOUNT_SYNC.getByName(id).storeTokens(
+      id,
+      { refreshToken: "refused", accessToken: "x", accessExpiresAt: 0 },
+      provider,
+    );
+  }
+
+  async function needsReconnect(id: string): Promise<number | undefined> {
+    const row = await env.DB.prepare("SELECT needs_reconnect AS n FROM accounts WHERE id = ?")
+      .bind(id)
+      .first<{ n: number }>();
+    return row?.n;
+  }
+
+  it("makes no provider call for a paused source when the note changes", async () => {
+    const fake = fakeProviders({});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { user, run } = await setup("psrc");
+    await setOriginNote(env, user, "psrc-ms-src", { showOrigin: true, linkOrigin: true }, "en");
+    await run();
+    const before = bodies(fake, "psrc").mg;
+
+    // The source's refresh token is refused at the next read: the source account pauses.
+    await refuseNextRefresh("psrc-ms-src", "microsoft");
+    const target = env.ACCOUNT_SYNC.getByName("psrc-g-dst");
+    await target.requestSync();
+    vi.setSystemTime(Date.now() + 61_000);
+    await runDurableObjectAlarm(target);
+    expect(await needsReconnect("psrc-ms-src")).toBe(1);
+
+    // The note changes while the source is paused: the full cycle skips the rule.
+    const mark = fake.urls.length;
+    const tokens = fake.tokenCalls;
+    await setOriginNote(env, user, "psrc-ms-src", { showOrigin: true, linkOrigin: false }, "en");
+    for (let i = 0; i < 3; i++) {
+      vi.setSystemTime(Date.now() + 61_000);
+      await runDurableObjectAlarm(target);
+      await runDurableObjectAlarm(env.ACCOUNT_SYNC.getByName("psrc-ms-src"));
+    }
+    const calls = fake.urls.slice(mark);
+    expect(calls.filter((url) => url.includes("psrc-ms-src-remote"))).toEqual([]);
+    expect(calls.filter((url) => url.includes("/batch"))).toEqual([]);
+    expect(fake.tokenCalls).toBe(tokens);
+    expect(bodies(fake, "psrc").mg).toEqual(before);
+  });
+
+  it("arms no alarm and makes no provider call for a paused target when the note changes", async () => {
+    const fake = fakeProviders({});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { user, run } = await setup("pdst");
+    await run();
+
+    await refuseNextRefresh("pdst-g-dst", "google");
+    const target = env.ACCOUNT_SYNC.getByName("pdst-g-dst");
+    await target.requestSync();
+    vi.setSystemTime(Date.now() + 61_000);
+    await runDurableObjectAlarm(target);
+    expect(await needsReconnect("pdst-g-dst")).toBe(1);
+
+    const mark = fake.urls.length;
+    const tokens = fake.tokenCalls;
+    expect(
+      await setOriginNote(env, user, "pdst-ms-src", { showOrigin: true, linkOrigin: true }, "en"),
+    ).toBe(true);
+    expect(await runInDurableObject(target, (_object, state) => state.storage.getAlarm())).toBe(
+      null,
+    );
+    expect(await runDurableObjectAlarm(target)).toBe(false);
+    expect(fake.urls.slice(mark)).toEqual([]);
+    expect(fake.tokenCalls).toBe(tokens);
   });
 });
 

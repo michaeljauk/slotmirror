@@ -139,6 +139,85 @@ describe("Microsoft connect", () => {
     );
     expect(stored.account_id).toBe(account?.id);
   });
+
+  it("clears needs_reconnect when the same account connects again", async () => {
+    const { user, cookie: session } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-reconnect", "reconnect@example.com");
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-reconnect'",
+    ).run();
+    const flow = await startFlow("/auth/microsoft/connect", session);
+    mockTokenEndpoint({
+      access_token: "access",
+      refresh_token: "refresh",
+      expires_in: 3600,
+      id_token: fakeIdToken({ tid: "t", oid: "o3", preferred_username: "reconnect@example.com" }),
+    });
+
+    const response = await exports.default.fetch(
+      `${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`,
+      { headers: { cookie: `${flow.cookie}; ${session}` }, redirect: "manual" },
+    );
+    expect(response.status).toBe(302);
+    const { results } = await env.DB.prepare(
+      "SELECT id, needs_reconnect AS flag FROM accounts WHERE email = 'reconnect@example.com'",
+    ).all<{ id: string; flag: number }>();
+    expect(results).toEqual([{ id: "acc-reconnect", flag: 0 }]);
+    expect(await env.ACCOUNT_SYNC.getByName("acc-reconnect").hasTokens()).toBe(true);
+
+    // The dashboard no longer asks to reconnect.
+    vi.restoreAllMocks();
+    const home = await (
+      await exports.default.fetch(`${BASE}/`, { headers: { cookie: session } })
+    ).text();
+    expect(home).not.toContain("reconnect-notice");
+  });
+});
+
+describe("reconnect links", () => {
+  async function connectLocation(path: string, cookie: string): Promise<URL> {
+    const response = await exports.default.fetch(`${BASE}${path}`, {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    expect(response.status).toBe(302);
+    return new URL(response.headers.get("location") ?? "");
+  }
+
+  it("passes the address of the user's own account as login_hint, encoded", async () => {
+    const { user, cookie } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-hint", "a+b&prompt=none@example.com");
+    const location = await connectLocation("/auth/microsoft/connect?account=acc-hint", cookie);
+    expect(location.origin).toBe("https://login.microsoftonline.com");
+    expect(location.searchParams.get("login_hint")).toBe("a+b&prompt=none@example.com");
+    expect(location.searchParams.getAll("prompt")).toEqual(["select_account"]);
+
+    await env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email) VALUES ('acc-hint-g', ?, 'google', 'g@example.com')",
+    )
+      .bind(user.id)
+      .run();
+    const google = await connectLocation("/auth/google/connect?account=acc-hint-g", cookie);
+    expect(google.searchParams.get("login_hint")).toBe("g@example.com");
+  });
+
+  it("gives no hint for another user's account, another provider or an unknown ID", async () => {
+    const other = await signIn("other@elsewhere.org");
+    await addAccount(other.user.id, "acc-hint-other", "secret-other@example.com");
+    const { user, cookie } = await signIn("owner@example.com");
+    await addAccount(user.id, "acc-hint-ms", "mine@example.com");
+    for (const path of [
+      "/auth/microsoft/connect?account=acc-hint-other",
+      "/auth/google/connect?account=acc-hint-ms",
+      "/auth/microsoft/connect?account=nope",
+      "/auth/microsoft/connect?account=https%3A%2F%2Fevil.example",
+    ]) {
+      const location = await connectLocation(path, cookie);
+      expect(location.searchParams.has("login_hint")).toBe(false);
+      expect(location.toString()).not.toContain("secret-other");
+      expect(location.toString()).not.toContain("evil.example");
+    }
+  });
 });
 
 describe("Microsoft connect conflicts", () => {

@@ -471,7 +471,9 @@ export async function setDirection(
   const to = state.accounts.find((account) => account.id === toId);
   const from = state.accounts.find((account) => account.id === fromId);
   const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
-  if (!from || !to?.calendar?.canEdit || !direction) return;
+  if (!from || !to?.calendar || !direction) return;
+  // "Off" needs no write access, so that a rule never keeps writing into a read-only calendar.
+  if (choice !== "off" && !to.calendar.canEdit) return;
   const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
   const bothInGroup = from.inGroup && to.inGroup;
   // The sync applies the caps anyway; storing the capped value keeps the page honest.
@@ -594,7 +596,7 @@ export async function setSourceCalendar(
 
 /**
  * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
- * goes too, because the group writes blocks without a colour.
+ * goes too, because the group writes blocks without a colour. A read-only target goes to "off".
  */
 export async function resetDirection(
   env: Env,
@@ -606,7 +608,8 @@ export async function resetDirection(
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
   if (!from || !to) return;
-  await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
+  const busy = from.inGroup && to.inGroup && to.calendar?.canEdit;
+  await setDirection(env, user, fromId, toId, busy ? "busy" : "off");
   await setBlockColor(env, user, fromId, toId, "");
 }
 

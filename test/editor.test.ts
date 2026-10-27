@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -147,6 +148,93 @@ describe("directions", () => {
     await setDirection(env, user, w, g, "title");
     await setDirection(env, user, w, g, "off");
     expect((await rulesOf(user.id)).some((r) => r.source === w && r.target === g)).toBe(false);
+  });
+});
+
+/** The target calendar lost write access, for example after a calendar refresh. */
+async function makeReadOnly(accountId: string) {
+  await env.DB.prepare("UPDATE calendars SET can_edit = 0 WHERE account_id = ?")
+    .bind(accountId)
+    .run();
+}
+
+async function removalsOf(accountId: string) {
+  return runInDurableObject(env.ACCOUNT_SYNC.getByName(accountId), (_instance, state) =>
+    state.storage.get<{ ruleId: string }[]>("removalQueue"),
+  );
+}
+
+describe("read-only target", () => {
+  it("turns a direction off outside the group and queues the removal of its blocks", async () => {
+    const { user, w, o } = await setup("ro-out");
+    await setDirection(env, user, w, o, "title");
+    await makeReadOnly(o);
+
+    // Turning on or changing the level still needs write access.
+    await setDirection(env, user, w, o, "busy");
+    await setDirection(env, user, w, o, "full");
+    expect(await rulesOf(user.id)).toEqual([
+      expect.objectContaining({ source: w, target: o, level: "title", enabled: 1 }),
+    ]);
+
+    await setDirection(env, user, w, o, "off");
+    expect(await rulesOf(user.id)).toEqual([]);
+    expect(await removalsOf(o)).toHaveLength(1);
+  });
+
+  it("turns a group direction off with a disabled exception, and does not turn it on", async () => {
+    const { user, w, g } = await setup("ro-grp");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await makeReadOnly(g);
+
+    await setDirection(env, user, w, g, "off");
+    expect((await rulesOf(user.id)).find((r) => r.source === w && r.target === g)).toMatchObject({
+      enabled: 0,
+      origin: "custom",
+    });
+    expect(await removalsOf(g)).toHaveLength(1);
+
+    await setDirection(env, user, w, g, "busy");
+    expect((await rulesOf(user.id)).find((r) => r.source === w && r.target === g)).toMatchObject({
+      enabled: 0,
+      origin: "custom",
+    });
+  });
+
+  it("resets an exception to off, inside and outside the group", async () => {
+    const { user, w, o, g } = await setup("ro-reset");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, w, g, "full");
+    await setDirection(env, user, w, o, "title");
+    await makeReadOnly(g);
+    await makeReadOnly(o);
+
+    await resetDirection(env, user, w, g);
+    await resetDirection(env, user, w, o);
+    const rules = await rulesOf(user.id);
+    expect(rules.find((r) => r.source === w && r.target === g)).toMatchObject({
+      enabled: 0,
+      origin: "custom",
+    });
+    expect(rules.some((r) => r.source === w && r.target === o)).toBe(false);
+  });
+
+  it("offers only off on the page", async () => {
+    const { user, cookie, w, o } = await setup("ro-page");
+    await setDirection(env, user, w, o, "title");
+    await makeReadOnly(o);
+
+    const html = await (
+      await exports.default.fetch(`${BASE}/rules?open=${w}`, { headers: { cookie } })
+    ).text();
+    const form = html.match(new RegExp(`<form[^>]*data-to="${o}"[^>]*>[\\s\\S]*?</form>`))?.[0];
+    const button = (choice: string) =>
+      form?.match(new RegExp(`<button[^>]*value="${choice}"[^>]*>`))?.[0];
+    expect(button("off")).not.toContain("disabled");
+    for (const choice of ["busy", "title", "full"]) expect(button(choice)).toContain("disabled");
+    expect(html).toContain("slotmirror cannot write to this calendar");
   });
 });
 

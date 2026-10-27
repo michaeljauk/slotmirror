@@ -313,6 +313,7 @@ function DestinationRow(props: {
   const inGroup = source.inGroup && target.inGroup;
   const fromGroup = direction.origin === "group";
   const isException = inGroup && direction.origin === "custom";
+  const canEdit = target.calendar?.canEdit === true;
   return (
     <div class="dest">
       <div class="dest-name">
@@ -328,7 +329,7 @@ function DestinationRow(props: {
             name="choice"
             value={choice}
             class={choice === direction.effective ? "choice on" : "choice"}
-            disabled={RANK[choice] > RANK[direction.maxChoice]}
+            disabled={RANK[choice] > RANK[direction.maxChoice] || (choice !== "off" && !canEdit)}
           >
             {t.editor.choices[choice]}
           </button>
@@ -370,6 +371,7 @@ function DestinationRow(props: {
           <span class="preview-result" role="status" />
         </form>
       ) : null}
+      {canEdit ? null : <div class="cap-note">{t.editor.readOnly}</div>}
       {direction.maxChoice !== "full" ? (
         <div class="cap-note">{t.editor.capNote(t.editor.choices[direction.maxChoice])}</div>
       ) : null}

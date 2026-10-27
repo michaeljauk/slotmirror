@@ -624,6 +624,38 @@ describe("alarm queue", () => {
     expect(await alarmAt(stub)).not.toBeNull();
   });
 
+  it("backs off a removal whose calendar refuses access, and gives up after the last attempt", async () => {
+    // The editor queues a removal even for a calendar it can no longer write to.
+    const stub = await bareAccount("acc-removal-denied");
+    const reads: string[] = [];
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      reads.push(url);
+      return Response.json(
+        { error: { code: "ErrorAccessDenied", message: "Access is denied." } },
+        { status: 403 },
+      );
+    });
+
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    const waits: number[] = [];
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await runDurableObjectAlarm(stub);
+      const [job] = (await removalsOf(stub)) ?? [];
+      expect(job?.attempts).toBe(attempt);
+      waits.push((job?.notBefore ?? 0) - Date.now());
+      expect(await alarmKind(stub)).toBe("removal");
+      expect(await alarmAt(stub)).toBe(job?.notBefore);
+    }
+    expect(waits.map((wait) => Math.round(wait / 60_000))).toEqual([1, 10, 120, 720]);
+
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toBeUndefined();
+    // One read per attempt; no attempt retries within its own invocation.
+    expect(reads.filter((url) => url.includes(TARGET_CAL))).toHaveLength(5);
+  });
+
   it("runs the account's rules while a removal waits for its next attempt", async () => {
     const { stub, ruleId } = await setupRule("acc-removal-wait");
     await stub.storeTokens("acc-removal-wait", {

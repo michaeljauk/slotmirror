@@ -42,11 +42,12 @@ export const de: Messages = {
     disconnect: "Trennen",
     rename: "Einstellungen",
     workHoursLabel: "Arbeitszeit",
-    workHoursHint:
-      "Im Sync kannst du Kopien in dieses Konto auf diese Zeit beschränken. Ohne Arbeitszeit zählt der ganze Tag.",
+    workHoursHint: "Gilt für alles, was in dieses Konto kopiert wird.",
+    workHoursTitle:
+      "Im Sync schaltest du sie pro Kalender ein. Ohne Arbeitszeit zählt der ganze Tag.",
     workHoursNone: "Keine Arbeitszeit",
     colorLabel: "Farbe",
-    colorHint: "Kennzeichnet das Konto auf diesen Seiten. Deine Kalender ändert sie nicht.",
+    colorHint: "Nur auf diesen Seiten, nicht in deinen Kalendern.",
     colorAuto: "Automatisch",
     colorNames: {
       green: "Grün",
@@ -59,8 +60,7 @@ export const de: Messages = {
       slate: "Schiefergrau",
     },
     nameLabel: "Name",
-    nameHint:
-      "Erscheint in den Sync-Einstellungen. Leer lassen, um den Namen aus der Adresse zu nutzen.",
+    nameHint: "Leer lassen für den Namen aus der Adresse.",
     save: "Speichern",
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
@@ -132,7 +132,7 @@ export const de: Messages = {
     viewMatrix: "Übersicht",
     groupTitle: "Blocken sich gegenseitig",
     groupText: (count: number, markPrivate: boolean) =>
-      `Diese ${count} Kalender sehen voneinander nur „Belegt“${markPrivate ? ", als privat markiert" : ""}. Mehr Details stellst du unten pro Kalender ein.`,
+      `Diese ${count} Kalender sehen voneinander nur „Belegt“${markPrivate ? ", als privat markiert" : ""}.`,
     groupTooFew: "Wähle mindestens zwei Kalender.",
     groupAdd: "Zur Gruppe hinzufügen",
     groupRemove: "Aus der Gruppe nehmen",
@@ -168,7 +168,7 @@ export const de: Messages = {
     stepChoose: "Lege hier fest, wohin die Termine jedes Kalenders gehen.",
     quickStartTitle: "Schnellstart",
     quickStartText: (count: number) =>
-      `Lass alle ${count} Kalender sich gegenseitig als „Belegt“ blocken. Danach kannst du einzelne Richtungen genauer einstellen, zum Beispiel Arbeitstermine mit Titel im Privatkalender.`,
+      `Alle ${count} Kalender blocken sich gegenseitig als „Belegt“. Details stellst du danach ein.`,
     quickStartButton: "Gegenseitig blocken",
     statusOk: (time: string) => `Alles synchron · ${time}`,
     changes: (count: number) => (count === 1 ? "1 Änderung" : `${count} Änderungen`),
@@ -261,17 +261,13 @@ export const de: Messages = {
     reconnectShort: "Neu verbinden",
     calendarsLabel: "Kalender",
     mainCalendar: "Hauptkalender",
-    noSource:
-      "Kein Kalender gewählt. Schalte mindestens einen ein, dann gehen seine Termine in die Kalender unten.",
+    noSource: "Kein Kalender gewählt. Schalte mindestens einen ein.",
     skipAllDayTitle: "Ganztägige Termine auslassen",
-    skipAllDayHint:
-      "Urlaub, Feiertage und Geburtstage würden sonst in den anderen Kalendern den ganzen Tag blocken.",
+    skipAllDayHint: "Sonst blocken Urlaub und Feiertage ganze Tage.",
     skipTentativeTitle: "Termine mit Vorbehalt auslassen",
-    skipTentativeHint:
-      "Einladungen, die du mit „Vielleicht“ beantwortet hast, und als vorläufig eingetragene Termine blocken dann nicht.",
+    skipTentativeHint: "„Vielleicht“-Antworten und vorläufige Termine blocken nicht.",
     markPrivateTitle: "Kopien als privat markieren",
-    markPrivateHint:
-      "Wer deinen Kalender einsehen kann, etwa Kollegen oder eine Assistenz, sieht „Privat“ statt des Titels. Du selbst siehst alles.",
+    markPrivateHint: "Andere sehen „Privat“ statt des Titels. Du siehst alles.",
     days: (days: number) => `${days} Tage`,
     cellChanged: "geändert",
     checking: "Wird geprüft …",

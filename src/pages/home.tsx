@@ -12,7 +12,6 @@ import {
   ReconnectNotice,
   reconnectUrl,
   SourcePills,
-  workHoursText,
   type Notice,
 } from "./calendar-editor";
 import type { CalendarRow } from "../calendars";
@@ -128,8 +127,7 @@ function AccountHours(props: { account: EditorAccount }) {
       {storedZone !== "" && !isTimeZone(storedZone) ? (
         <p class="fineprint work-zone-unknown">{t.editor.workZoneUnknown(storedZone)}</p>
       ) : null}
-      <p class="fineprint">
-        {hours ? `${workHoursText(t, hours)} · ` : ""}
+      <p class="fineprint" title={t.accounts.workHoursTitle}>
         {t.accounts.workHoursHint}
       </p>
       {hours ? (

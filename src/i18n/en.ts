@@ -43,11 +43,12 @@ export const en = {
     disconnect: "Disconnect",
     rename: "Settings",
     workHoursLabel: "Working hours",
-    workHoursHint:
-      "In the sync settings you can limit copies into this account to these hours. Without working hours the whole day counts.",
+    workHoursHint: "Applies to everything copied into this account.",
+    workHoursTitle:
+      "You turn it on per calendar in the sync settings. Without working hours the whole day counts.",
     workHoursNone: "No working hours",
     colorLabel: "Colour",
-    colorHint: "Marks the account on these pages. It does not change your calendars.",
+    colorHint: "Only on these pages, not in your calendars.",
     colorAuto: "Automatic",
     colorNames: {
       green: "Green",
@@ -60,7 +61,7 @@ export const en = {
       slate: "Slate",
     },
     nameLabel: "Name",
-    nameHint: "Shown in the sync settings. Leave empty to use the name from the address.",
+    nameHint: "Leave empty for the name from the address.",
     save: "Save",
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
@@ -130,7 +131,7 @@ export const en = {
     viewMatrix: "Overview",
     groupTitle: "Block each other",
     groupText: (count: number, markPrivate: boolean) =>
-      `These ${count} calendars see each other only as busy${markPrivate ? ", marked private" : ""}. Set more detail per calendar below.`,
+      `These ${count} calendars see each other only as busy${markPrivate ? ", marked private" : ""}.`,
     groupTooFew: "Choose at least two calendars.",
     groupAdd: "Add to the group",
     groupRemove: "Remove from the group",
@@ -165,7 +166,7 @@ export const en = {
     stepChoose: "Choose here where the events of each calendar go.",
     quickStartTitle: "Quick start",
     quickStartText: (count: number) =>
-      `Let all ${count} calendars block each other as busy. Afterwards you can show more detail for single directions, for example work events with titles in your private calendar.`,
+      `All ${count} calendars block each other as busy. Add detail per direction later.`,
     quickStartButton: "Block each other",
     statusOk: (time: string) => `Everything in sync · ${time}`,
     changes: (count: number) => (count === 1 ? "1 change" : `${count} changes`),
@@ -257,17 +258,13 @@ export const en = {
     reconnectShort: "Reconnect",
     calendarsLabel: "Calendars",
     mainCalendar: "Main calendar",
-    noSource:
-      "No calendar chosen. Turn on at least one, then its events go to the calendars below.",
+    noSource: "No calendar chosen. Turn on at least one.",
     skipAllDayTitle: "Skip all-day events",
-    skipAllDayHint:
-      "Holidays, birthdays and days off would otherwise block the whole day in the other calendars.",
+    skipAllDayHint: "Otherwise holidays and days off block whole days.",
     skipTentativeTitle: "Skip tentative events",
-    skipTentativeHint:
-      "Invitations you answered with “maybe”, and events marked as tentative, then do not block.",
+    skipTentativeHint: "“Maybe” answers and tentative events do not block.",
     markPrivateTitle: "Mark copies as private",
-    markPrivateHint:
-      "People who can see your calendar, such as colleagues or an assistant, see “Private” instead of the title. You still see everything.",
+    markPrivateHint: "Others see “Private” instead of the title. You see everything.",
     days: (days: number) => `${days} days`,
     cellChanged: "changed",
     checking: "Checking…",

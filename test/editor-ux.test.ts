@@ -304,7 +304,7 @@ describe("copy", () => {
 
     await saveSettings({});
     const off = await page(cookie, "/rules", GERMAN);
-    expect(off).toContain("sehen voneinander nur „Belegt“. Mehr Details");
+    expect(off).toContain("sehen voneinander nur „Belegt“.");
     expect(off).not.toContain("als privat markiert");
 
     await saveSettings({ "settings.markPrivate": "on" });

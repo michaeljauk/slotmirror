@@ -1,6 +1,6 @@
 import type { Child } from "hono/jsx";
 import { APP_NAME } from "../brand";
-import { LOCALE_NAMES, LOCALES, useI18n } from "../i18n";
+import { LOCALE_NAMES, LOCALES, useI18n, useLanguageHref, type Locale } from "../i18n";
 import type { CurrentUser } from "../users";
 
 export type NavItem = "accounts" | "rules" | "activity" | "admin";
@@ -37,6 +37,19 @@ function initials(email: string): string {
   return letters.toUpperCase();
 }
 
+function LanguageLink(props: { code: Locale }) {
+  return (
+    <a
+      class="segment"
+      href={useLanguageHref(props.code)}
+      hreflang={props.code}
+      title={LOCALE_NAMES[props.code]}
+    >
+      {props.code.toUpperCase()}
+    </a>
+  );
+}
+
 /** Segmented control that switches the language; the detector stores the choice in a cookie. */
 export function LanguageSwitch() {
   const { locale, t } = useI18n();
@@ -48,9 +61,7 @@ export function LanguageSwitch() {
             {code.toUpperCase()}
           </span>
         ) : (
-          <a class="segment" href={`?lang=${code}`} hreflang={code} title={LOCALE_NAMES[code]}>
-            {code.toUpperCase()}
-          </a>
+          <LanguageLink code={code} />
         ),
       )}
     </span>

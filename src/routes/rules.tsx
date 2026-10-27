@@ -3,14 +3,17 @@ import type { AppEnv } from "../app-env";
 import { latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { ruleOptionsSchema, setupStatus } from "../config";
-import { i18nFromContext, useI18n as i18nForStatus } from "../i18n";
+import { i18nFromContext, useI18n as i18nForStatus, type Messages } from "../i18n";
 import {
+  blockColorProblem,
   CHOICES,
   deleteRuleWithBlocks,
   loadEditorState,
+  MAX_CATEGORY_LENGTH,
   resetDirection,
   setDirection,
   setBlockColor,
+  setDefaultBlockTitle,
   setGroupMembership,
   setSettings,
   setSourceCalendar,
@@ -40,6 +43,8 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
   if ((await userCalendars(c.env.DB, user.id)).length === 0) {
     await refreshUserCalendars(c.env, user.id);
   }
+  // Every rule starts on this page, so a new user's first rule gets the title in their language.
+  await setDefaultBlockTitle(c.env, user.id, i18nFromContext(c).t.editor.defaultBlockTitle);
   const page = (
     <CalendarEditorPage
       user={user}
@@ -172,62 +177,103 @@ rules.post("/group/:accountId", async (c) => {
   return c.redirect("/rules");
 });
 
+/** A refused change: plain text for the editor script, the page with a notice without it. */
+function refuse(c: Context<AppEnv>, text: string) {
+  return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+}
+
+/** Why a block colour cannot be stored for a target, in the user's words; null if it can. */
+function blockColorError(
+  t: Messages,
+  target: { provider: "microsoft" | "google" } | undefined,
+  value: string,
+): string | null {
+  const problem = target ? blockColorProblem(target.provider, value) : "invalid";
+  if (problem === "comma") return t.editor.blockCategoryComma;
+  if (problem === "tooLong") return t.editor.blockCategoryTooLong(MAX_CATEGORY_LENGTH);
+  return problem ? t.editor.blockColorInvalid : null;
+}
+
 rules.post("/direction", async (c) => {
   const form = await c.req.formData();
   const from = formText(form, "from");
   const to = formText(form, "to");
   const choice = formText(form, "choice");
-  if (!(CHOICES as readonly string[]).includes(choice)) return c.text("Bad choice", 400);
+  if (!(CHOICES as readonly string[]).includes(choice)) {
+    return refuse(c, i18nFromContext(c).t.editor.choiceInvalid);
+  }
   await setDirection(c.env, currentUser(c), from, to, choice as Choice);
   return backTo(c, from);
 });
 
-// All unsaved choices of the page, sent by the editor script: fields "choice.<from>.<to>".
+// All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
+// "choice.<from>.<to>", "blockColor.<from>.<to>" and "settings.<name>". Every field is checked
+// before the first write, so that a save applies all of it or nothing.
 rules.post("/choices", async (c) => {
   const user = currentUser(c);
+  const { t } = i18nFromContext(c);
   const form = await c.req.formData();
-  // Source calendars first, so that the choices below also reach newly chosen calendars.
-  for (const [name, value] of form.entries()) {
-    const [prefix, calendarId, ...rest] = name.split(".");
-    if (prefix !== "calendar" || !calendarId || rest.length > 0) continue;
-    await setSourceCalendar(c.env, user, calendarId, value === "1");
-  }
+  const fields = (kind: string) =>
+    [...form.entries()].flatMap(([name, value]) => {
+      const [prefix, first, second, ...rest] = name.split(".");
+      if (prefix !== kind || !first || rest.length > 0 || typeof value !== "string") return [];
+      return [{ first, second, value }];
+    });
+  const calendars = fields("calendar").filter((field) => field.second === undefined);
   const changes: { from: string; to: string; choice: Choice }[] = [];
-  for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "choice" || !from || !to || rest.length > 0) continue;
-    if (typeof value !== "string" || !(CHOICES as readonly string[]).includes(value)) {
-      return c.text("Bad choice", 400);
-    }
-    changes.push({ from, to, choice: value as Choice });
+  for (const { first, second, value } of fields("choice")) {
+    if (!second) continue;
+    if (!(CHOICES as readonly string[]).includes(value)) return refuse(c, t.editor.choiceInvalid);
+    changes.push({ from: first, to: second, choice: value as Choice });
+  }
+  const colors: { from: string; to: string; value: string }[] = [];
+  const { accounts } = await loadEditorState(c.env, user.id);
+  for (const { first, second, value } of fields("blockColor")) {
+    if (!second) continue;
+    const error = blockColorError(
+      t,
+      accounts.find((account) => account.id === second),
+      value,
+    );
+    if (error) return refuse(c, error);
+    colors.push({ from: first, to: second, value });
+  }
+
+  // Source calendars first, so that the choices below also reach newly chosen calendars.
+  for (const { first, value } of calendars) {
+    await setSourceCalendar(c.env, user, first, value === "1");
   }
   for (const change of changes) {
     await setDirection(c.env, user, change.from, change.to, change.choice);
   }
   // Block colours after the choices, so that a direction turned on in the same save has its rules.
-  for (const [name, value] of form.entries()) {
-    const [prefix, from, to, ...rest] = name.split(".");
-    if (prefix !== "blockColor" || !from || !to || rest.length > 0) continue;
-    if (typeof value !== "string" || !(await setBlockColor(c.env, user, from, to, value))) {
-      return c.text("Bad block colour", 400);
-    }
+  // A direction that lost its last source in this save has no rules left to colour.
+  for (const color of colors) {
+    await setBlockColor(c.env, user, color.from, color.to, color.value);
   }
-  if (form.has("settings")) await setSettings(c.env, user, settingsFrom(form, "settings."));
+  if (form.has("settings")) {
+    await setSettings(c.env, user, settingsFrom(form, t.editor.defaultBlockTitle, "settings."));
+  }
   if (wantsFragment(c)) return c.body(null, 204);
   return c.redirect("/rules");
 });
 
 rules.post("/direction/color", async (c) => {
+  const user = currentUser(c);
+  const { t } = i18nFromContext(c);
   const form = await c.req.formData();
   const from = formText(form, "from");
-  const ok = await setBlockColor(
-    c.env,
-    currentUser(c),
-    from,
-    formText(form, "to"),
-    formText(form, "blockColor"),
+  const to = formText(form, "to");
+  const value = formText(form, "blockColor");
+  const { accounts } = await loadEditorState(c.env, user.id);
+  const error = blockColorError(
+    t,
+    accounts.find((account) => account.id === to),
+    value,
   );
-  if (!ok) return c.text("Bad block colour", 400);
+  if (error) return refuse(c, error);
+  if (!(await setBlockColor(c.env, user, from, to, value)))
+    return refuse(c, t.editor.blockColorInvalid);
   return backTo(c, from);
 });
 
@@ -238,8 +284,11 @@ rules.post("/direction/reset", async (c) => {
   return backTo(c, from);
 });
 
-/** Settings from a form or the editor script's fields "settings.<name>". */
-function settingsFrom(form: FormData, prefix = ""): SettingsForm {
+/**
+ * Settings from a form or the editor script's fields "settings.<name>". An empty block title
+ * becomes `defaultTitle`, the one of the user's language.
+ */
+function settingsFrom(form: FormData, defaultTitle: string, prefix = ""): SettingsForm {
   const days = Number(form.get(`${prefix}daysAhead`));
   const shown = Number(form.get(`${prefix}daysAheadShown`));
   const text = (name: string) => {
@@ -260,7 +309,7 @@ function settingsFrom(form: FormData, prefix = ""): SettingsForm {
     skipAllDay: form.has(`${prefix}skipAllDay`),
     skipTentative: form.has(`${prefix}skipTentative`),
     markPrivate: form.has(`${prefix}markPrivate`),
-    blockTitle: text("blockTitle").trim().slice(0, 255) || "Busy",
+    blockTitle: text("blockTitle").trim().slice(0, 255) || defaultTitle,
     skipCategories: [...new Set([...categories, ...colors])].slice(0, 50),
   };
 }
@@ -277,9 +326,26 @@ rules.post("/source-calendar/:calendarId", async (c) => {
 });
 
 rules.post("/settings", async (c) => {
-  await setSettings(c.env, currentUser(c), settingsFrom(await c.req.formData()));
+  const { t } = i18nFromContext(c);
+  await setSettings(
+    c.env,
+    currentUser(c),
+    settingsFrom(await c.req.formData(), t.editor.defaultBlockTitle),
+  );
   return c.redirect("/rules");
 });
+
+/**
+ * A failed run or check in the user's words. The error crosses the Durable Object boundary, so
+ * only its message is left. A missing or refused token means the account must connect again.
+ */
+function runErrorText(t: Messages, error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("Account has no tokens") || message.includes("invalid_grant")) {
+    return t.editor.checkNoTokens;
+  }
+  return t.editor.checkFailed;
+}
 
 // Check one direction with real events: a dry run of every rule of the direction, one per
 // source calendar of the account, summed.
@@ -306,8 +372,7 @@ rules.post("/direction/check", async (c) => {
     }
   } catch (error) {
     console.error("Direction check failed", from, to, error);
-    const text = (error as Error).message;
-    return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+    return refuse(c, runErrorText(t, error));
   }
   const text = t.editor.checkResult(sum.create, sum.update, sum.delete, sum.unchanged);
   return wantsFragment(c) ? c.text(text) : renderPage(c, { kind: "info", text });
@@ -338,8 +403,7 @@ for (const action of ["preview", "run"] as const) {
       return renderPage(c, { kind: "info", text });
     } catch (error) {
       console.error(`Rule ${action} failed`, ruleId, error);
-      const text = (error as Error).message;
-      return wantsFragment(c) ? c.text(text, 400) : renderPage(c, { kind: "error", text }, 400);
+      return refuse(c, runErrorText(t, error));
     }
   });
 }

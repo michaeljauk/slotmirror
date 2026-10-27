@@ -172,7 +172,11 @@ export interface RuleOutcome {
   detail: Partial<SyncRunDetail> & { code?: string };
 }
 
-/** Latest outcome per rule of a user. Dry runs do not count: they write nothing. */
+/**
+ * Latest outcome per rule of a user. Dry runs do not count: they write nothing. Only rules that
+ * still exist and are enabled count, so that a deleted or paused rule does not keep a failure on
+ * the pages until the log purges it.
+ */
 export async function latestRuleOutcomes(db: D1Database, userId: string): Promise<RuleOutcome[]> {
   const { results } = await db
     .prepare(
@@ -182,9 +186,10 @@ export async function latestRuleOutcomes(db: D1Database, userId: string): Promis
          SELECT MAX(id) FROM audit_events
          WHERE user_id = ? AND rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
            AND COALESCE(json_extract(detail, '$.dryRun'), 0) = 0
-         GROUP BY rule_id)`,
+         GROUP BY rule_id)
+         AND rule_id IN (SELECT id FROM rules WHERE user_id = ? AND enabled = 1)`,
     )
-    .bind(userId)
+    .bind(userId, userId)
     .all<Omit<RuleOutcome, "detail"> & { detail: string }>();
   return results.map((row) => ({ ...row, detail: parseDetail(row.detail) }));
 }

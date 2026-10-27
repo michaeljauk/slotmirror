@@ -108,10 +108,43 @@ export function i18nFromContext(c: Context): I18n {
 
 const I18nContext = createContext<I18n>(i18nFor(LOCALES[0]));
 
-export function I18nProvider(props: { value: I18n; children: Child }) {
-  return <I18nContext.Provider value={props.value}>{props.children}</I18nContext.Provider>;
+/** The page that the language switch reloads; null for the current URL. */
+const LanguagePageContext = createContext<string | null>(null);
+
+export function I18nProvider(props: { value: I18n; languagePage?: string; children: Child }) {
+  return (
+    <I18nContext.Provider value={props.value}>
+      <LanguagePageContext.Provider value={props.languagePage ?? null}>
+        {props.children}
+      </LanguagePageContext.Provider>
+    </I18nContext.Provider>
+  );
 }
 
 export function useI18n(): I18n {
   return useContext(I18nContext);
+}
+
+/** The link that shows the page in another locale. */
+export function useLanguageHref(locale: Locale): string {
+  const page = useContext(LanguagePageContext);
+  if (page === null) return `?lang=${locale}`;
+  const url = new URL(page, "https://page.invalid");
+  url.searchParams.set("lang", locale);
+  return `${url.pathname}${url.search}`;
+}
+
+/**
+ * The page that the language switch reloads: the current one for a GET. A POST answer has no
+ * URL to load again, so the switch goes to the page the form came from, or else the start page.
+ */
+export function languagePage(c: Context): string {
+  const url = new URL(c.req.url);
+  if (c.req.method === "GET") return `${url.pathname}${url.search}`;
+  const referer = c.req.header("referer");
+  if (referer && URL.canParse(referer)) {
+    const from = new URL(referer);
+    if (from.origin === url.origin) return `${from.pathname}${from.search}`;
+  }
+  return "/";
 }

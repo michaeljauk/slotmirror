@@ -164,7 +164,8 @@ export function HomePage(props: {
                             type="text"
                             name="name"
                             maxlength={MAX_NAME_LENGTH}
-                            value={editor?.name ?? ""}
+                            value={editor?.customName ?? ""}
+                            placeholder={editor?.derivedName}
                           />
                         </label>
                         <p class="fineprint">{t.accounts.nameHint}</p>

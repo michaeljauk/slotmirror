@@ -808,7 +808,7 @@ export class AccountSync extends DurableObject<Env> {
       scope: rule.userId,
       claimed,
     });
-    const plan = planSync(desired, existing);
+    const plan = planSync(desired, existing, { sync: window });
 
     let throttled = 0;
     const statuses: Record<string, number> = {};

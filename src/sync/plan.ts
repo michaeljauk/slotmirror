@@ -143,14 +143,49 @@ function sameInstant(a: string, b: string): boolean {
   return !Number.isNaN(ta) && ta === tb;
 }
 
+export interface TimeWindow {
+  start: Date;
+  end: Date;
+}
+
+/** True if a block overlaps a window. All-day dates count from midnight UTC. */
+function overlaps(block: { start: string; end: string }, window: TimeWindow): boolean {
+  return (
+    Date.parse(block.start) < window.end.getTime() && Date.parse(block.end) > window.start.getTime()
+  );
+}
+
+/**
+ * True for an all-day block whose dates lie outside the sync window; see `planSync`.
+ *
+ * Each provider filters all-day events at the midnights of its own calendar's time zone, but
+ * returns them as dates. So the source read and the target read can disagree about the date before
+ * the window and the date at its end: one read returns it, the other does not.
+ */
+function isAllDayOutside(block: DesiredBlock | ExistingBlock, sync: TimeWindow): boolean {
+  return block.allDay && !overlaps(block, sync);
+}
+
 /**
  * Compare what the target should contain with what it contains, inside one sync window.
  *
  * The plan creates missing blocks, updates changed ones and deletes blocks whose source occurrence
  * is gone. Duplicates of a marker (for example after a crash between write and bookkeeping) are
  * deleted except one. It never rebuilds blocks that already match.
+ *
+ * With `windows.sync`, the plan never creates or deletes an all-day block whose dates lie outside
+ * the sync window. It only keeps or updates such a block where the target read finds it. If the
+ * target read does not return that date, a create would repeat on every run; if the source read
+ * does not return it, a delete would remove a block whose event still exists. West of UTC, the
+ * current local day is such a date after midnight UTC: its block stays, but a new all-day event
+ * for that day only gets a block if the target read finds one. The planner does not know the time
+ * zones, so it cannot tell which reads return that date.
  */
-export function planSync(desired: DesiredBlock[], existing: ExistingBlock[]): SyncPlan {
+export function planSync(
+  desired: DesiredBlock[],
+  existing: ExistingBlock[],
+  windows?: { sync: TimeWindow },
+): SyncPlan {
   const actions: SyncAction[] = [];
   let unchanged = 0;
 
@@ -168,6 +203,8 @@ export function planSync(desired: DesiredBlock[], existing: ExistingBlock[]): Sy
       actions.push({ kind: "delete", targetId: duplicate.targetId, marker: duplicate.marker });
     }
     if (!current) {
+      // The target read may not return this date, so a create could repeat on every run.
+      if (windows && isAllDayOutside(block, windows.sync)) continue;
       actions.push({ kind: "create", block });
     } else if (sameContent(current, block)) {
       unchanged++;
@@ -177,7 +214,12 @@ export function planSync(desired: DesiredBlock[], existing: ExistingBlock[]): Sy
   }
 
   for (const orphans of existingByMarker.values()) {
-    for (const orphan of orphans) {
+    for (const [index, orphan] of orphans.entries()) {
+      // Keep one block of an all-day event outside the window; its event may be outside the read.
+      if (index === 0 && windows && isAllDayOutside(orphan, windows.sync)) {
+        unchanged++;
+        continue;
+      }
       actions.push({ kind: "delete", targetId: orphan.targetId, marker: orphan.marker });
     }
   }

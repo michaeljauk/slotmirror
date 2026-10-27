@@ -1,5 +1,5 @@
 import type { CalendarInfo } from "./providers/calendar-client";
-import { errorCode } from "./audit";
+import { errorCode, errorLogFields } from "./audit";
 import { accountSync } from "./durable";
 import { reconcileRules } from "./editor";
 
@@ -56,7 +56,7 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
     try {
       calendars = await accountSync(env, account.id).listCalendars();
     } catch (error) {
-      console.error("Loading calendars failed", account.id, error);
+      console.error("Loading calendars failed", account.id, ...errorLogFields(error));
       continue;
     }
     if (calendars.length === 0) continue;

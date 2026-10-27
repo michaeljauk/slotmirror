@@ -2434,3 +2434,13 @@ describe("overlapping runs", () => {
     expect(target.some((block) => block.start.dateTime.startsWith("2026-12-01T10:00"))).toBe(true);
   });
 });
+
+describe("static messages", () => {
+  it("allows a time zone name in the Graph message, but not other text", () => {
+    const zone = "Expected UTC times from Graph, got W. Europe Standard Time";
+    expect(errorCode(new Error(zone))).toBe(zone);
+    expect(errorCode(new Error("Expected UTC times from Graph, got alice@corp.example"))).toBe(
+      "Error",
+    );
+  });
+});

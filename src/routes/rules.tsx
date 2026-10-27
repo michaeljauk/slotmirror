@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
-import { latestRuleOutcomes, recordAudit } from "../audit";
+import { errorLogFields, latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { ruleOptionsSchema, setupStatus } from "../config";
 import { i18nFromContext, useI18n as i18nForStatus, type Messages } from "../i18n";
@@ -381,7 +381,7 @@ rules.post("/direction/check", async (c) => {
       sum.unchanged += result.stats.unchanged;
     }
   } catch (error) {
-    console.error("Direction check failed", from, to, error);
+    console.error("Direction check failed", from, to, ...errorLogFields(error));
     return refuse(c, runErrorText(t, error));
   }
   const text = t.editor.checkResult(sum.create, sum.update, sum.delete, sum.unchanged);
@@ -412,7 +412,7 @@ for (const action of ["preview", "run"] as const) {
       }
       return renderPage(c, { kind: "info", text });
     } catch (error) {
-      console.error(`Rule ${action} failed`, ruleId, error);
+      console.error(`Rule ${action} failed`, ruleId, ...errorLogFields(error));
       return refuse(c, runErrorText(t, error));
     }
   });

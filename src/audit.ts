@@ -91,7 +91,7 @@ export async function recordAudit(db: D1Database, event: AuditEvent): Promise<vo
   try {
     await auditStatement(db, event).run();
   } catch (error) {
-    console.error("Audit write failed", event.kind, error);
+    console.error("Audit write failed", event.kind, ...errorLogFields(error));
   }
 }
 
@@ -113,9 +113,11 @@ const STATIC_MESSAGES = new Set([
   "Google event time has neither date nor dateTime",
 ]);
 
-/** Static text with IDs or status codes: "Rule <id> not found", "Graph <what> failed: 403 <reason>". */
+/** Static text with IDs, status codes or a time zone name: "Rule <id> not found", "Graph <what> failed: 403 <reason>". */
 const STATIC_PATTERNS = [
   /^Rule [\w-]{1,64} not found$/,
+  // The zone name comes from the provider, not from the user.
+  /^Expected UTC times from Graph, got [A-Za-z0-9_/+ .-]{1,64}$/,
   /^(Graph|Google) [A-Za-z ]{1,40} failed: \d{3}( [A-Za-z0-9_.-]{1,64})?$/,
 ];
 
@@ -151,7 +153,8 @@ export function stackFrames(error: Error): string {
  * message or stack. A provider's `error_description` can name the user, and a SyntaxError can
  * quote the input. Spread the result into `console.error`.
  */
-export function errorLogFields(error: Error): string[] {
+export function errorLogFields(error: unknown): string[] {
+  if (!(error instanceof Error)) return [typeof error];
   const fields = [error.name];
   const code = safeCode(error);
   if (code) fields.push(code);

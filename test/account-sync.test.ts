@@ -1,4 +1,4 @@
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
@@ -12,6 +12,17 @@ import { BASE, signIn } from "./helpers";
 
 const SOURCE_CAL = "remote-source";
 const TARGET_CAL = "remote-target";
+
+/** IDs of the Durable Objects that a cleanup handled, and of those a test reached since. */
+const cleaned = new Set<string>();
+const reached = new Set<string>();
+
+/** The stub of an account's instance. Its alarm is cancelled after the test. */
+function accountStub(accountId: string): DurableObjectStub<AccountSync> {
+  const stub = env.ACCOUNT_SYNC.getByName(accountId);
+  reached.add(stub.id.toString());
+  return stub;
+}
 
 /** One account with a source and a target calendar and a rule between them. */
 async function setupRule(accountId: string, options: object = {}) {
@@ -36,7 +47,7 @@ async function setupRule(accountId: string, options: object = {}) {
       JSON.stringify(options),
     ),
   ]);
-  const stub = env.ACCOUNT_SYNC.getByName(accountId);
+  const stub = accountStub(accountId);
   return { stub, ruleId: `${accountId}-rule` };
 }
 
@@ -95,6 +106,27 @@ function fakeGraph(target: unknown[] = []) {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+/**
+ * Cancel the alarms that a test leaves behind. An alarm fires by itself once due, and a test that
+ * waits for a short `Retry-After` leaves one seconds away. On a slow machine it fires during a later
+ * test and calls that test's fetch mock with another account's requests. Only new instances and
+ * the ones the test reached are checked; all of them for every test would take seconds each.
+ */
+afterEach(async () => {
+  const ids = (await listDurableObjectIds(env.ACCOUNT_SYNC)).filter(
+    (id) => !cleaned.has(id.toString()) || reached.has(id.toString()),
+  );
+  await Promise.all(
+    ids.map((id) =>
+      runInDurableObject(env.ACCOUNT_SYNC.get(id), (_instance, state) =>
+        state.storage.deleteAlarm(),
+      ),
+    ),
+  );
+  for (const id of ids) cleaned.add(id.toString());
+  reached.clear();
 });
 
 /**
@@ -258,7 +290,7 @@ describe("AccountSync.runRule", () => {
 
   it("refuses to run a rule in the instance of another account", async () => {
     const { ruleId } = await setupRule("acc-owner");
-    const other = env.ACCOUNT_SYNC.getByName("acc-other");
+    const other = accountStub("acc-other");
     await other.storeTokens("acc-other", {
       refreshToken: "r",
       accessToken: "a",
@@ -560,7 +592,7 @@ async function bareAccount(accountId: string, accessExpiresAt = Date.now() + 3_6
   )
     .bind(accountId, user.id, `${accountId}@example.com`)
     .run();
-  const stub = env.ACCOUNT_SYNC.getByName(accountId);
+  const stub = accountStub(accountId);
   await stub.storeTokens(accountId, { refreshToken: "r", accessToken: "a", accessExpiresAt });
   return stub;
 }
@@ -998,7 +1030,7 @@ describe("alarm queue", () => {
   });
 
   it("drops queued removals and sets no alarm in an instance without tokens", async () => {
-    const stub = env.ACCOUNT_SYNC.getByName("acc-no-tokens");
+    const stub = accountStub("acc-no-tokens");
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     await stub.queueRemoval("gone-rule", TARGET_CAL);
@@ -1635,7 +1667,7 @@ describe("throttling", () => {
             ? new Response("busy", { status: 429, headers: { "Retry-After": "7" } })
             : Response.json({ value: events }),
       });
-      const stub = env.ACCOUNT_SYNC.getByName(id);
+      const stub = accountStub(id);
       const queue = () =>
         runInDurableObject(stub, (_instance, state) => state.storage.get<string[]>("ruleQueue"));
       await runInDurableObject(stub, async (_instance, state) => {
@@ -1801,7 +1833,7 @@ describe("waiting rules", () => {
     const { stub, throttledRule } = await sourceThrottledSetup(id, async () => {
       if (queued) return;
       queued = true;
-      await env.ACCOUNT_SYNC.getByName(id).queueRemoval("gone-rule", TARGET_CAL);
+      await accountStub(id).queueRemoval("gone-rule", TARGET_CAL);
     });
     await runInDurableObject(stub, async (_instance, state) => {
       // An older removal waits after a failed attempt; the new one must not wait for it.
@@ -1903,7 +1935,7 @@ describe("waiting rules", () => {
       ).bind(user.id),
       env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id),
     ]);
-    const stub = env.ACCOUNT_SYNC.getByName("acc-inactive");
+    const stub = accountStub("acc-inactive");
     await stub.storeTokens("acc-inactive", {
       refreshToken: "r",
       accessToken: "a",
@@ -2061,13 +2093,13 @@ describe("detail caps", () => {
       ),
     ]);
     for (const id of [`${prefix}-a`, `${prefix}-b`]) {
-      await env.ACCOUNT_SYNC.getByName(id).storeTokens(id, {
+      await accountStub(id).storeTokens(id, {
         refreshToken: "r",
         accessToken: "a",
         accessExpiresAt: Date.now() + 3_600_000,
       });
     }
-    return { stub: env.ACCOUNT_SYNC.getByName(`${prefix}-b`), ruleId: `${prefix}-rule` };
+    return { stub: accountStub(`${prefix}-b`), ruleId: `${prefix}-rule` };
   }
 
   function sentBlocks(calls: { url: string; init?: RequestInit }[]) {
@@ -2779,7 +2811,7 @@ describe("accounts that need reconnecting", () => {
 
   it("asks the accounts that read from it for a sync when the pause ends", async () => {
     const { stub: reader } = await ruleFromFlaggedSource("reader-a");
-    const source = env.ACCOUNT_SYNC.getByName("reader-a-src");
+    const source = accountStub("reader-a-src");
     await runInDurableObject(source, (_instance, state) =>
       state.storage.put("needsReconnect", {
         code: "invalid_grant",
@@ -2852,7 +2884,7 @@ describe("accounts that need reconnecting", () => {
   });
 
   it("neither pauses nor alerts for an account whose row is already gone", async () => {
-    const stub = env.ACCOUNT_SYNC.getByName("acc-gone");
+    const stub = accountStub("acc-gone");
     await stub.storeTokens("acc-gone", { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 });
     vi.spyOn(console, "error").mockImplementation(() => {});
     const calls = refusingTokenEndpoint();
@@ -2889,8 +2921,8 @@ describe("accounts that need reconnecting", () => {
       ).bind(ruleId, user.id, `${source}-cal`, `${target}-cal`),
     ]);
     const tokens = { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() + 3_600_000 };
-    await env.ACCOUNT_SYNC.getByName(source).storeTokens(source, tokens);
-    const stub = env.ACCOUNT_SYNC.getByName(target);
+    await accountStub(source).storeTokens(source, tokens);
+    const stub = accountStub(target);
     await stub.storeTokens(target, tokens);
     vi.spyOn(console, "error").mockImplementation(() => {});
     return { stub, ruleId, calls: fakeGraph() };

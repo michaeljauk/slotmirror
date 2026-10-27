@@ -2,8 +2,9 @@ import * as z from "zod/mini";
 import {
   fromGoogleEvent,
   googleEventFields,
-  googleEventSchema,
-  googleMarker,
+  googleEventMarker,
+  googleSourceEvent,
+  parseGoogleEvent,
   toGoogleBlock,
 } from "../sync/google-events";
 import {
@@ -121,11 +122,12 @@ export class GoogleCalendar implements CalendarClient {
   ): Promise<ExistingBlock[]> {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.listEvents(calendarId, window, false)) {
-      const marker = googleMarker(raw);
-      const source = fromGoogleEvent(raw);
+      const event = parseGoogleEvent(raw);
+      const marker = googleEventMarker(event);
+      const source = googleSourceEvent(event);
       if (!marker || !source || !ruleTags.includes(marker.ruleTag)) continue;
       blocks.push({
-        targetId: googleEventSchema.parse(raw).id,
+        targetId: event.id,
         ...marker,
         start: source.start,
         end: source.end,
@@ -152,7 +154,7 @@ export class GoogleCalendar implements CalendarClient {
             ? httpPart(
                 "PATCH",
                 `${path}/${encodeURIComponent(action.targetId)}`,
-                toGoogleBlock(action.block, ruleTag),
+                toGoogleBlock(action.block, ruleTag, { update: true }),
               )
             : httpPart("DELETE", `${path}/${encodeURIComponent(action.targetId)}`);
       return `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <item${index}>\r\n\r\n${request}\r\n`;

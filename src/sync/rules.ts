@@ -81,6 +81,25 @@ export async function loadRule(db: D1Database, ruleId: string): Promise<RuleCont
 }
 
 /**
+ * The rules of `ruleIds` that the alarm may run: they exist, are enabled, and their user is active.
+ * A queued rule can be disabled or removed before its turn; the editor then queues the removal of
+ * its blocks.
+ */
+export async function rulesRunningFromAlarm(
+  db: D1Database,
+  ruleIds: string[],
+): Promise<Set<string>> {
+  const { results } = await db
+    .prepare(
+      `SELECT r.id FROM rules r JOIN users u ON u.id = r.user_id
+       WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1 AND u.active = 1`,
+    )
+    .bind(JSON.stringify(ruleIds))
+    .all<{ id: string }>();
+  return new Set(results.map((row) => row.id));
+}
+
+/**
  * Enabled rules whose target calendar belongs to the account; they run in its Durable Object.
  * Rules of a deactivated user do not run.
  */
@@ -94,6 +113,23 @@ export async function rulesTargetingAccount(db: D1Database, accountId: string): 
     .bind(accountId)
     .all<{ id: string }>();
   return results.map((row) => row.id);
+}
+
+/** True if the rule is enabled, its user is active, and it writes into this calendar. */
+export async function ruleWritesInto(
+  db: D1Database,
+  ruleId: string,
+  remoteCalendarId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS found FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN users u ON u.id = r.user_id
+       WHERE r.id = ? AND tc.remote_id = ? AND r.enabled = 1 AND u.active = 1`,
+    )
+    .bind(ruleId, remoteCalendarId)
+    .first<{ found: number }>();
+  return row !== null;
 }
 
 /**
@@ -120,16 +156,35 @@ export function syncWindow(options: RuleOptions, now = new Date()): { start: Dat
 }
 
 /**
- * The window of both reads of a run, source and target: the sync window with the largest buffer
- * added on each side. A block that reaches into the sync window then has its event in the read,
- * whatever the buffers. The window does not depend on a rule's buffers, so that rules with
- * different buffers share one source read, and a lower buffer never narrows it.
+ * The window of the source read of a buffered rule: the sync window with the largest buffer added
+ * on each side. A block that reaches into the sync window then has its event in the read, whatever
+ * the buffers. The window does not depend on the size of the buffers, so that rules with different
+ * buffers share one source read, and a lower buffer never narrows it. A rule without a buffer
+ * reads the sync window, as before buffers existed: it returns no window then, and its blocks
+ * stay exactly the same. The target read is wider still; see `targetReadWindow`.
  */
-export function readWindow(window: { start: Date; end: Date }): { start: Date; end: Date } {
+export function readWindow(
+  window: { start: Date; end: Date },
+  options: { bufferBefore: number; bufferAfter: number },
+): { start: Date; end: Date } | undefined {
+  if (options.bufferBefore === 0 && options.bufferAfter === 0) return undefined;
   const margin = MAX_BUFFER_MINUTES * 60_000;
   return {
     start: new Date(window.start.getTime() - margin),
     end: new Date(window.end.getTime() + margin),
+  };
+}
+
+/**
+ * The window of the target read of a rule: the sync window and one day more on each side. Each
+ * provider filters all-day blocks at the midnights of the target calendar's time zone, so only a
+ * wider read returns every all-day date that the source read can return; see `planSync`.
+ */
+export function targetReadWindow(window: { start: Date; end: Date }): { start: Date; end: Date } {
+  const day = 24 * 60 * 60 * 1000;
+  return {
+    start: new Date(window.start.getTime() - day),
+    end: new Date(window.end.getTime() + day),
   };
 }
 

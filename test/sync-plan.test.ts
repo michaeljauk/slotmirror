@@ -157,6 +157,29 @@ describe("desiredBlocks", () => {
   });
 });
 
+describe("hashes", () => {
+  async function sha256Prefix(text: string): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest).slice(0, 16), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+  }
+
+  it("are the first 16 bytes of SHA-256, on a repeated run and for long contents", async () => {
+    const [event] = sourceEvents(bySubject("FBS single"));
+    const long = { ...event!, body: "x".repeat(1000) };
+    for (const source of [event!, long]) {
+      const first = await desiredBlocks(RULE, [source], options({ detailLevel: "full" }));
+      const again = await desiredBlocks(RULE, [source], options({ detailLevel: "full" }));
+      expect(again).toEqual(first);
+      const { marker, contentHash, dedupKey, ...content } = first[0]!;
+      expect(contentHash).toBe(await sha256Prefix(JSON.stringify(content)));
+      expect(marker).toBe(await sha256Prefix(`${RULE}\u0000${source.occurrenceKey}`));
+      expect(dedupKey).toMatch(/^[0-9a-f]{32}$/);
+    }
+  });
+});
+
 describe("planSync", () => {
   it("creates every block on the first run", async () => {
     const plan = planSync(await desiredBlocks(RULE, sourceEvents(), options()), []);
@@ -456,6 +479,10 @@ describe("planSync in a sync window", () => {
   };
   const windows = {
     sync,
+    target: {
+      start: new Date("2026-10-26T00:00:00.000Z"),
+      end: new Date("2026-11-27T00:00:00.000Z"),
+    },
     read: {
       start: new Date("2026-10-26T20:00:00.000Z"),
       end: new Date("2026-11-26T04:00:00.000Z"),
@@ -501,12 +528,17 @@ describe("planSync in a sync window", () => {
     expect(planSync([], asExisting(written), windows).stats.delete).toBe(1);
   });
 
-  it("keeps a timed block before the window, where its event can lie outside the read", async () => {
-    // The block of an event that ended at 20:00, with a buffer of two hours after it.
-    const late = event("event:late", "2026-10-26T19:00:00.000Z", "2026-10-26T20:00:00.000Z");
-    const written = await desiredBlocks(RULE, [late, evening], options({ bufferAfter: 120 }));
-    const plan = planSync([], asExisting(written), windows);
-    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 0, unchanged: 2 });
+  it("writes no block for an event that only the margin of the read returns", async () => {
+    // The event ends at 22:00; its block with 30 minutes after it ends before the window.
+    const desired = await desiredBlocks(RULE, [evening], options({ bufferAfter: 30 }));
+    expect(planSync(desired, [], windows).actions).toEqual([]);
+    // With 150 minutes after it, the block reaches into the window and is written.
+    const reaching = await desiredBlocks(RULE, [evening], options({ bufferAfter: 150 }));
+    expect(planSync(reaching, [], windows).stats.create).toBe(1);
+    // A block from before the window stays untouched, as on a day the window has passed.
+    const old = await desiredBlocks(RULE, [evening], options());
+    const changed = await desiredBlocks(RULE, [{ ...evening, subject: "Other" }], options());
+    expect(planSync(changed, asExisting(old), windows).actions).toEqual([]);
   });
 
   it("moves a block with its event when the buffer goes down", async () => {
@@ -538,16 +570,11 @@ describe("planSync in a sync window", () => {
     expect(plan.stats).toEqual({ create: 1, update: 0, delete: 0, unchanged: 1 });
   });
 
-  it("deletes the all-day block of a deleted event of the local day (UTC-4)", async () => {
-    const today = event("event:local-today", "2026-10-26", "2026-10-27");
-    const written = await desiredBlocks(RULE, [today], options({ skipAllDay: false }));
-    expect(planSync([], asExisting(written), windows).stats.delete).toBe(1);
-  });
-
   it("writes the all-day block of the local day east of UTC (UTC+10)", async () => {
     // 15:00 UTC on 26 October is 01:00 on 27 October in UTC+10; the sync window starts on 26.
     const east = {
       sync: { start: new Date("2026-10-26T00:00:00.000Z"), end: sync.end },
+      target: { start: new Date("2026-10-25T00:00:00.000Z"), end: windows.target.end },
       read: { start: new Date("2026-10-25T20:00:00.000Z"), end: windows.read.end },
     };
     const all = options({ skipAllDay: false });

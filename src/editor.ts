@@ -513,7 +513,9 @@ export async function setDirection(
   const to = state.accounts.find((account) => account.id === toId);
   const from = state.accounts.find((account) => account.id === fromId);
   const direction = state.directions.find((d) => d.from === fromId && d.to === toId);
-  if (!from || !to?.calendar?.canEdit || !direction) return;
+  if (!from || !to?.calendar || !direction) return;
+  // "Off" needs no write access, so that a rule never keeps writing into a read-only calendar.
+  if (choice !== "off" && !to.calendar.canEdit) return;
   const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
   const bothInGroup = from.inGroup && to.inGroup;
   // The sync applies the caps anyway; storing the capped value keeps the page honest.
@@ -637,7 +639,9 @@ export async function setSourceCalendar(
 /**
  * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
  * and the buffers go back to none too, so that the direction is the plain default again. A group
- * direction can still get a colour or a buffer later; that does not make it an exception.
+ * direction can still get a colour or a buffer later; that does not make it an exception. A
+ * read-only target stays as it is: `can_edit` can be wrong, so a reset must not remove blocks
+ * there. "Off" is the explicit way.
  */
 export async function resetDirection(
   env: Env,
@@ -648,7 +652,7 @@ export async function resetDirection(
   const state = await loadEditorState(env, user.id);
   const from = state.accounts.find((account) => account.id === fromId);
   const to = state.accounts.find((account) => account.id === toId);
-  if (!from || !to) return;
+  if (!from || !to?.calendar?.canEdit) return;
   await setDirection(env, user, fromId, toId, from.inGroup && to.inGroup ? "busy" : "off");
   await setBlockColor(env, user, fromId, toId, "");
   await setBlockBuffer(env, user, fromId, toId, { bufferBefore: 0, bufferAfter: 0 });

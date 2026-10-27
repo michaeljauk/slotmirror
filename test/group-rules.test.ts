@@ -1,10 +1,12 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { refreshUserCalendars } from "../src/calendars";
+import { TokenError } from "../src/providers/oauth-token";
 import {
   loadEditorState,
   setDirection,
   setGroupMembership,
+  setSettings,
   setSourceCalendar,
 } from "../src/editor";
 import { BASE, signIn } from "./helpers";
@@ -210,9 +212,24 @@ describe("exceptions and calendar changes", () => {
     await setDirection(env, user, a, b, "off");
 
     await setSourceCalendar(env, user, `${a}-cal`, false);
-    // The kept exception writes nothing and does not show as a separate rule.
+    // The kept exception writes nothing and does not show as a separate rule, also after the
+    // settings rewrote the options of every rule.
+    expect((await loadEditorState(env, user.id)).others).toEqual([]);
+    await setSettings(env, user, {
+      skipAllDay: true,
+      skipTentative: false,
+      markPrivate: true,
+      blockTitle: "Busy",
+      skipCategories: [],
+    });
     expect((await loadEditorState(env, user.id)).others).toEqual([]);
     await setSourceCalendar(env, user, `${a}-cal`, true);
+    const marked = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM rules WHERE user_id = ? AND json_extract(options, '$.parked') = 1",
+    )
+      .bind(user.id)
+      .first<{ n: number }>();
+    expect(marked?.n).toBe(0);
     const rules = await rulesOf(user.id);
     expect(rules.find((r) => r.source === a && r.target === b)).toMatchObject({
       enabled: 0,
@@ -237,6 +254,91 @@ describe("exceptions and calendar changes", () => {
       expect.objectContaining({ level: "title", enabled: 1, origin: "custom" }),
       expect.objectContaining({ level: "title", enabled: 1, origin: "custom" }),
     ]);
+  });
+
+  it("let a later choice replace a kept off, also when the last source comes back", async () => {
+    const { user, ids } = await setup("ex-later", ["a", "b"]);
+    const [a, b] = ids as [string, string];
+    const second = await addCalendar(a, "second");
+    await setSourceCalendar(env, user, second, true);
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    await setDirection(env, user, a, b, "off");
+    await setSourceCalendar(env, user, second, false);
+    await setDirection(env, user, a, b, "busy");
+    expect(await auditCount(user.id, "rule_deleted")).toBe(1);
+
+    await setSourceCalendar(env, user, `${a}-cal`, false);
+    await setSourceCalendar(env, user, `${a}-cal`, true);
+    expect((await rulesOf(user.id)).filter((r) => r.source === a && r.target === b)).toEqual([
+      groupBusy(a, b),
+    ]);
+  });
+
+  it("copy a kept off to a calendar that becomes a source", async () => {
+    const { user, ids } = await setup("ex-copyoff", ["a", "b"]);
+    const [a, b] = ids as [string, string];
+    const extra = await addCalendar(a, "extra");
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    await setDirection(env, user, a, b, "off");
+    await setSourceCalendar(env, user, `${a}-cal`, false);
+
+    await setSourceCalendar(env, user, extra, true);
+    const toB = (await rulesOf(user.id)).filter((r) => r.source === a && r.target === b);
+    expect(toB).toEqual([
+      expect.objectContaining({ enabled: 0, origin: "custom" }),
+      expect.objectContaining({ enabled: 0, origin: "custom" }),
+    ]);
+
+    // Back as a source, the kept rule gives way to the copy of the other source's rule.
+    await setSourceCalendar(env, user, `${a}-cal`, true);
+    expect(await auditCount(user.id, "rule_deleted")).toBe(1);
+    const { results } = await env.DB.prepare(
+      `SELECT r.enabled, json_extract(r.options, '$.parked') AS parked FROM rules r
+       JOIN calendars sc ON sc.id = r.source_calendar_id WHERE sc.account_id = ?
+         AND r.target_calendar_id = ?`,
+    )
+      .bind(a, `${b}-cal`)
+      .all<{ enabled: number; parked: number | null }>();
+    expect(results).toEqual([
+      { enabled: 0, parked: null },
+      { enabled: 0, parked: null },
+    ]);
+  });
+
+  it("keep an old paused rule visible and do not treat it as a kept off", async () => {
+    const { user, ids } = await setup("ex-paused", ["a", "b"]);
+    const [a, b] = ids as [string, string];
+    const extra = await addCalendar(a, "extra");
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin) VALUES ('ex-paused-rule', ?, ?, ?, '{}', 0, 'custom')",
+    )
+      .bind(user.id, extra, `${b}-cal`)
+      .run();
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+
+    const state = await loadEditorState(env, user.id);
+    expect(state.others.map((other) => other.ruleId)).toEqual(["ex-paused-rule"]);
+    expect((await rulesOf(user.id)).filter((r) => r.source === a && r.enabled === 1)).toEqual([
+      groupBusy(a, b),
+    ]);
+  });
+
+  it("add group rules next to a manual rule into another calendar of the target", async () => {
+    const { user, ids } = await setup("ex-manual", ["a", "b"]);
+    const [a, b] = ids as [string, string];
+    const second = await addCalendar(b, "second");
+    await env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin) VALUES ('ex-manual-rule', ?, ?, ?, '{}', 1, 'custom')",
+    )
+      .bind(user.id, `${a}-cal`, second)
+      .run();
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+
+    const state = await loadEditorState(env, user.id);
+    expect(state.directions.find((d) => d.from === a && d.to === b)).toMatchObject({
+      choice: "busy",
+      origin: "group",
+    });
   });
 
   it("add no second set of rules when the main calendar of the target changes", async () => {
@@ -299,6 +401,18 @@ describe("joining the group", () => {
 });
 
 describe("leaving the group", () => {
+  it("deletes group rules into an old main calendar too", async () => {
+    const { user, ids } = await setup("leave-old", ["w", "o"]);
+    const [w, o] = ids as [string, string];
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    newMainInGraph.add(o);
+    await refreshUserCalendars(env, user.id);
+    expect((await rulesOf(user.id)).some((r) => r.source === w && r.target === o)).toBe(true);
+
+    await setGroupMembership(env, user, w, false);
+    expect((await rulesOf(user.id)).filter((r) => r.origin === "group")).toEqual([]);
+  });
+
   it("cleans up group rules left over while the account is out of the group", async () => {
     const { user, ids } = await setup("leave-retry", ["w", "o"]);
     const [w] = ids as [string, string];
@@ -351,6 +465,26 @@ describe("concurrent requests", () => {
 });
 
 describe("unexpected errors", () => {
+  it("log no message of errors that can quote input or name the user", async () => {
+    const { cookie } = await setup("err-quiet", ["w", "o"]);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const error of [
+      new SyntaxError("Unexpected token in 'Dentist with Alice'"),
+      new TokenError("invalid_grant", "AADSTS70000 for alice@work.example"),
+    ]) {
+      vi.spyOn(env.DB, "prepare").mockImplementation(() => {
+        throw error;
+      });
+      const response = await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } });
+      expect(response.status).toBe(500);
+    }
+    const logged = JSON.stringify(errors.mock.calls);
+    expect(logged).not.toContain("Dentist");
+    expect(logged).not.toContain("alice@");
+    expect(logged).toContain("SyntaxError");
+    expect(logged).toContain("invalid_grant");
+  });
+
   it("show a localized error page, and a short text to the editor script", async () => {
     const { cookie } = await setup("err", ["w", "o"]);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});

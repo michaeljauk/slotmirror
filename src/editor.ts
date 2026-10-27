@@ -70,11 +70,11 @@ export interface EditorDirection {
   /** One entry per source calendar. ruleId, choice and options above come from the first rule. */
   slots: Slot[];
   /**
-   * An "off" exception kept from a calendar that is no longer a source (see `setSourceCalendar`),
-   * so that the group does not replace it when a source comes back.
+   * "Off" exceptions kept from calendars that are no longer sources (see `setSourceCalendar`), so
+   * that the group does not replace them when a source comes back.
    */
-  parked: SlotRule | null;
-  /** The source account has rules into another calendar of the target account, e.g. an old main. */
+  parked: SlotRule[];
+  /** The source account has group rules into another calendar of the target, e.g. an old main. */
   elsewhere: boolean;
 }
 
@@ -192,12 +192,11 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
   const ruleRows = (ruleResult?.results ?? []) as RuleRow[];
   const settingsRow = settingsResult?.results[0] as { json: string } | undefined;
   const calendarById = new Map(calendarRows.map((calendar) => [calendar.id, calendar]));
-  // A disabled custom rule from a calendar that is not a source into a main calendar.
+  // A disabled rule that `setSourceCalendar` marked, while its calendar is not a source.
   const isParked = (row: RuleRow) =>
     row.enabled === 0 &&
-    row.origin === "custom" &&
-    calendarById.get(row.sourceId)?.isSource === 0 &&
-    calendarById.get(row.targetId)?.isMain === 1;
+    isMarkedParked(row.options) &&
+    calendarById.get(row.sourceId)?.isSource === 0;
   const names = shortNames(accountRows.map((row) => row.email));
   const colors = resolveAccountColorState(accountRows.map((row) => row.color));
   // Store assigned colours, so that they stay when another account gets a colour later.
@@ -257,7 +256,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
             : null,
         };
       });
-      const parkedRow = ruleRows.find(
+      const parkedRows = ruleRows.filter(
         (row) =>
           isParked(row) && row.sourceAccountId === from.id && row.targetId === to.calendar?.id,
       );
@@ -276,17 +275,18 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
         maxChoice: max,
         options: first?.options ?? null,
         slots,
-        parked: parkedRow
-          ? {
-              id: parkedRow.id,
-              enabled: false,
-              origin: "custom",
-              options: parseRuleOptions(parkedRow.options),
-              optionsJson: parkedRow.options,
-            }
-          : null,
+        parked: parkedRows.map((row) => ({
+          id: row.id,
+          enabled: false,
+          origin: "custom" as const,
+          options: parseRuleOptions(row.options),
+          optionsJson: row.options,
+        })),
+        // Custom rules into another calendar, such as a manual rule, do not count: they are not
+        // the group's blocks, and the group's rule into the main calendar does not repeat them.
         elsewhere: ruleRows.some(
           (row) =>
+            row.origin === "group" &&
             row.sourceAccountId === from.id &&
             row.targetAccountId === to.id &&
             row.targetId !== to.calendar?.id,
@@ -316,6 +316,14 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
     ruleRows.map((row) => parseRuleOptions(row.options)),
   );
   return { accounts, directions, others, settings: { ...parseSettings(json), daysAhead } };
+}
+
+/**
+ * True if the rule is a parked "off" exception. The mark lives in the options JSON outside the
+ * schema, so parsing drops it: a copy or a replacement of the rule is not parked.
+ */
+function isMarkedParked(optionsJson: string): boolean {
+  return (JSON.parse(optionsJson) as { parked?: unknown }).parked === true;
 }
 
 function parseSettings(json: string): SyncSettings {
@@ -401,8 +409,10 @@ export async function setSettings(env: Env, user: CurrentUser, form: SettingsFor
       ...settings,
       daysAhead: windowOf(previous.daysAhead),
     });
+    // A parked exception stays parked.
+    const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;
     await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
-      .bind(JSON.stringify(options), row.id)
+      .bind(JSON.stringify(stored), row.id)
       .run();
     // A disabled rule has its blocks removed already; a read-only calendar refuses the deletes.
     if (options.daysAhead < previous.daysAhead && row.enabled === 1 && row.canEdit === 1) {
@@ -588,6 +598,21 @@ export async function setDirection(
   // The sync applies the caps anyway; storing the capped value keeps the page honest.
   if (RANK[choice] > RANK[direction.maxChoice]) choice = direction.maxChoice;
 
+  // A parked rule stands for "off". Another choice replaces it, so that it cannot bring back an
+  // old "off" when its calendar or the direction's last source comes back.
+  if (choice !== "off") {
+    for (const parked of direction.parked) {
+      const deleted = await env.DB.prepare(
+        "DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0",
+      )
+        .bind(parked.id, user.id)
+        .run();
+      if (deleted.meta.changes > 0) {
+        await audit(env, user, to.id, parked.id, "rule_deleted", { parked: "replaced" });
+      }
+    }
+  }
+
   for (const slot of direction.slots) {
     const { rule } = slot;
     if (choice === "off") {
@@ -693,6 +718,11 @@ export async function setSourceCalendar(
       }>();
     for (const row of results) {
       if (row.enabled === 0 && row.origin === "custom" && row.isMain === 1) {
+        await env.DB.prepare(
+          "UPDATE rules SET options = json_set(options, '$.parked', json('true')) WHERE id = ?",
+        )
+          .bind(row.id)
+          .run();
         // A paused rule can still have blocks; an exception has none, and the queue finds none.
         await queueRemoval(env, row.id, row);
       } else {
@@ -705,26 +735,32 @@ export async function setSourceCalendar(
   // A parked exception is current only if no other source calendar has a rule for the direction.
   // Otherwise the other calendar holds the choice, and the parked rule gives way to a copy of it.
   const state = await loadEditorState(env, user.id);
-  const stale: string[] = [];
+  const stale: { ruleId: string; accountId: string }[] = [];
   for (const direction of state.directions) {
     const own = direction.slots.find((slot) => slot.sourceCalendarId === calendarId);
     const other = direction.slots.some((slot) => slot !== own && slot.rule);
-    if (own?.rule && other) {
-      stale.push(own.rule.id);
+    if (own?.rule && isMarkedParked(own.rule.optionsJson) && other) {
+      stale.push({ ruleId: own.rule.id, accountId: direction.to });
       own.rule = null;
     }
   }
-  await addMissingRules(
-    env,
-    user,
-    state,
-    stale.map((id) =>
-      env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0").bind(
-        id,
-        user.id,
-      ),
+  const results = await addMissingRules(env, user, state, [
+    ...stale.map(({ ruleId }) =>
+      env.DB.prepare(
+        `DELETE FROM rules WHERE id = ? AND user_id = ? AND enabled = 0
+           AND json_extract(options, '$.parked') = 1`,
+      ).bind(ruleId, user.id),
     ),
-  );
+    // The calendar is a source again: its rules that stay are no longer parked.
+    env.DB.prepare(
+      "UPDATE rules SET options = json_remove(options, '$.parked') WHERE source_calendar_id = ? AND user_id = ?",
+    ).bind(calendarId, user.id),
+  ]);
+  const deleted = stale.filter((_, index) => (results[index]?.meta.changes ?? 0) > 0);
+  for (const { ruleId, accountId } of deleted) {
+    // An exception writes no blocks, so there is nothing to remove.
+    await audit(env, user, accountId, ruleId, "rule_deleted", { parked: "replaced" });
+  }
 }
 
 /**
@@ -776,7 +812,7 @@ function missingRules(state: EditorState): MissingRule[] {
     const from = state.accounts.find((account) => account.id === direction.from);
     const to = state.accounts.find((account) => account.id === direction.to);
     if (!from || !to?.calendar?.canEdit || direction.elsewhere) continue;
-    const model = direction.slots.find((slot) => slot.rule)?.rule ?? direction.parked;
+    const model = direction.slots.find((slot) => slot.rule)?.rule ?? direction.parked[0];
     if (!model && !(from.inGroup && to.inGroup)) continue;
     for (const slot of direction.slots) {
       if (slot.rule) continue;
@@ -866,11 +902,12 @@ async function addMissingRules(
   user: Pick<CurrentUser, "id" | "orgId">,
   state: EditorState,
   before: D1PreparedStatement[] = [],
-): Promise<void> {
+): Promise<D1Result[]> {
   const missing = missingRules(state);
-  if (missing.length === 0 && before.length === 0) return;
+  if (missing.length === 0 && before.length === 0) return [];
   const results = await env.DB.batch([...before, ...insertStatements(env, user, missing)]);
   await requestSyncs(env, syncTargets(missing, results, before.length));
+  return results;
 }
 
 /** Add an account to the block group or remove it. See `setGroupMemberships`. */
@@ -943,19 +980,19 @@ async function leaveGroup(
   user: CurrentUser,
   accountIds: readonly string[],
 ): Promise<void> {
-  const state = await loadEditorState(env, user.id);
-  const leaving = new Set(accountIds);
-  const deletions: { ruleId: string; accountId: string; remoteCalendarId: string }[] = [];
-  for (const direction of state.directions) {
-    if (!leaving.has(direction.from) && !leaving.has(direction.to)) continue;
-    const to = state.accounts.find((account) => account.id === direction.to);
-    if (!to?.calendar) continue;
-    for (const { rule } of direction.slots) {
-      // Like "off", leaving needs no write access to the target.
-      if (rule?.origin !== "group") continue;
-      deletions.push({ ruleId: rule.id, accountId: to.id, remoteCalendarId: to.calendar.remoteId });
-    }
-  }
+  // Every group rule from or to a leaving account, whatever calendar it targets: after a change of
+  // the main calendar, group rules into the old one are outside the editor's directions.
+  const { results: deletions } = await env.DB.prepare(
+    `SELECT r.id AS ruleId, tc.account_id AS accountId, tc.remote_id AS remoteCalendarId
+     FROM rules r
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN calendars tc ON tc.id = r.target_calendar_id
+     WHERE r.user_id = ?1 AND r.origin = 'group'
+       AND (sc.account_id IN (SELECT value FROM json_each(?2))
+         OR tc.account_id IN (SELECT value FROM json_each(?2)))`,
+  )
+    .bind(user.id, JSON.stringify(accountIds))
+    .all<{ ruleId: string; accountId: string; remoteCalendarId: string }>();
   const results = await env.DB.batch([
     ...accountIds.map((id) => membershipUpdate(env, user, id, false)),
     ...deletions.map(({ ruleId }) =>
@@ -1061,7 +1098,7 @@ async function audit(
   user: CurrentUser,
   accountId: string,
   ruleId: string,
-  kind: "rule_created" | "rule_updated",
+  kind: "rule_created" | "rule_updated" | "rule_deleted",
   detail: Record<string, string>,
 ): Promise<void> {
   await recordAudit(env.DB, {

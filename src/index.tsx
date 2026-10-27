@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { TokenError } from "./providers/oauth-token";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import * as z from "zod/mini";
@@ -343,9 +344,17 @@ app.get("/admin", async (c) => {
 // An unexpected error gets a page in the user's language, or a short text for the editor
 // script. The log keeps name, message and stack: this app throws static messages and IDs, and D1
 // messages name tables and columns. Request bodies, tokens and event content never go into it.
+// Two kinds of message can quote such data, so they are left out:
+// - A SyntaxError quotes the input it could not parse, such as a Google batch part with titles.
+// - A TokenError carries the provider's description, which can name the user. Its code stays.
 app.onError((error, c) => {
   if (error instanceof HTTPException) return error.getResponse();
-  console.error("Request failed", error.name, error.message, error.stack);
+  if (error instanceof SyntaxError || error instanceof TokenError) {
+    const code = error instanceof TokenError ? error.code : "";
+    console.error("Request failed", error.name, code, stackFrames(error));
+  } else {
+    console.error("Request failed", error.name, error.message, error.stack);
+  }
   const { t } = i18nFromContext(c);
   if (c.req.header("x-fragment") === "1") return c.text(t.messages.errorText, 500);
   return render(
@@ -354,6 +363,14 @@ app.onError((error, c) => {
     500,
   );
 });
+
+/** The "at …" lines of a stack, without the first line, which repeats the message. */
+function stackFrames(error: Error): string {
+  return (error.stack ?? "")
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("at "))
+    .join("\n");
+}
 
 async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
   const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();

@@ -285,10 +285,14 @@ function isInEveryRead(block: DesiredBlock, read: TimeWindow): boolean {
 /**
  * True if an existing block can be the block of a desired one. A timed block outside the sync
  * window only stands in for a desired block outside it too, so that the wider target read changes
- * nothing for timed blocks inside the window.
+ * nothing for timed blocks inside the window. A buffered rule reads the source in `windows.read`,
+ * so a timed block in that read stands in too: it moves with its buffer, in and out of the window.
  */
-function standsIn(existing: ExistingBlock, desired: DesiredBlock, sync: TimeWindow): boolean {
-  return existing.allDay || overlaps(existing, sync) || !overlaps(desired, sync);
+function standsIn(existing: ExistingBlock, desired: DesiredBlock, windows: PlanWindows): boolean {
+  if (existing.allDay || overlaps(existing, windows.sync) || !overlaps(desired, windows.sync)) {
+    return true;
+  }
+  return windows.read !== undefined && overlaps(existing, windows.read);
 }
 
 /**
@@ -359,7 +363,7 @@ export function planSync(
     existingByMarker.delete(block.marker);
     // Blocks that cannot stand in stay untouched, as if the target read had not returned them.
     const [current, ...duplicates] = windows
-      ? found.filter((candidate) => standsIn(candidate, block, windows.sync))
+      ? found.filter((candidate) => standsIn(candidate, block, windows))
       : found;
     if (windows && isInMarginOnly(block, windows)) {
       // As if the read had not returned the event, unless its block reaches into the window now.

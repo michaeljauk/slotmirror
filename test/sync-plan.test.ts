@@ -548,6 +548,24 @@ describe("planSync in a sync window", () => {
     expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
   });
 
+  it("moves a block from the margin back into the window when the buffer goes up", async () => {
+    const late = event("event:late", "2026-10-26T23:00:00.000Z", "2026-10-26T23:50:00.000Z");
+    // With 5 minutes after it, the block ends before the window; with 30 it reaches into it.
+    const lowered = await desiredBlocks(RULE, [late], options({ bufferAfter: 5 }));
+    const raised = await desiredBlocks(RULE, [late], options({ bufferAfter: 30 }));
+    const plan = planSync(raised, asExisting(lowered), windows);
+    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+  });
+
+  it("lets no block from before the read stand in without a buffer", async () => {
+    // As on main: without a read window, a timed block outside the sync window stays as it is.
+    const late = event("event:late", "2026-10-26T23:00:00.000Z", "2026-10-26T23:50:00.000Z");
+    const old = await desiredBlocks(RULE, [late], options({ bufferAfter: 5 }));
+    const raised = await desiredBlocks(RULE, [late], options({ bufferAfter: 30 }));
+    const plan = planSync(raised, asExisting(old), { sync, target: windows.target });
+    expect(plan.stats).toEqual({ create: 1, update: 0, delete: 0, unchanged: 0 });
+  });
+
   it("leaves out a block that only touches the read window", async () => {
     const zero = event("event:zero", "2026-10-26T20:00:00.000Z", "2026-10-26T20:00:00.000Z");
     const desired = await desiredBlocks(RULE, [zero], options({ bufferBefore: 30 }));

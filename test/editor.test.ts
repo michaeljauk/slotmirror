@@ -670,6 +670,30 @@ describe("block buffer per direction", () => {
     expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 0, bufferAfter: 0 });
   });
 
+  it("refuses an invalid buffer from the form and stores nothing", async () => {
+    const { user, cookie, w, g } = await setup("bufbad");
+    await setDirection(env, user, w, g, "busy");
+    for (const fields of [
+      { bufferBefore: "999", bufferAfter: "10" },
+      { bufferBefore: "10", bufferAfter: "-5" },
+      { bufferBefore: "1.5", bufferAfter: "10" },
+      { bufferBefore: "10", bufferAfter: "abc" },
+    ]) {
+      const response = await exports.default.fetch(`${BASE}/rules/direction/buffer`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ from: w, to: g, ...fields }),
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 0, bufferAfter: 0 });
+    expect(await setBlockBuffer(env, user, w, g, { bufferBefore: 999, bufferAfter: 0 })).toBe(
+      false,
+    );
+    expect(await optionsOf(user.id, w, g)).toMatchObject({ bufferBefore: 0, bufferAfter: 0 });
+  });
+
   it("changes nothing for a direction without rules", async () => {
     const { user, w, g } = await setup("bufoff");
     expect(await setBlockBuffer(env, user, w, g, { bufferBefore: 10 })).toBe(true);

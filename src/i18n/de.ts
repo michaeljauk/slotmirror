@@ -241,6 +241,7 @@ export const de: Messages = {
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
       "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
+      "Für jeden Frei/Belegt-Feed, den du anlegst: seine Kalender, seine Einstellungen und ein Hash seiner geheimen Adresse. Wer die Adresse hat, sieht deine Belegt-Zeiten, ohne Inhalte. Der zuletzt erzeugte Feed, nur Belegt-Zeiten, wird beim Feed und im Cache von Cloudflare gehalten, um die nächsten Abrufe zu beantworten.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:
@@ -312,6 +313,9 @@ export const de: Messages = {
       user_deleted: "Nutzer gelöscht",
       sync_run: "Synchronisierung",
       sync_failed: "Synchronisierung fehlgeschlagen",
+      feed_created: "Frei/Belegt-Feed erstellt",
+      feed_rotated: "Adresse des Frei/Belegt-Feeds erneuert",
+      feed_deleted: "Frei/Belegt-Feed gelöscht",
     },
     changes: (create: number, update: number, remove: number) =>
       `+${create} / ~${update} / −${remove}`,
@@ -320,6 +324,51 @@ export const de: Messages = {
     throttledCount: (count: number) => `${count} gedrosselt, neuer Versuch nach der Wartezeit`,
     statuses: (list: string) => `HTTP ${list}`,
     remainingCount: (count: number) => `${count} offen`,
+  },
+  feeds: {
+    title: "Frei/Belegt-Feed",
+    lead: "Eine geheime Kalenderadresse für Personen außerhalb dieser Installation. Sie zeigt, wann du belegt bist, nie, was du tust.",
+    empty: "Noch kein Feed.",
+    noCalendars:
+      "Deine Kalender erscheinen hier, sobald du nach dem Verbinden eines Kontos die Sync-Einstellungen öffnest.",
+    feedTitle: (date) => `Feed vom ${date}`,
+    renewedOn: (date) => `neue Adresse ${date}`,
+    daysAhead: (count) => `${count} Tage voraus`,
+    withAllDay: "mit ganztägigen Terminen",
+    cut: (date) =>
+      `Zu viele Belegt-Zeiten: Der Feed endet vor dem ${date}. Wähle weniger Tage oder Kalender.`,
+    calendarUnreadable: (name) =>
+      `„${name}“ lässt sich nicht mehr lesen, Abonnenten bekommen keine Aktualisierung. Entferne den Kalender aus dem Feed.`,
+    removeCalendar: "Kalender entfernen",
+    create: "Neuer Feed",
+    calendarsLabel: (max) => `Kalender, höchstens ${max}`,
+    daysLabel: "Tage voraus",
+    allDayLabel: "Ganztägige Termine einschließen",
+    shares:
+      "Abonnenten sehen, wann du belegt bist, ab 7 Tagen in der Vergangenheit: Blöcke mit dem Titel „Belegt“, als privat markiert, wobei überlappende Termine einen Block bilden. Titel, Orte, Notizen und Teilnehmer bleiben draußen, ebenso freie und abgelehnte Termine. Wählbar sind nur Kalender, die deinen Konten gehören.",
+    submit: "Feed erstellen",
+    rotate: "Neue Adresse",
+    rotateText:
+      "Die bisherige Adresse funktioniert sofort nicht mehr. Wer sie abonniert hat, braucht die neue.",
+    rotateConfirm: "Neue Adresse erstellen",
+    remove: "Löschen",
+    removeText:
+      "Die Adresse funktioniert sofort nicht mehr. Abonnenten sehen deine Belegt-Zeiten nicht mehr.",
+    removeConfirm: "Feed löschen",
+    urlTitle: "Deine Feed-Adresse",
+    urlLead:
+      "Kopiere die Adresse jetzt. Sie wird nur einmal angezeigt; slotmirror speichert nur einen Hash davon.",
+    urlHint:
+      "Wer diese Adresse hat, sieht deine Belegt-Zeiten. Gib sie nur Personen, die sie sehen sollen. Sie abonnieren sie per URL in ihrer Kalender-App. Eine Änderung erscheint nach etwa 15 Minuten, plus dem Aktualisierungsintervall ihrer App.",
+    copy: "Kopieren",
+    copied: "Kopiert",
+    back: "Zurück zu den Konten",
+    errorTitle: "Feed nicht erstellt",
+    noCalendar: "Wähle mindestens einen Kalender.",
+    tooManyCalendars: (max) => `Wähle höchstens ${max} Kalender.`,
+    tooManyFeeds: (max) => `Du hast bereits ${max} Feeds. Lösche zuerst einen.`,
+    calendarName: "Belegt-Zeiten",
+    eventTitle: "Belegt",
   },
   setup: {
     title: "Einrichtung abschließen",

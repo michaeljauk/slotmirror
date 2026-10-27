@@ -7,6 +7,9 @@ import { LanguageSwitch, Layout } from "./layout";
 import { MAX_NAME_LENGTH, type EditorState } from "../editor";
 import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
 import { colorStyle, ReconnectNotice, SourcePills } from "./calendar-editor";
+import type { CalendarRow } from "../calendars";
+import type { FeedSummary } from "../feeds";
+import { FeedSection } from "./feeds";
 
 export interface AccountRow {
   id: string;
@@ -64,6 +67,9 @@ export function HomePage(props: {
   /** Sync status per account ID; accounts without an entry were never synced. */
   statuses: Map<string, AccountSyncStatus>;
   editor: EditorState;
+  feeds: FeedSummary[];
+  /** Calendars the user can put into a feed: those of their own accounts. */
+  calendars: CalendarRow[];
 }) {
   const { t, formatDate, formatTimestamp, formatRelative } = useI18n();
 
@@ -266,6 +272,8 @@ export function HomePage(props: {
           )}
         </div>
       </section>
+
+      <FeedSection feeds={props.feeds} calendars={props.calendars} />
     </Layout>
   );
 }

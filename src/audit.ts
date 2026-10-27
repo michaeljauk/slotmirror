@@ -26,7 +26,10 @@ export type AuditKind =
   | "user_reactivated"
   | "user_deleted"
   | "sync_run"
-  | "sync_failed";
+  | "sync_failed"
+  | "feed_created"
+  | "feed_rotated"
+  | "feed_deleted";
 
 /** Detail of a `sync_run` event. */
 export interface SyncRunDetail {

@@ -46,6 +46,8 @@ tokens stay with you and not with a sync service.
   private ones, for example at most "busy" from private to work.
 - **EU data location.** Tokens and the sync itself can stay in the EU.
 - **Audit log.** Sign-ins, changes and sync runs with counts and error codes, never event content.
+- **Free/busy feed.** A secret ICS address per feed that shows your busy times to people
+  outside the deployment, without titles or other content.
 - **English and German.**
 
 ## Quickstart
@@ -205,6 +207,77 @@ Each notification carries a token that only your deployment can compute, an HMAC
 with `SESSION_SECRET`. Notifications without it change nothing. If you rotate `SESSION_SECRET`, the
 existing subscriptions no longer match until they expire and are created again, which can take up
 to 7 days. In the meantime the hourly full sync keeps the blocks current.
+
+## Free/busy feed
+
+Under **Free/busy feed** on the start page, each user can create a secret calendar address for
+people outside the deployment. They subscribe to it by URL in their calendar app, for example with
+"Add calendar from URL" in Google Calendar or "Subscribe from web" in Outlook.
+
+**What it shares.** Busy blocks from up to five calendars, from 7 days ago to up to 180 days ahead
+(60 by default). Overlapping and adjacent events form one block. Each block has only its start,
+its end, the title "Busy" in your language, and the marks private and busy. Titles, places, notes,
+attendees, organizers, source event IDs and the number of events in a block stay out. The same
+events count as for a rule with default settings: free and declined events stay out, tentative
+ones count as busy, and all-day events count only if you turn them on. Blocks that slotmirror
+wrote are left out, so choose every calendar whose own events should count. Only calendars that
+your accounts own can go into a feed, not calendars that other people shared with you. For
+Google, these are the primary calendar and calendars whose data owner is the account; the access
+role "owner" alone also covers calendars shared with "make changes and manage sharing". This rule
+is for feeds only; which calendars a rule can write into does not change. After the update, a
+secondary Google calendar becomes available for feeds once you refresh the calendar list. The UID
+of a block is an HMAC of its start and end with a secret per feed, so a moved meeting is a new block,
+and two feeds cannot be linked through their UIDs.
+
+**At most 1000 blocks.** Above that, past blocks go first, those that ended earliest first. A
+block that runs into today, such as an ongoing absence, stays. If the feed is still too long, it
+ends early, and the start page says before which date. Choose fewer days or calendars.
+
+**Who can see it.** Anyone with the address. The address holds a random 256-bit token;
+slotmirror stores only its SHA-256 hash and shows the address once, when you create the feed or
+renew it. The token is in the URL path, so it reaches every log that records request URLs; see
+[Logs](#logs-and-the-feed-token).
+
+**Renew or delete.** "New address" replaces the token: the old address returns 404 at once, and
+everyone who should still see the feed needs the new one. "Delete" ends the feed. A feed also ends
+when its last calendar goes with a disconnected account, when its user is deleted or deactivated,
+and at its next fetch once the access settings no longer admit its user. A reactivated user
+creates new feeds. If the access settings admit nobody at all, for example after a deploy with
+empty `ALLOWED_*` values, the feeds stay and answer 503 until the settings are back.
+
+**Delay.** A rendered feed is reused for 15 minutes. The last copy stays in D1 with the feed, so
+a repeated fetch costs one D1 read and no calendar read; the Cache API also keeps it, but
+Cloudflare documents a working cache only for custom domains. Calendar apps fetch subscribed
+calendars on their own schedule, from every 15 minutes to once a day. A change can take that long
+to appear.
+
+**When a calendar cannot be read.** Subscribers never get a partial feed:
+
+- While Microsoft or Google throttles the account, the feed serves its last copy, however old, and
+  makes no provider call. Without a copy, it answers 503 with the remaining `Retry-After`.
+- If an account needs to be connected again, the feed answers 503.
+- If the provider no longer finds a calendar or refuses access to it, or the account no longer
+  owns it, the feed answers 503, and the start page names the calendar with a button to remove it
+  from the feed.
+- Any other failed read also answers 503.
+
+A failure is stored with the feed: for 15 minutes, fetches answer 503 from that one D1 read and
+make no new read. Apps keep their last copy while the feed answers 503.
+
+### Logs and the feed token
+
+With `observability` on in `wrangler.jsonc`, Workers Logs record an invocation log for every
+request, with its URL, so the feed token is stored in the operator's Cloudflare account. slotmirror
+itself logs only feed IDs. An operator can turn the invocation logs off; `console` output is a
+separate kind of log in Workers Logs:
+
+```jsonc
+"observability": { "enabled": true, "logs": { "invocation_logs": false } }
+```
+
+This drops the invocation logs of every request, not only of feeds. `wrangler tail` and the
+dashboard's live logs still show URLs while they run. On a custom domain, other Cloudflare
+products that log requests, such as Logpush, record the path too.
 
 ## Limits
 

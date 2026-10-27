@@ -100,13 +100,17 @@ export class GraphCalendar implements CalendarClient {
     const own = new Set(
       [profile.mail, profile.userPrincipalName].filter(Boolean).map((a) => String(a).toLowerCase()),
     );
-    return calendarsSchema.parse(body).value.map((calendar) => ({
-      id: calendar.id,
-      name: calendar.name,
-      canEdit: calendar.canEdit ?? false,
-      isDefault: calendar.isDefaultCalendar ?? false,
-      owned: own.has((calendar.owner?.address ?? "").toLowerCase()),
-    }));
+    return calendarsSchema.parse(body).value.map((calendar) => {
+      const owned = own.has((calendar.owner?.address ?? "").toLowerCase());
+      return {
+        id: calendar.id,
+        name: calendar.name,
+        canEdit: calendar.canEdit ?? false,
+        isDefault: calendar.isDefaultCalendar ?? false,
+        owned,
+        dataOwned: owned,
+      };
+    });
   }
 
   /**

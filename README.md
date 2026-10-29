@@ -6,6 +6,18 @@
 </h1>
 
 <p align="center">
+  <a href="https://buymeacoffee.com/michaeljauk">
+    <img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">
   <img src="docs/images/demo.gif" width="760" alt="The sync editor: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
 </p>
 
@@ -432,6 +444,11 @@ flowchart LR
 - [AGENTS.md](AGENTS.md) holds the project rules for AI coding agents.
 - Report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
+## Support
+
+Built by [Michael Jauk](https://github.com/michaeljauk). If this saves you time, consider
+[buying me a coffee](https://buymeacoffee.com/michaeljauk).
+
 ## License
 
-[MIT](LICENSE)
+[MIT](./LICENSE) © Michael Jauk

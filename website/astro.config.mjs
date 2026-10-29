@@ -4,8 +4,8 @@ import { defineConfig } from "astro/config";
 
 const repo = "https://github.com/michaeljauk/slotmirror";
 // The only place that sets where the site lives. Pages build links from these two values.
-const site = "https://michaeljauk.github.io";
-const base = "/slotmirror";
+const site = "https://slotmirror.com";
+const base = "";
 // Cloudflare Web Analytics. The beacon token is public; the Pages workflow passes it from the
 // repository variable CF_ANALYTICS_TOKEN. Without it, the site loads no analytics script.
 const analyticsToken = process.env.PUBLIC_CF_ANALYTICS_TOKEN;

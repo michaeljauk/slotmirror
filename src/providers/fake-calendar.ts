@@ -211,9 +211,15 @@ function ensureTables(sql: SqlStorage): void {
     operation TEXT PRIMARY KEY, count INTEGER NOT NULL)`);
 }
 
-/** Replace the account's simulated events: `count` meetings on weekdays over the next 90 days. */
-export function seedFakeEvents(sql: SqlStorage, seed: number, count: number): void {
+/**
+ * Replace the account's simulated events: `count` meetings on weekdays over the next 90 days.
+ * A seed from 1000 up carries the spread: `days * 1000 + number`, so that the capacity probe
+ * can fill a longer window without a new parameter on the Durable Object.
+ */
+export function seedFakeEvents(sql: SqlStorage, encodedSeed: number, count: number): void {
   ensureTables(sql);
+  const seed = encodedSeed % 1000;
+  const days = encodedSeed >= 1000 ? Math.floor(encodedSeed / 1000) : 90;
   sql.exec(`DELETE FROM fake_events`);
   sql.exec(`DELETE FROM fake_blocks`);
   sql.exec(`DELETE FROM fake_calls`);
@@ -225,7 +231,7 @@ export function seedFakeEvents(sql: SqlStorage, seed: number, count: number): vo
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   for (let i = 0; i < count; i++) {
-    const day = new Date(today.getTime() + Math.floor(random() * 90) * 86_400_000);
+    const day = new Date(today.getTime() + Math.floor(random() * days) * 86_400_000);
     if (day.getUTCDay() === 0 || day.getUTCDay() === 6) day.setUTCDate(day.getUTCDate() + 2);
     const start = new Date(day.getTime() + (7 + Math.floor(random() * 10)) * 3_600_000);
     const end = new Date(start.getTime() + (1 + Math.floor(random() * 4)) * 1_800_000);

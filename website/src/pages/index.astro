@@ -6,7 +6,15 @@ import "../styles/home.css";
 const repo = "https://github.com/michaeljauk/slotmirror";
 const title = "slotmirror: calendar sync that keeps up with moved meetings";
 const description =
-  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Moved meetings move their copies within seconds. Runs in your own Cloudflare account, on the free plan.";
+  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Only Busy leaves a calendar. Runs in your own Cloudflare account, on the free plan.";
+
+// Hero sentence, two variants. No latency has been measured yet, so the live variant names no
+// number. After the measurement, replace `null` with the measured values and the conditions, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
+// That one change turns on the second variant. Never fill in a figure that was not measured.
+const latency: { p50: string; p95: string; conditions: string } | null = null;
+const heroSub = latency
+  ? `Only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies in a median of ${latency.p50} (p95: ${latency.p95}; ${latency.conditions}). It runs in your own Cloudflare account on the free plan, with no server to run.`
+  : `Only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies. It runs in your own Cloudflare account on the free plan, with no server to run. By default it mirrors the next 90 days.`;
 
 // Links inside the site. The base comes from astro.config.mjs, the only place that sets it.
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -170,17 +178,19 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
     <main>
       <div class="wrap hero">
         <div>
-          <h1>The calendar sync that keeps up with moved meetings.</h1>
-          <p class="sub">
-            Move a meeting in one calendar, and its busy copies move in all the others within
-            seconds. Microsoft 365 and Google, self-hosted on Cloudflare.
-          </p>
+          <h1>Stop getting double-booked across your Microsoft and Google calendars.</h1>
+          <p class="sub">{heroSub}</p>
           <div class="buttons">
-            <a class="button primary" href={page("docs/quickstart/")} data-track="deploy_click"
-              ><Fragment set:html={cloudflare} />Deploy to Cloudflare</a
+            <a class="button primary" href={page("docs/quickstart/")} data-track="quickstart_click"
+              ><Fragment set:html={cloudflare} />Start the quickstart</a
             >
             <a class="button" href={repo}><Fragment set:html={github} />View on GitHub</a>
           </div>
+          <p class="prereq">
+            Before you start: you register your own Microsoft Entra app and Google OAuth client.
+            This is an early version, below 1.0. Settings and the database can still change
+            between releases.
+          </p>
           <p class="note">Runs on the Cloudflare Workers free plan · MIT licence</p>
         </div>
 
@@ -236,8 +246,8 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
               <b>1</b>
               <h3>Deploy</h3>
               <p>
-                Deploy the Worker and its database to your Cloudflare account, with the button or
-                with wrangler.
+                Deploy the Worker and its database to your Cloudflare account. The quickstart
+                covers both ways: the deploy button and wrangler.
               </p>
             </div>
             <div class="step" style="--c:var(--c-vermilion)">
@@ -298,7 +308,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
             </div>
             <div style="--c:var(--c-purple)">
               <h3><i></i>Push notifications</h3>
-              <p>Changes arrive within seconds; a scheduled check catches the rest.</p>
+              <p>A change starts the sync when the provider notifies you; a scheduled check catches the rest.</p>
             </div>
             <div style="--c:var(--c-orange)">
               <h3><i></i>Organisation limits</h3>
@@ -332,7 +342,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
           <ul>
             <li>slotmirror reads each occurrence of a series, so a moved one keeps its identity.</li>
             <li>It changes only what differs: create, update or delete, never a rebuild.</li>
-            <li>Push notifications start the sync when the meeting moves, not minutes later.</li>
+            <li>Push notifications start the sync when the provider reports the move, not on a timer.</li>
             <li>
               Event contents are read during a sync and kept only in memory, never written to the
               database.
@@ -341,11 +351,46 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         </div>
       </section>
 
+      <section id="guides">
+        <div class="wrap">
+          <h2>Guides</h2>
+          <div class="guides">
+            {
+              guides.map((guide) => (
+                <a class="guide" href={page(`guides/${guide.slug}/`)}>
+                  {guide.title}
+                  <span>{guide.text}</span>
+                </a>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section id="changelog">
+        <div class="wrap">
+          <h2>Changelog</h2>
+          <p class="changes">
+            {
+              latest ? (
+                <>
+                  <span class="version">{latest[1]}</span>
+                  <time datetime={latest[2]}>{latest[2]}</time>
+                </>
+              ) : (
+                <span>No release yet.</span>
+              )
+            }
+            <a href={page("changelog/")}>All releases</a>
+          </p>
+        </div>
+      </section>
+
       {
         waitlist && (
           <section id="waitlist">
             <div class="wrap">
-              <h2>Hosted version</h2>
+              <h2>Hosted version (not available yet)</h2>
               <p class="lead">
                 A hosted slotmirror does not exist yet. Leave your address to hear when it opens.
                 Joining the list is not a purchase.
@@ -385,41 +430,6 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
           </section>
         )
       }
-
-      <section id="guides">
-        <div class="wrap">
-          <h2>Guides</h2>
-          <div class="guides">
-            {
-              guides.map((guide) => (
-                <a class="guide" href={page(`guides/${guide.slug}/`)}>
-                  {guide.title}
-                  <span>{guide.text}</span>
-                </a>
-              ))
-            }
-          </div>
-        </div>
-      </section>
-
-      <section id="changelog">
-        <div class="wrap">
-          <h2>Changelog</h2>
-          <p class="changes">
-            {
-              latest ? (
-                <>
-                  <span class="version">{latest[1]}</span>
-                  <time datetime={latest[2]}>{latest[2]}</time>
-                </>
-              ) : (
-                <span>No release yet.</span>
-              )
-            }
-            <a href={page("changelog/")}>All releases</a>
-          </p>
-        </div>
-      </section>
     </main>
 
     <footer>

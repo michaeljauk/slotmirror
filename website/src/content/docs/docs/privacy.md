@@ -104,7 +104,8 @@ privacy-friendly statistics. It replaces Cloudflare Web Analytics.
   statistics. A visitor gets no persistent ID. PostHog builds a hash from IP address, user agent
   and a daily salt, and the hash changes every day.
 - The site records page views (`$pageview`) and these events: `deploy_click`, a click on a "Deploy
-  to Cloudflare" button or link, and `waitlist_submit`, sent when the waitlist form sends a
+  to Cloudflare" button or link, `quickstart_click`, a click on the main button of the home page,
+  which opens the quickstart, and `waitlist_submit`, sent when the waitlist form sends a
   sign-up (see below). `waitlist_submit` is sent only on pages that show the form. It carries the page path and
   nothing else: no email address, no token and no answer of the server.
 - There is no autocapture, no session replay, no survey and no feature flag. URLs are sent

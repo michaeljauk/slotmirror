@@ -43,6 +43,10 @@ jobs:
         env:
           # Public project key of PostHog. Empty: the site loads no analytics.
           PUBLIC_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+          # Address of the waitlist Worker and the public Turnstile site key. Both empty: the
+          # home page shows no waitlist form.
+          PUBLIC_WAITLIST_URL: ${{ vars.WAITLIST_URL }}
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       - run: pnpm --filter website exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

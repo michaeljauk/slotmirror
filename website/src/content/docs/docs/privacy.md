@@ -57,6 +57,43 @@ ends.
 Each deployment has a `/privacy` page. It shows `PRIVACY_CONTACT` as the contact of the operator.
 Google requires this page for a published OAuth app.
 
+## Waitlist of the hosted version
+
+The home page can show a form for the waitlist of a hosted version that does not exist yet.
+Joining the list is not a purchase. The form appears only if the site was built with a waitlist
+address and a Turnstile site key. Without both, the page shows no form and loads nothing for it.
+
+- **What is stored.** The email address (trimmed, lowercase), the place of the sign-up (for example
+  `website-home`), the time of the sign-up, the time of the last confirmation mail, the time of the
+  confirmation, and the expiry times of two links. The two link tokens are stored only as hashes.
+  Nothing else is stored: no name, no IP address, no user agent.
+- **Double opt-in.** After the sign-up the Worker sends one mail with a confirm link and an
+  unsubscribe link. The address counts only after the person confirms. Opening a link changes
+  nothing. A button on the page sends the confirmation or the unsubscription. The Worker sends no
+  other mail.
+- **Deadlines.** The confirm link works for 7 days. A daily cleanup deletes unconfirmed entries
+  after that time, so an entry can stay for up to 8 days. Confirmed entries stay until
+  31 March 2027 and are deleted by the first cleanup after that date. The unsubscribe link works
+  for 365 days.
+- **Deletion.** Every mail has an unsubscribe link. It deletes the whole entry at once. The mail
+  header also offers one-click unsubscribe. If the link has expired, a person can ask the operator
+  to delete the entry. The page names the contact for this.
+- **Protection against abuse.** Every sign-up needs a Cloudflare Turnstile check. The browser loads
+  the Turnstile script from `challenges.cloudflare.com` only when the form comes into view. The
+  Worker sends the Turnstile answer and the IP address of the visitor to Cloudflare to verify it.
+  A daily limit of mails applies to all sign-ups together.
+- **IP hash.** To limit sign-ups per network, the Worker counts attempts per hour and per day. It
+  stores a hash of the IP address, built with a secret key, and not the address. For IPv6 the hash
+  covers the /64 network. The counter rows are deleted by the daily cleanup once they are older
+  than 24 hours. Because the cleanup runs once a day, a row stays for up to 48 hours.
+- **Processors.** Cloudflare (Workers and D1 database; the database is created in the EU
+  jurisdiction), Cloudflare Turnstile, and Resend, which sends the mail (sending region: EU).
+- **Logs.** The Worker logs no address and no token. The invocation logs of the Worker are off,
+  because the confirm and unsubscribe links carry a token in the URL.
+- **Browser requests.** The browser posts the form straight to the waitlist Worker on
+  `slotmirror.app`. The request does not go through the statistics proxy. The confirm and
+  unsubscribe pages load no script and send nothing to PostHog.
+
 ## This website
 
 The website slotmirror.com and its documentation use PostHog (EU Cloud, Frankfurt) for
@@ -65,8 +102,10 @@ privacy-friendly statistics. It replaces Cloudflare Web Analytics.
 - PostHog runs in cookieless mode. It sets no cookie and stores nothing in the browser for
   statistics. A visitor gets no persistent ID. PostHog builds a hash from IP address, user agent
   and a daily salt, and the hash changes every day.
-- The site records page views (`$pageview`) and one event, `deploy_click`: a click on a "Deploy to
-  Cloudflare" button or link.
+- The site records page views (`$pageview`) and these events: `deploy_click`, a click on a "Deploy
+  to Cloudflare" button or link, and `waitlist_submit`, a submit of the waitlist form (see
+  below). `waitlist_submit` is sent only on pages that show the form. It carries the page path and
+  nothing else: no email address, no token and no answer of the server.
 - There is no autocapture, no session replay, no survey and no feature flag. URLs are sent
   without query string and fragment.
 - Only the website is measured. A slotmirror deployment that you run sends nothing to PostHog.

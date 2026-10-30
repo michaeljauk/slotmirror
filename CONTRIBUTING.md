@@ -9,6 +9,14 @@ Thanks for your interest in slotmirror. Bug reports, fixes, docs and translation
 - For a larger change, open an issue first so that we can agree on the approach.
 - Security problems: do not open an issue. See [SECURITY.md](SECURITY.md).
 
+## Your first pull request
+
+slotmirror is licensed under the [AGPL-3.0](LICENSE). Before we can merge your first pull request,
+you must sign the [Contributor License Agreement](CLA.md). The CLA bot comments on your pull
+request with a link. You sign once, in a comment, and the bot remembers it for later pull
+requests. The CLA lets the maintainer distribute your change under the AGPL-3.0 and, if needed,
+under other license terms. You keep the copyright of your change.
+
 ## Development
 
 Requirements: Node.js 22 or later, pnpm 10.

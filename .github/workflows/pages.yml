@@ -35,10 +35,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter website
+      # Rollback only. This build has no analytics key, so it loads no analytics.
       - run: pnpm --filter website build
-        env:
-          # Public beacon token of Cloudflare Web Analytics. Empty: no analytics script.
-          PUBLIC_CF_ANALYTICS_TOKEN: ${{ vars.CF_ANALYTICS_TOKEN }}
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: website/dist

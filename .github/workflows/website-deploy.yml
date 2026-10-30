@@ -1,0 +1,48 @@
+name: Website deploy
+
+# Deploys the website to Cloudflare Workers Static Assets. The job stays off until the repository
+# variable CF_DEPLOY_ENABLED is "true". The Pages workflow (pages.yml) stays as the rollback.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "design/**"
+      - "docs/images/**"
+      - "CHANGELOG.md"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/website-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.CF_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter website
+      - run: pnpm --filter website build
+        env:
+          # Public project key of PostHog. Empty: the site loads no analytics.
+          PUBLIC_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+      - run: pnpm --filter website exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

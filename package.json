@@ -15,7 +15,8 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "waitlist:check": "pnpm --filter slotmirror-waitlist check",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm waitlist:check",
     "prepare": "husky"
   },
   "dependencies": {

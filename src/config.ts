@@ -128,7 +128,7 @@ export interface SetupStatus {
   providers: Record<Provider, boolean>;
   /** At least one configured provider is allowed for sign-in. */
   signIn: boolean;
-  /** Entries of SIGN_IN_PROVIDERS that name no provider, e.g. "both". Not a secret. */
+  /** Entries of SIGN_IN_PROVIDERS that name no provider, e.g. "both". Shown on the setup page. */
   unknownSignInEntries: string[];
   /** True if the dashboard can be used: access, both secrets, and a sign-in provider. */
   ready: boolean;

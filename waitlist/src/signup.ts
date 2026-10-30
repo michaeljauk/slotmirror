@@ -15,9 +15,23 @@ function today(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
+function mailCap(env: WaitlistEnv): number {
+  return Number(env.DAILY_MAIL_CAP) || 0;
+}
+
+/** True if today's global mail cap is used up. Read before any branch on the address. */
+async function capReached(env: WaitlistEnv, now: number): Promise<boolean> {
+  const cap = mailCap(env);
+  if (cap <= 0) return true;
+  const row = await env.DB.prepare("SELECT reserved FROM mail_counter WHERE day = ?")
+    .bind(today(now))
+    .first<{ reserved: number }>();
+  return (row?.reserved ?? 0) >= cap;
+}
+
 /** Reserve one mail of today's global cap. Returns false if the cap is reached. */
 async function reserveMail(env: WaitlistEnv, now: number): Promise<boolean> {
-  const cap = Number(env.DAILY_MAIL_CAP) || 0;
+  const cap = mailCap(env);
   if (cap <= 0) return false;
   const row = await env.DB.prepare(
     `INSERT INTO mail_counter (day, reserved) VALUES (?, 1)
@@ -26,12 +40,7 @@ async function reserveMail(env: WaitlistEnv, now: number): Promise<boolean> {
   )
     .bind(today(now), cap)
     .first<{ reserved: number }>();
-  if (!row) {
-    // Only the count goes to the log.
-    console.warn("mail cap reached", cap);
-    return false;
-  }
-  return true;
+  return row !== null;
 }
 
 interface SignupBody {
@@ -71,19 +80,39 @@ export async function handleSignup(request: Request, env: WaitlistEnv): Promise<
     console.error("waitlist secrets missing");
     return problem(503, "server_misconfigured", cors);
   }
+  try {
+    return await signup(request, env, cors);
+  } catch {
+    // The error text can hold bound values. Log a fixed text only.
+    console.error("waitlist storage error");
+    return problem(503, "storage_unavailable", cors);
+  }
+}
+
+async function signup(
+  request: Request,
+  env: WaitlistEnv,
+  cors: Record<string, string>,
+): Promise<Response> {
+  const now = Date.now();
+  const ip = request.headers.get("cf-connecting-ip");
+  // The limit runs before the body is read, so a flood costs no parsing.
+  if (!(await allowAttempt(env, ip ?? "unknown", now))) {
+    return problem(429, "rate_limited", { ...cors, "retry-after": "3600" });
+  }
 
   const body = await readBody(request);
   if (!body) return problem(400, "invalid_request", cors);
   const email = normalizeEmail(body.email);
   if (!email) return problem(400, "invalid_email", cors);
-
-  const now = Date.now();
-  const ip = request.headers.get("cf-connecting-ip");
-  if (!(await allowAttempt(env, ip ?? "unknown", now))) {
-    return problem(429, "rate_limited", { ...cors, "retry-after": "3600" });
-  }
   if (!(await verifyTurnstile(env, body.turnstileToken, ip))) {
     return problem(403, "turnstile_failed", cors);
+  }
+
+  // At the cap every address gets the same answer, so the status says nothing about an address.
+  if (await capReached(env, now)) {
+    console.warn("mail cap reached", mailCap(env));
+    return problem(503, "mail_unavailable", cors);
   }
 
   const existing = await env.DB.prepare(
@@ -124,8 +153,17 @@ export async function handleSignup(request: Request, env: WaitlistEnv): Promise<
     .run();
 
   if (!(await sendConfirmationMail(env, email, confirmToken, unsubscribeToken))) {
-    // The row stays with mail_sent_at empty, so the next sign-up sends the mail again.
-    return problem(503, "mail_unavailable", cors);
+    // Remove the row and give the cap slot back. The answer stays the same as for a known
+    // address, because a different answer would show which addresses are known.
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM subscribers WHERE email = ? AND confirmed_at IS NULL").bind(
+        email,
+      ),
+      env.DB.prepare(
+        "UPDATE mail_counter SET reserved = reserved - 1 WHERE day = ? AND reserved > 0",
+      ).bind(today(now)),
+    ]);
+    return answer();
   }
   await env.DB.prepare("UPDATE subscribers SET mail_sent_at = ? WHERE email = ?")
     .bind(now, email)

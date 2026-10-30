@@ -21,7 +21,10 @@ export interface Outbound {
 
 /** Replace the network. Returns what the Worker sent. No real mail, no real Turnstile. */
 export function mockNetwork(
-  options: { turnstile?: "ok" | "fail" | "wrong-host"; resend?: number } = {},
+  options: {
+    turnstile?: "ok" | "fail" | "wrong-host" | "no-host" | "localhost";
+    resend?: number;
+  } = {},
 ): Outbound {
   const out: Outbound = { turnstile: [], resend: [] };
   let counter = 0;
@@ -33,7 +36,17 @@ export function mockNetwork(
       return Response.json(
         mode === "fail"
           ? { success: false, "error-codes": ["invalid-input-response"] }
-          : { success: true, hostname: mode === "wrong-host" ? "evil.example" : "slotmirror.com" },
+          : mode === "no-host"
+            ? { success: true }
+            : {
+                success: true,
+                hostname:
+                  mode === "wrong-host"
+                    ? "evil.example"
+                    : mode === "localhost"
+                      ? "localhost"
+                      : "slotmirror.com",
+              },
       );
     }
     if (url === "https://api.resend.com/emails") {
@@ -78,6 +91,18 @@ export function tokensFrom(mail: { body: any }): { confirm: string; unsubscribe:
   const unsubscribe = /\/unsubscribe\?t=([A-Za-z0-9_-]{22})/.exec(mail.body.text)?.[1];
   if (!confirm || !unsubscribe) throw new Error("No tokens in mail");
   return { confirm, unsubscribe };
+}
+
+export function formRequest(fields: Record<string, string>, ip = "203.0.113.7"): Request {
+  return new Request(`${BASE}/api/signup`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      origin: FORM_ORIGIN,
+      "cf-connecting-ip": ip,
+    },
+    body: new URLSearchParams(fields),
+  });
 }
 
 export async function row(email: string) {

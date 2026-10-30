@@ -1,7 +1,7 @@
 import { corsHeaders } from "./http";
 import type { WaitlistEnv } from "./env";
 import { handleLink } from "./links";
-import { RATE_WINDOW_MS } from "./ratelimit";
+import { RATE_RETENTION_HOURS, RATE_WINDOW_MS } from "./ratelimit";
 import { handleSignup } from "./signup";
 
 export async function handle(request: Request, env: WaitlistEnv): Promise<Response> {
@@ -42,7 +42,7 @@ export async function cleanup(env: WaitlistEnv, now = Date.now()): Promise<void>
       "DELETE FROM subscribers WHERE confirmed_at IS NULL AND confirm_expires_at < ?",
     ).bind(now),
     env.DB.prepare("DELETE FROM rate_hits WHERE window < ?").bind(
-      Math.floor(now / RATE_WINDOW_MS) - 1,
+      Math.floor(now / RATE_WINDOW_MS) - RATE_RETENTION_HOURS,
     ),
     env.DB.prepare("DELETE FROM mail_counter WHERE day < ?").bind(
       new Date(now - 30 * 86_400_000).toISOString().slice(0, 10),

@@ -6,6 +6,13 @@ export interface WaitlistEnv extends Env {
   TURNSTILE_SECRET: string;
   /** Random string. Secret. Keys the hash of IP addresses, so that the hash cannot be reversed. */
   HASH_PEPPER: string;
+  /** Optional. Contact for deletion requests. Shown if an unsubscribe link has expired. */
+  DELETION_CONTACT?: string;
+  /**
+   * Optional. Set to "true" in local development only. Lets Turnstile test keys pass: their
+   * answer has the host "localhost" or none.
+   */
+  TURNSTILE_ALLOW_LOCALHOST?: string;
   /** Optional Workers Rate Limiting binding. Used only if it is set. */
   RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 }

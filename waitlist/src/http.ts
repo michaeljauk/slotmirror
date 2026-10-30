@@ -7,6 +7,7 @@ export type ProblemCode =
   | "turnstile_failed"
   | "rate_limited"
   | "mail_unavailable"
+  | "storage_unavailable"
   | "server_misconfigured";
 
 const TITLES: Record<ProblemCode, string> = {
@@ -16,6 +17,7 @@ const TITLES: Record<ProblemCode, string> = {
   turnstile_failed: "The human check failed. Try again.",
   rate_limited: "Too many attempts. Try again later.",
   mail_unavailable: "We cannot send the mail now. Try again later.",
+  storage_unavailable: "The waitlist is not available now. Try again later.",
   server_misconfigured: "The waitlist is not set up.",
 };
 

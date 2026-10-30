@@ -4,8 +4,10 @@ import {
   actionPage,
   alreadyConfirmedPage,
   confirmedPage,
+  errorPage,
   expiredPage,
   invalidPage,
+  unsubscribeExpiredPage,
   unsubscribedPage,
   type LinkKind,
 } from "./pages";
@@ -37,6 +39,16 @@ export async function handleLink(
   env: WaitlistEnv,
   kind: LinkKind,
 ): Promise<Response> {
+  try {
+    return await link(request, env, kind);
+  } catch {
+    // The error text can hold bound values, and the URL holds a token. Log a fixed text only.
+    console.error("waitlist storage error");
+    return errorPage(env.SITE_URL);
+  }
+}
+
+async function link(request: Request, env: WaitlistEnv, kind: LinkKind): Promise<Response> {
   const token = new URL(request.url).searchParams.get("t");
   const row = await find(env, kind, token);
   if (!row || !token) return invalidPage(env.SITE_URL);
@@ -55,7 +67,7 @@ export async function handleLink(
     return confirmedPage(env.SITE_URL);
   }
 
-  if (row.expires_at < now) return expiredPage(env.SITE_URL);
+  if (row.expires_at < now) return unsubscribeExpiredPage(env.SITE_URL, env.DELETION_CONTACT);
   if (!isPost) return actionPage(kind, token);
   await env.DB.prepare("DELETE FROM subscribers WHERE id = ?").bind(row.id).run();
   return unsubscribedPage();

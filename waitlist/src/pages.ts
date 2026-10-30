@@ -99,6 +99,34 @@ ${link(siteUrl, "Back to slotmirror")}`,
   );
 }
 
+/**
+ * An expired unsubscribe link. Signing up again does not help: a confirmed address gets no mail.
+ * The operator deletes the entry on request. The contact comes from the DELETION_CONTACT variable.
+ */
+export function unsubscribeExpiredPage(siteUrl: string, contact?: string): Response {
+  const value = contact?.trim();
+  const who = !value
+    ? "Contact the operator of this site"
+    : /^[^\s@<>"]+@[^\s@<>"]+$/.test(value)
+      ? `Write to <a href="mailto:${escapeHtml(value)}">${escapeHtml(value)}</a>`
+      : `Contact ${escapeHtml(value)}`;
+  return page(
+    410,
+    "Link expired",
+    `<p>This unsubscribe link is no longer valid. ${who} to delete your address. Use the address you signed up with.</p>
+${link(siteUrl, "Back to slotmirror")}`,
+  );
+}
+
+export function errorPage(siteUrl: string): Response {
+  return page(
+    503,
+    "Try again later",
+    `<p>We cannot process this link now. Nothing was changed. Open the link again in a few minutes.</p>
+${link(siteUrl, "Back to slotmirror")}`,
+  );
+}
+
 export function invalidPage(siteUrl: string): Response {
   return page(
     400,

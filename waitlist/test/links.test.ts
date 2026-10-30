@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup } from "../src/index";
+import worker, { cleanup } from "../src/index";
 import { BASE, call, mockNetwork, reset, row, signupRequest, testEnv, tokensFrom } from "./helpers";
 
 beforeEach(reset);
@@ -128,11 +128,37 @@ describe("unsubscribe", () => {
     expect(out.resend).toHaveLength(1);
   });
 
-  it("refuses an expired token", async () => {
+  it("refuses an expired token and keeps the entry", async () => {
     const { unsubscribe } = await signUp();
     await env.DB.prepare("UPDATE subscribers SET unsubscribe_expires_at = 1").run();
     expect((await post(`/unsubscribe?t=${unsubscribe}`)).status).toBe(410);
     expect(await row("ada@example.com")).not.toBeNull();
+  });
+
+  it("tells a person with an expired unsubscribe link whom to ask for deletion", async () => {
+    const { unsubscribe } = await signUp();
+    await env.DB.prepare("UPDATE subscribers SET unsubscribe_expires_at = 1").run();
+    const response = await call(new Request(`${BASE}/unsubscribe?t=${unsubscribe}`), {
+      DELETION_CONTACT: "privacy@example.org",
+    });
+    expect(response.status).toBe(410);
+    const html = await response.text();
+    expect(html).toContain('href="mailto:privacy@example.org"');
+    expect(html).toContain("delete your address");
+    expect(html).not.toContain("Sign up again");
+  });
+
+  it("names the operator if no deletion contact is set, and escapes the contact", async () => {
+    const { unsubscribe } = await signUp();
+    await env.DB.prepare("UPDATE subscribers SET unsubscribe_expires_at = 1").run();
+    const none = await get(`/unsubscribe?t=${unsubscribe}`);
+    expect(await none.text()).toContain("Contact the operator of this site");
+    const odd = await call(new Request(`${BASE}/unsubscribe?t=${unsubscribe}`), {
+      DELETION_CONTACT: "<b>x</b> & co",
+    });
+    const html = await odd.text();
+    expect(html).toContain("&lt;b&gt;x&lt;/b&gt; &amp; co");
+    expect(html).not.toContain("<b>x</b>");
   });
 
   it("does not accept the confirm token as unsubscribe token", async () => {
@@ -157,6 +183,61 @@ describe("routing and cleanup", () => {
     await cleanup(testEnv({ RETENTION_UNTIL: "2999-01-01" }));
     expect(await row("a@example.com")).not.toBeNull();
     expect(await row("b@example.com")).toBeNull();
+  });
+
+  it("deletes old rate counters and mail counters and keeps current ones", async () => {
+    const now = Date.UTC(2026, 10, 15, 12, 0, 0);
+    const hour = Math.floor(now / 3_600_000);
+    const dayStart = Math.floor(now / 86_400_000) * 24;
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO rate_hits VALUES ('old', ?, 1)").bind(hour - 25),
+      env.DB.prepare("INSERT INTO rate_hits VALUES ('hour', ?, 1)").bind(hour),
+      env.DB.prepare("INSERT INTO rate_hits VALUES ('day', ?, 1)").bind(dayStart),
+      env.DB.prepare("INSERT INTO mail_counter VALUES ('2026-09-01', 5)"),
+      env.DB.prepare("INSERT INTO mail_counter VALUES ('2026-11-15', 5)"),
+    ]);
+    await cleanup(testEnv(), now);
+    const hits = await env.DB.prepare("SELECT key_hash FROM rate_hits ORDER BY key_hash").all();
+    expect(hits.results.map((r) => r.key_hash)).toEqual(["day", "hour"]);
+    const days = await env.DB.prepare("SELECT day FROM mail_counter").all();
+    expect(days.results.map((r) => r.day)).toEqual(["2026-11-15"]);
+  });
+
+  it("runs the cleanup from the scheduled handler", async () => {
+    const a = await signUp("a@example.com");
+    await signUp("b@example.com");
+    await post(`/confirm?t=${a.confirm}`);
+    await env.DB.prepare("UPDATE subscribers SET confirm_expires_at = 1").run();
+    await env.DB.prepare("INSERT INTO rate_hits VALUES ('old', 1, 1)").run();
+    const pending: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => pending.push(p),
+    } as unknown as ExecutionContext;
+    worker.scheduled({} as ScheduledController, testEnv({ RETENTION_UNTIL: "2999-01-01" }), ctx);
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(await row("a@example.com")).not.toBeNull();
+    expect(await row("b@example.com")).toBeNull();
+    const old = await env.DB.prepare("SELECT 1 FROM rate_hits WHERE key_hash = 'old'").first();
+    expect(old).toBeNull();
+  });
+
+  it("shows an error page with no change if the database fails", async () => {
+    const { confirm } = await signUp();
+    const broken = {
+      ...testEnv(),
+      DB: {
+        prepare: () => {
+          throw new Error("D1 down");
+        },
+      },
+    } as unknown as ReturnType<typeof testEnv>;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { handle } = await import("../src/index");
+    const response = await handle(new Request(`${BASE}/confirm?t=${confirm}`), broken);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect((await row("ada@example.com")).confirmed_at).toBeNull();
   });
 
   it("deletes everything after the retention date", async () => {

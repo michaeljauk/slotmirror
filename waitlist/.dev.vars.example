@@ -3,3 +3,5 @@ RESEND_API_KEY=re_replace_me
 # Turnstile test secret that always passes: 1x0000000000000000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 HASH_PEPPER=replace-with-a-random-string
+# Local development only. The Turnstile test keys report the host "localhost". Never set in production.
+TURNSTILE_ALLOW_LOCALHOST=true

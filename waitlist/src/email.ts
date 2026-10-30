@@ -1,13 +1,28 @@
 const MAX_LENGTH = 254;
-// One "@", no spaces or control characters, a dot in the domain. Deliverability is the job of the
-// confirmation mail, not of this check.
-const SHAPE = /^[^\s@\p{Cc}]+@[^\s@\p{Cc}]+\.[^\s@\p{Cc}.]+$/u;
+// Allowlist, not blocklist. Local part: ASCII letters and digits plus the RFC 5322 "atext"
+// symbols, in dot-separated parts. No quotes, comments, spaces, "<", ">", "," or ";".
+// Domain: dot-separated ASCII labels with at least one dot and a letter-only or punycode end
+// label. Internationalized domains must come as punycode ("xn--"). Deliverability is the job of
+// the confirmation mail, not of this check.
+const LOCAL = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
+const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function validDomain(domain: string): boolean {
+  const labels = domain.split(".");
+  if (labels.length < 2 || !labels.every((label) => LABEL.test(label))) return false;
+  const tld = labels[labels.length - 1]!;
+  return /^[a-z]{2,}$/.test(tld) || /^xn--[a-z0-9-]+$/.test(tld);
+}
 
 /** Trim and lowercase. Returns null for an address that cannot be valid. */
 export function normalizeEmail(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const email = input.trim().toLowerCase();
-  if (email.length > MAX_LENGTH || !SHAPE.test(email)) return null;
+  if (email.length > MAX_LENGTH) return null;
+  const parts = email.split("@");
+  if (parts.length !== 2) return null;
+  const [local = "", domain = ""] = parts;
+  if (local.length > 64 || !LOCAL.test(local) || !validDomain(domain)) return null;
   return email;
 }
 

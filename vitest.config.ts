@@ -37,6 +37,8 @@ export default defineConfig(async () => {
       }),
     ],
     test: {
+      // The waitlist Worker has its own config and tests, run by `pnpm waitlist:check`.
+      exclude: ["**/node_modules/**", "waitlist/**", "website/**"],
       setupFiles: ["./test/apply-migrations.ts"],
       // The default 5 s fails tests on a loaded machine, e.g. in the pre-push hook.
       testTimeout: 30_000,

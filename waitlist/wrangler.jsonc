@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "slotmirror-waitlist",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-25",
+  // Invocation logs record the request URL, and confirm and unsubscribe links carry a token.
+  "observability": { "enabled": false },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slotmirror-waitlist",
+      // Null ID. Replace it with the ID from `wrangler d1 create slotmirror-waitlist`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // Daily cleanup of expired entries and counters.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "vars": {
+    // Public address of this Worker. Links in mails point here.
+    "PUBLIC_URL": "https://slotmirror.app",
+    // Website address. Used for "sign up again" and "self-host" links.
+    "SITE_URL": "https://slotmirror.com",
+    // Hosts that may post the form. Also the hosts Turnstile must report.
+    "ALLOWED_ORIGINS": "https://slotmirror.com,https://www.slotmirror.com,https://slotmirror.app",
+    "MAIL_FROM": "slotmirror <waitlist@slotmirror.app>",
+    // Global limit of mails per UTC day. Resend Free allows 100 per day.
+    "DAILY_MAIL_CAP": "90",
+    // Sign-up attempts per IP address per hour.
+    "SIGNUPS_PER_IP_PER_HOUR": "5",
+    // Sign-up attempts per IP address per UTC day. One address cannot use up the mail cap alone.
+    "SIGNUPS_PER_IP_PER_DAY": "10",
+    // Optional. After this date (YYYY-MM-DD) the daily cleanup also deletes confirmed entries.
+    "RETENTION_UNTIL": "2027-03-31",
+  },
+  // Optional second IP limit. The D1 counter works without it. The Cloudflare docs do not say
+  // whether the Rate Limiting binding runs on the Workers Free plan, so it stays off until someone
+  // tests it. The current key is "ratelimits" (Wrangler 4.36 or later), not "unsafe".
+  // "ratelimits": [
+  //   { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+  // ],
+  // Optional. Contact for deletion requests, shown if an unsubscribe link has expired. Set it as a
+  // plain var in the dashboard, or add it to "vars". The repository holds no contact.
+  // "DELETION_CONTACT": "privacy@example.com",
+}

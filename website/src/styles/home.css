@@ -814,3 +814,68 @@ footer a {
     width: 44px;
   }
 }
+
+/* The waitlist form. It shows only if the build has a waitlist address and a Turnstile key. */
+.waitlist {
+  max-width: 520px;
+}
+
+.waitlist label {
+  display: block;
+  font-weight: 600;
+  font-size: 14.5px;
+  margin-bottom: 6px;
+}
+
+.waitlist-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.waitlist-row[hidden],
+.waitlist-widget[hidden] {
+  display: none;
+}
+
+.waitlist input[type="email"] {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.waitlist input[type="email"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.waitlist button.button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.waitlist button.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.waitlist-widget {
+  margin-top: 12px;
+}
+
+.waitlist-status {
+  margin: 12px 0 0;
+  min-height: 1.5em;
+  color: var(--muted);
+  font-size: 14.5px;
+}
+
+.waitlist-status.error {
+  color: var(--c-vermilion);
+}

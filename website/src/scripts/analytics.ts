@@ -2,11 +2,13 @@
 // no session replay. The project key comes from the build variable PUBLIC_POSTHOG_KEY. Without
 // the key this file does nothing and the site works as before.
 //
-// Two events are sent today:
+// Three events are sent today:
 //   deploy_click          the "Deploy to Cloudflare" buttons and links
+//   waitlist_submit       a sign-up sent from the waitlist form on the home page, if the build
+//                         shows it. The event carries the path only: never the address, a token or the answer.
 //   $pageview             the standard page view, which replaces Cloudflare Web Analytics
-// The constants below also list waitlist_submit and suite_to_quickstart. No element sends them
-// yet. They stay so that a future data-track attribute works without a code change.
+// The constants below also list suite_to_quickstart. No element sends it yet. It stays so that a
+// future data-track attribute works without a code change.
 
 const EVENTS = ["deploy_click", "waitlist_submit", "suite_to_quickstart"] as const;
 type TrackedEvent = (typeof EVENTS)[number];
@@ -101,10 +103,8 @@ async function start(projectKey: string) {
     const name = target.dataset.track ?? "deploy_click";
     if (isTracked(name)) send(name);
   });
-  document.addEventListener("submit", (event) => {
-    const form = event.target as HTMLElement | null;
-    if (form?.tagName === "FORM" && isTracked(form.dataset.track)) send(form.dataset.track);
-  });
+  // The waitlist script fires this event only when it sends a sign-up, not on every submit event.
+  document.addEventListener("slotmirror:waitlist-submit", () => send("waitlist_submit"));
 }
 
 if (key && typeof window !== "undefined") {

@@ -15,6 +15,14 @@ const page = (path: string) => `${base}/${path}`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const preview = new URL(page("social-preview.png"), Astro.site);
 
+// The waitlist form shows only if both build variables are set. Without them nothing renders.
+const waitlistUrl = (import.meta.env.PUBLIC_WAITLIST_URL as string | undefined)
+  ?.trim()
+  .replace(/\/$/, "");
+const turnstileKey = (import.meta.env.PUBLIC_TURNSTILE_SITE_KEY as string | undefined)?.trim();
+// An address without https:// would make a relative endpoint, so it counts as unset.
+const waitlist = Boolean(waitlistUrl?.startsWith("https://") && turnstileKey);
+
 const guides = [
   {
     slug: "sync-outlook-and-google-calendar",
@@ -334,6 +342,51 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         </div>
       </section>
 
+      {
+        waitlist && (
+          <section id="waitlist">
+            <div class="wrap">
+              <h2>Hosted version</h2>
+              <p class="lead">
+                A hosted slotmirror does not exist yet. Leave your address to hear when it opens.
+                Joining the list is not a purchase.
+              </p>
+              <form
+                class="waitlist"
+                id="waitlist-form"
+                method="post"
+                hidden
+                data-endpoint={`${waitlistUrl}/api/signup`}
+                data-site-key={turnstileKey}
+              >
+                <label for="waitlist-email">Email address</label>
+                <div class="waitlist-row">
+                  <input
+                    id="waitlist-email"
+                    name="email"
+                    type="email"
+                    autocomplete="email"
+                    inputmode="email"
+                    maxlength="254"
+                    required
+                    aria-describedby="waitlist-status"
+                  />
+                  <button class="button primary" type="submit" id="waitlist-submit">
+                    Join the waitlist
+                  </button>
+                </div>
+                <div id="waitlist-widget" class="waitlist-widget" />
+                <p id="waitlist-status" class="waitlist-status" role="status" aria-live="polite" />
+                <p class="note">
+                  We use your address only for this list. We send one mail to confirm it. You can
+                  unsubscribe from that mail. <a href={page("docs/privacy/")}>Privacy</a>
+                </p>
+              </form>
+            </div>
+          </section>
+        )
+      }
+
       <section id="guides">
         <div class="wrap">
           <h2>Guides</h2>
@@ -382,6 +435,11 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
 
     <script>
       import "../scripts/analytics";
+    </script>
+
+    <script>
+      // The waitlist code loads only if this build renders the form.
+      if (document.querySelector("#waitlist-form")) void import("../scripts/waitlist");
     </script>
 
     <script>

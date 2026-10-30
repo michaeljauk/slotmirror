@@ -8,7 +8,9 @@ slotmirror needs an OAuth client in Google Cloud to connect Google accounts.
 1. In the Google Cloud console, create a project and enable the **Google Calendar API**.
 2. In **Google Auth Platform**, fill in **Branding**: the app name, the address of your Worker as
    home page, `https://<your-worker>/privacy` as privacy policy, and the domain of your Worker as
-   authorized domain.
+   authorized domain. We have not tested whether Google accepts a `workers.dev` address here. If it
+   does not, give your Worker a custom domain, set `PUBLIC_URL` to it, and use that domain in this
+   step and in the redirect URI.
 3. Under **Data access**, add the scopes `openid`, `email`, `profile`,
    `https://www.googleapis.com/auth/calendar.events` and
    `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.

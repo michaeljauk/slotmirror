@@ -2,11 +2,11 @@
 // no session replay. The project key comes from the build variable PUBLIC_POSTHOG_KEY. Without
 // the key this file does nothing and the site works as before.
 //
-// Exactly three custom events exist. Each one hangs on an element with a data-track attribute:
-//   deploy_click          the "Deploy to Cloudflare" buttons
-//   waitlist_submit       the waitlist form (submit)
-//   suite_to_quickstart   the quickstart link on the test-suite page
-// Plus the standard $pageview, which replaces Cloudflare Web Analytics.
+// Two events are sent today:
+//   deploy_click          the "Deploy to Cloudflare" buttons and links
+//   $pageview             the standard page view, which replaces Cloudflare Web Analytics
+// The constants below also list waitlist_submit and suite_to_quickstart. No element sends them
+// yet. They stay so that a future data-track attribute works without a code change.
 
 const EVENTS = ["deploy_click", "waitlist_submit", "suite_to_quickstart"] as const;
 type TrackedEvent = (typeof EVENTS)[number];
@@ -26,6 +26,31 @@ function stripUrl(value: unknown): unknown {
   } catch {
     return value.split(/[?#]/)[0];
   }
+}
+
+// Properties that hold a full URL. PostHog adds the "$initial_" and "$session_entry_" forms to
+// $set_once and to the event itself. $pathname holds only the path: posthog-js builds it from
+// URL.pathname, which never contains a query string.
+const URL_PROPERTIES = new Set([
+  "$current_url",
+  "$referrer",
+  "$initial_current_url",
+  "$initial_referrer",
+  "$session_entry_url",
+  "$session_entry_referrer",
+  "$external_click_url",
+]);
+// Values that posthog-js copies out of the query string.
+const QUERY_PROPERTY =
+  /^(\$initial_)?(utm_|gclid$|gclsrc$|dclid$|gbraid$|wbraid$|fbclid$|msclkid$)/;
+
+function cleanProperties(properties: Properties | undefined): void {
+  if (!properties) return;
+  for (const name of Object.keys(properties)) {
+    if (URL_PROPERTIES.has(name)) properties[name] = stripUrl(properties[name]);
+    else if (QUERY_PROPERTY.test(name)) delete properties[name];
+  }
+  delete properties.$search;
 }
 
 function isTracked(name: string | undefined): name is TrackedEvent {
@@ -55,12 +80,12 @@ async function start(projectKey: string) {
     respect_dnt: true,
     before_send: (event) => {
       if (!event) return event;
-      const properties: Properties = event.properties ?? {};
-      for (const name of ["$current_url", "$referrer", "$initial_referrer"]) {
-        if (name in properties) properties[name] = stripUrl(properties[name]);
-      }
-      delete properties.$search;
-      event.properties = properties;
+      event.properties = event.properties ?? {};
+      cleanProperties(event.properties);
+      cleanProperties(event.$set);
+      cleanProperties(event.$set_once);
+      cleanProperties(event.properties.$set as Properties | undefined);
+      cleanProperties(event.properties.$set_once as Properties | undefined);
       return event;
     },
   });

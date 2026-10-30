@@ -1,7 +1,8 @@
 name: Website deploy
 
 # Deploys the website to Cloudflare Workers Static Assets. The job stays off until the repository
-# variable CF_DEPLOY_ENABLED is "true". The Pages workflow (pages.yml) stays as the rollback.
+# variable CF_DEPLOY_ENABLED is "true". Only refs/heads/main deploys.
+# The Pages workflow (pages.yml) stays as a manual rollback.
 
 on:
   push:
@@ -25,7 +26,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: vars.CF_DEPLOY_ENABLED == 'true'
+    if: vars.CF_DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

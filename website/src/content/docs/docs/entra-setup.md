@@ -14,8 +14,11 @@ accounts.
 4. Under **API permissions**, add the delegated Microsoft Graph permissions `openid`, `email`,
    `profile`, `offline_access`, `User.Read` and `Calendars.ReadWrite`. Users can consent to these
    themselves, unless your tenant blocks user consent.
-5. Under **Certificates & secrets**, create a client secret. Note when it expires. The sync stops
-   when it expires.
+5. Under **Certificates & secrets**, create a client secret. Entra shows its expiry date. Choose
+   the longest lifetime the portal offers, and put the expiry date in your calendar a few weeks
+   ahead. When the secret expires, token refreshes fail and the sync stops. Before that date,
+   create a new secret and replace `MICROSOFT_CLIENT_SECRET` with its value. Copy the value
+   when you create it: Entra shows it only once.
 6. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET` as secrets. In
    the Cloudflare dashboard, open your Worker, **Settings**, **Variables and Secrets**. With a
    clone, you can run `pnpm wrangler secret put <NAME>` instead.

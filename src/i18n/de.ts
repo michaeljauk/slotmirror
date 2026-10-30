@@ -436,7 +436,7 @@ export const de: Messages = {
   },
   setup: {
     title: "Einrichtung abschließen",
-    lead: "Setze die fehlenden Werte als Worker-Variablen oder Secrets oder im Cloudflare-Dashboard und lade die Seite neu.",
+    lead: "Setze die fehlenden Werte als Variablen oder Secrets im Cloudflare-Dashboard (dein Worker, Settings, Variables and Secrets) und lade die Seite neu.",
     set: "Gesetzt",
     accessHint:
       "Wer sich anmelden darf. Deine eigene Adresse für eine persönliche Installation, deine E-Mail-Domain für ein Team.",

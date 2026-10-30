@@ -19,21 +19,10 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountSync"] }],
   "triggers": { "crons": ["*/10 * * * *"] },
-  "vars": {
-    "ORG_NAME": "",
-    "ALLOWED_EMAILS": "",
-    "ALLOWED_DOMAINS": "",
-    "ALLOWED_TENANT_IDS": "",
-    "ADMIN_EMAILS": "",
-    "PRIVACY_CONTACT": "",
-    "SIGN_IN_PROVIDERS": "",
-    // Public https address of this deployment, e.g. "https://sync.example.com". With it, changes
-    // arrive by push notification within seconds; without it, the cron syncs every 10 minutes.
-    "PUBLIC_URL": "",
-    "DATA_JURISDICTION": "",
-    "MAX_DETAIL_TO_EXTERNAL": "",
-    "MAX_DETAIL_FROM_EXTERNAL": "",
-    // IANA time zone for dates and times in the dashboard, e.g. "Europe/Vienna".
-    "TIME_ZONE": "UTC",
-  },
+  // Access and URL settings (ALLOWED_EMAILS, ADMIN_EMAILS, PUBLIC_URL, DATA_JURISDICTION, ...) are
+  // not listed under "vars" on purpose. A "vars" entry here, even an empty one, replaces the value
+  // that you set in the Cloudflare dashboard on every deploy. Set them in the dashboard (Workers &
+  // Pages > your Worker > Settings > Variables and Secrets) or in .dev.vars for local development.
+  // "keep_vars" keeps dashboard values that this file does not name.
+  "keep_vars": true,
 }

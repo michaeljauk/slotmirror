@@ -431,7 +431,7 @@ export const en = {
   },
   setup: {
     title: "Finish the setup",
-    lead: "Set the missing values as Worker variables or secrets or in the Cloudflare dashboard, then reload this page.",
+    lead: "Set the missing values as variables or secrets in the Cloudflare dashboard (your Worker, Settings, Variables and Secrets), then reload this page.",
     set: "Set",
     accessHint:
       "Who may sign in. Your own address for a personal deployment, your email domain for a team.",

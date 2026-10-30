@@ -31,6 +31,34 @@ describe("worker", () => {
     expect(await response.text()).toBe("abc 123");
   });
 
+  it("shows the setup checklist if the access settings are missing, not only empty", async () => {
+    // As after a deploy on a fresh account: wrangler.jsonc has no `vars`, and nobody has set them yet.
+    const bare = {
+      DB: env.DB,
+      ACCOUNT_SYNC: env.ACCOUNT_SYNC,
+      SESSION_SECRET: env.SESSION_SECRET,
+      TOKEN_ENCRYPTION_KEY: env.TOKEN_ENCRYPTION_KEY,
+      MICROSOFT_CLIENT_ID: env.MICROSOFT_CLIENT_ID,
+      MICROSOFT_CLIENT_SECRET: env.MICROSOFT_CLIENT_SECRET,
+    } as Env;
+    expect("ALLOWED_EMAILS" in bare).toBe(false);
+
+    const response = await worker.fetch(new Request(`${BASE}/`), bare, {} as ExecutionContext);
+    expect(response.status).toBe(503);
+    const html = await response.text();
+    expect(html).toContain("Finish the setup");
+    expect(html).toContain("ALLOWED_EMAILS, ALLOWED_DOMAINS or ADMIN_EMAILS");
+    expect(html).not.toContain("Sign in with Microsoft 365");
+
+    // The routes that do not need a finished setup keep working without the settings.
+    const privacy = await worker.fetch(
+      new Request(`${BASE}/privacy`),
+      bare,
+      {} as ExecutionContext,
+    );
+    expect(privacy.status).toBe(200);
+  });
+
   it("shows the sign-in page without a session", async () => {
     const response = await exports.default.fetch(`${BASE}/`);
     expect(response.status).toBe(200);

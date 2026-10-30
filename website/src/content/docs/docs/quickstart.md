@@ -29,7 +29,7 @@ git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
-# copy the database_id into wrangler.jsonc, set the variables there
+# copy the database_id into wrangler.jsonc; set variables in the dashboard
 pnpm wrangler secret put SESSION_SECRET       # openssl rand -base64 48
 pnpm wrangler secret put TOKEN_ENCRYPTION_KEY # openssl rand -base64 32
 pnpm wrangler secret put MICROSOFT_CLIENT_ID  # and the other client secrets you use

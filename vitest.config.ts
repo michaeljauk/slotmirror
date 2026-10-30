@@ -23,6 +23,9 @@ export default defineConfig(async () => {
             // Alarms fire by themselves once due; long delays keep them under the tests' control.
             SYNC_DEBOUNCE_MS: "600000",
             SYNC_NEXT_RUN_MS: "600000",
+            // The /dev routes and the simulated calendars. A real token never reaches them.
+            DEV_FAKE_CALENDARS: "1",
+            DEV_FAKE_FETCH_URL: "https://probe-sink.example/",
             DATA_JURISDICTION: "",
             MAX_DETAIL_TO_EXTERNAL: "title",
             MAX_DETAIL_FROM_EXTERNAL: "busy",

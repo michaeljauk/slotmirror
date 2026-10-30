@@ -31,11 +31,17 @@ pnpm wrangler dev --var DEV_FAKE_CALENDARS:1 --var DEV_FAKE_LATENCY_MS:80
 
 Signed in as an admin:
 
-1. `POST /dev/seed?accounts=10&events=200` creates ten accounts in the block group.
+1. `POST /dev/seed?accounts=10&events=200` creates ten accounts in the block group. `events` goes up
+   to 10000, and `days` sets the window of the user, the window of the simulated rules and the
+   spread of the meetings.
 2. `POST /dev/cycle` starts a sync cycle.
-3. `GET /dev/stats` counts runs, writes and provider calls.
+3. `GET /dev/stats` counts runs, writes, blocks and provider calls.
 
 Without the variable, the `/dev` routes do not exist.
+
+`pnpm capacity:probe` runs a staged load profile through these routes against a test instance
+without real accounts. With `DEV_FAKE_FETCH_URL`, each simulated call also makes one real `fetch`,
+so that the Workers subrequest limit applies. See `scripts/README.md` in the repository.
 
 ## The website
 

@@ -35,7 +35,15 @@ import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
 import { accountSync } from "./durable";
 import type { Watch } from "./providers/calendar-client";
-import { FakeCalendar, fakeCallCounts, seedFakeEvents } from "./providers/fake-calendar";
+import {
+  FakeCalendar,
+  measureFetchBudget,
+  readFakeStats,
+  recordFakeStep,
+  seedFakeEvents,
+  shiftFakeEvents,
+  type FetchBudget,
+} from "./providers/fake-calendar";
 import { notifyChange, requestSyncs, SyncRequestError, webhookToken, webhookUrl } from "./webhooks";
 import { sendReconnectAlert } from "./alerts";
 
@@ -1099,16 +1107,41 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /** Local load tests only: replace this account's simulated events. */
-  async seedFake(seed: number, count: number): Promise<void> {
+  async seedFake(seed: Parameters<typeof seedFakeEvents>[1], count: number): Promise<void> {
     if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
     seedFakeEvents(this.ctx.storage.sql, seed, count);
     this.sourceCache.clear();
   }
 
   /** Local load tests only: simulated provider calls since the last seed. */
-  async fakeStats(): Promise<Record<string, number>> {
+  async fakeStats(countBlocks = false): Promise<ReturnType<typeof readFakeStats>> {
     if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
-    return fakeCallCounts(this.ctx.storage.sql);
+    return readFakeStats(this.ctx.storage.sql, countBlocks);
+  }
+
+  /** Local load tests only: change `count` simulated events, as a burst of edits does. */
+  async shiftFake(count: number): Promise<void> {
+    if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
+    shiftFakeEvents(this.ctx.storage.sql, count);
+    this.sourceCache.clear();
+  }
+
+  /**
+   * Load tests only: how many fetches this invocation can make after `rpcCalls` calls to another
+   * instance. Comparing two values shows if Durable Object RPC counts as a subrequest.
+   */
+  async fakeFetchBudget(peer: string, rpcCalls: number, attempts: number): Promise<FetchBudget> {
+    const url = this.env.DEV_FAKE_FETCH_URL;
+    if (this.env.DEV_FAKE_CALENDARS !== "1" || !url) throw new Error("Simulation is off");
+    for (let i = 0; i < rpcCalls; i++) await accountSync(this.env, peer).fakeStats();
+    return measureFetchBudget(url, attempts);
+  }
+
+  /** Load tests only: a step counts before it runs, so that a step that a limit stops shows. */
+  private async noteFakeStep(): Promise<void> {
+    if (this.env.DEV_FAKE_CALENDARS !== "1") return;
+    recordFakeStep(this.ctx.storage.sql);
+    await this.ctx.storage.sync();
   }
 
   /**
@@ -1640,6 +1673,7 @@ export class AccountSync extends DurableObject<Env> {
     let deferUntil: number | undefined;
     let delayMs = this.delays().nextRun;
     if (running.has(ruleId)) {
+      await this.noteFakeStep();
       try {
         const result = await this.runRuleAfterOthers(ruleId);
         unfinished = result.remaining > 0;
@@ -1945,7 +1979,7 @@ export class AccountSync extends DurableObject<Env> {
     // Local load tests replace the provider; never active without DEV_FAKE_CALENDARS=1.
     const provider =
       this.env.DEV_FAKE_CALENDARS === "1" && token === "fake"
-        ? new FakeCalendar(this.ctx.storage.sql, Number(this.env.DEV_FAKE_LATENCY_MS ?? 0))
+        ? new FakeCalendar(this.ctx.storage.sql, this.providerOrDefault(), this.env)
         : calendarClient(this.providerOrDefault(), token);
     return oneCallAtATime(provider, (call) => {
       const result = this.providerQueue.then(async () => {

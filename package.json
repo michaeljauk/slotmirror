@@ -15,6 +15,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
+    "capacity:probe": "node scripts/capacity-probe.ts",
     "waitlist:check": "pnpm --filter slotmirror-waitlist check",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm waitlist:check",
     "prepare": "husky"

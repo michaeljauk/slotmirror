@@ -21,6 +21,10 @@ A plain `wrangler deploy` skips the migrations. Do not use it for an update.
 
 ## If you used the deploy button
 
+If you deployed before the `vars` block was removed, read
+[the section on earlier deployments](#if-you-deployed-before-the-vars-block-was-removed) before
+you merge.
+
 Cloudflare created a new repository in your GitHub or GitLab account and connected it to your
 Worker. The repository has no automatic link to the slotmirror repository. You add the link
 yourself.
@@ -43,12 +47,16 @@ yourself.
    you push. Keep your own `database_id` and `database_name`.
 
 3. In the dashboard, open **Workers & Pages**, your Worker, **Settings**, **Builds**. Check that the
-   build is connected to your repository and that its deploy command runs the migrations. The
-   `deploy` script in `package.json` does. The command `npx wrangler deploy` does not.
+   build is connected to your repository. Enter `pnpm run deploy` as the deploy command, because
+   that command runs the migrations. The command `npx wrangler deploy` does not.
 
 4. If a push does not start a build, deploy from a clone as shown below.
 
 ## If you cloned the repository
+
+If you deployed before the `vars` block was removed, read
+[the section on earlier deployments](#if-you-deployed-before-the-vars-block-was-removed) before
+you deploy.
 
 ```sh
 cd slotmirror
@@ -61,11 +69,6 @@ Run `pnpm wrangler login` first if your session expired. `pnpm run deploy` needs
 `database_id` in `wrangler.jsonc`. If `git pull` reports a conflict on that file, keep your
 `database_id`.
 
-## After the update
-
-Open your Worker and sign in. If a checklist shows instead of the sign-in page, a variable or secret
-is missing. The checklist names it. See the [settings reference](../settings/).
-
 ## If you deployed before the `vars` block was removed
 
 An earlier `wrangler.jsonc` had a `vars` block. It listed `ORG_NAME`, `ALLOWED_EMAILS`,
@@ -75,15 +78,16 @@ An earlier `wrangler.jsonc` had a `vars` block. It listed `ORG_NAME`, `ALLOWED_E
 name with an empty value.
 
 Now `wrangler.jsonc` has no `vars` block and sets `keep_vars`. A deploy keeps the dashboard values
-that the file does not name. Set your values in the dashboard before you update.
+that the file does not name. Without `keep_vars`, a deploy removes dashboard variables, and it
+overwrites the variables that the file lists. Set your values in the dashboard before you update.
 
 1. Write down your values. Read them from the `vars` block in your `wrangler.jsonc`, or from
    **Variables and Secrets** in the dashboard. A deploy from the old file may have replaced a
-   dashboard value with an empty one.
+   dashboard value with an empty one. If a value is missing in the dashboard, enter it again.
 2. In **Variables and Secrets**, add each value as a **Text** variable with the same name. Do this
    before you deploy the new version.
 3. Update as described above. If the merge conflicts on the `vars` block, take the new file and
-   remove the block.
+   remove the block. Keep your own `database_id` and `database_name`.
 4. Open your Worker. Check the values you rely on, for example who can sign in.
 
 Take care of these two values:
@@ -99,15 +103,26 @@ file and that the dashboard does not hold. Do not rely on it. Set the value in t
 If you want a value in the file again, add a `vars` entry. Then use the file for that name and not
 the dashboard. The file value replaces the dashboard value on every deploy.
 
+## After the update
+
+Open your Worker and sign in. If a checklist shows instead of the sign-in page, a variable or secret
+is missing. The checklist names it. See the [settings reference](../settings/).
+
 ## Going back to an older version
 
 Migrations do not run backward. After an update, the database keeps the new tables and columns,
 also when you deploy older code.
 
-1. Check out the commit or tag of the older version.
+1. Clone your repository to your computer and run `pnpm install`. If you used the deploy button,
+   you need this step, because the build in the dashboard cannot deploy an older version for you.
+   Check out the commit or tag of the older version.
 2. Run `pnpm wrangler deploy`. The older folder `migrations/` holds only migrations that already ran,
    so no migration is needed.
 3. Open your Worker and check that sign-in and sync work.
+
+If the older version is from before the `vars` block was removed, its `wrangler.jsonc` lists the
+`vars` block again. That deploy overwrites the dashboard values of every name in the block, also
+with an empty value. Write down your values first, and set them again after the deploy.
 
 The older code runs on the newer database. This works only if the migrations between the two
 versions add tables or columns and remove nothing. All migrations up to now do this. A later
@@ -117,8 +132,10 @@ every version in between.
 Before an update, you can export a copy of your D1 database:
 
 ```sh
-pnpm wrangler d1 export slotmirror --remote --output backup.sql
+pnpm wrangler d1 export <database_name> --remote --output backup.sql
 ```
+
+Use the `database_name` from your `wrangler.jsonc`. The default is `slotmirror`.
 
 The file holds sign-in addresses and calendar names. Store it with care. It does not include the
 state of the Durable Objects, where each connected account keeps its tokens and its mappings.

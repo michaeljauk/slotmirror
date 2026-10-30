@@ -46,9 +46,9 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **Privacy.** Never log or store event titles, descriptions, attendees or locations unless a rule
   explicitly asks for that detail level. The audit log stores IDs and times, not content. Never
   log tokens.
-- **Migrations are additive.** Add tables and columns. Do not drop, rename or tighten anything: the
-  previous Worker must run on the new schema, because migrations run before the code and do not run
-  backward. See `website/src/content/docs/docs/updating.md`.
+- **Migrations are additive.** Add tables and columns. Do not drop or rename anything. Do not add
+  `NOT NULL` without a default. The previous Worker must run on the new schema, because migrations
+  run before the code and do not run backward. See `website/src/content/docs/docs/updating.md`.
 - **Recurring events are read per occurrence** (Graph `calendarView`, Google `singleEvents=true`).
   Never sync series masters.
 - **Provider calls go through `client()` in `AccountSync`.** It runs them one at a time, because

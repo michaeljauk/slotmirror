@@ -1,9 +1,20 @@
 name: Pages
 
-# Rollback only. The live website is deployed to Cloudflare by website-deploy.yml. Run this
-# workflow by hand to publish the site on GitHub Pages again.
+# Deploys the website to GitHub Pages until the Cloudflare deploy in website-deploy.yml is on.
+# If CF_DEPLOY_ENABLED is "true", push runs skip the deploy, so the two targets do not compete.
+# Run this workflow by hand to publish the site on GitHub Pages again as a rollback.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "design/**"
+      - "docs/images/**"
+      - "CHANGELOG.md"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -16,6 +27,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || vars.CF_DEPLOY_ENABLED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

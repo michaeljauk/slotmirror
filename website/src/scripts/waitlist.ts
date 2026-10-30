@@ -1,5 +1,6 @@
 // The waitlist form. It posts to the waitlist Worker, never through the statistics proxy.
-// The analytics script sends waitlist_submit on the submit event: no address, no token.
+// The form fires the TRACK_EVENT event when it sends a sign-up. The analytics script turns it
+// into waitlist_submit: no address, no token.
 type Turnstile = {
   render(el: HTMLElement, options: Record<string, unknown>): string;
   reset(id?: string): void;
@@ -9,10 +10,11 @@ type Check = "idle" | "loading" | "ready" | "failed";
 const MESSAGES: Record<string, string> = {
   invalid_email: "That email address does not look valid. Check it and try again.",
   turnstile_failed: "The human check failed. Try again.",
-  rate_limited: "Too many attempts from this network. Try again in an hour.",
+  rate_limited: "Too many attempts from this network. Try again later.",
   mail_unavailable: "We cannot send mail right now. Try again later.",
   storage_unavailable: "The waitlist is not available right now. Try again later.",
 };
+const TRACK_EVENT = "slotmirror:waitlist-submit";
 const FALLBACK = "Something went wrong. Try again later.";
 const NETWORK = "We could not reach the waitlist. Check your connection and try again.";
 const LOADING = "Loading the human check…";
@@ -112,7 +114,8 @@ function setupWaitlist(form: HTMLFormElement) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (busy || done) return;
-    if (check !== "ready" || !token) return;
+    if (check === "failed") return show(CHECK_FAILED, true);
+    if (check !== "ready" || !token) return show(LOADING);
     if (!input.checkValidity()) {
       show(MESSAGES.invalid_email!, true);
       input.focus();
@@ -121,6 +124,7 @@ function setupWaitlist(form: HTMLFormElement) {
     busy = true;
     show("");
     render();
+    document.dispatchEvent(new Event(TRACK_EVENT));
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -144,7 +148,7 @@ function setupWaitlist(form: HTMLFormElement) {
         try {
           code = ((await response.json()) as { code?: string }).code ?? "";
         } catch {}
-        show(MESSAGES[code] ?? FALLBACK, true);
+        show(Object.hasOwn(MESSAGES, code) ? MESSAGES[code]! : FALLBACK, true);
       }
     } catch {
       show(NETWORK, true);

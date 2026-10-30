@@ -20,7 +20,8 @@ const waitlistUrl = (import.meta.env.PUBLIC_WAITLIST_URL as string | undefined)
   ?.trim()
   .replace(/\/$/, "");
 const turnstileKey = (import.meta.env.PUBLIC_TURNSTILE_SITE_KEY as string | undefined)?.trim();
-const waitlist = Boolean(waitlistUrl && turnstileKey);
+// An address without https:// would make a relative endpoint, so it counts as unset.
+const waitlist = Boolean(waitlistUrl?.startsWith("https://") && turnstileKey);
 
 const guides = [
   {
@@ -355,7 +356,6 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
                 id="waitlist-form"
                 method="post"
                 hidden
-                data-track="waitlist_submit"
                 data-endpoint={`${waitlistUrl}/api/signup`}
                 data-site-key={turnstileKey}
               >

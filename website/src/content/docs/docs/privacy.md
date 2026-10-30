@@ -86,6 +86,7 @@ address and a Turnstile site key. Without both, the page shows no form and loads
   stores a hash of the IP address, built with a secret key, and not the address. For IPv6 the hash
   covers the /64 network. The counter rows are deleted by the daily cleanup once they are older
   than 24 hours. Because the cleanup runs once a day, a row stays for up to 48 hours.
+  The daily mail limit uses rows of only a date and a counter. They are deleted after 30 days.
 - **Processors.** Cloudflare (Workers and D1 database; the database is created in the EU
   jurisdiction), Cloudflare Turnstile, and Resend, which sends the mail (sending region: EU).
 - **Logs.** The Worker logs no address and no token. The invocation logs of the Worker are off,
@@ -103,8 +104,8 @@ privacy-friendly statistics. It replaces Cloudflare Web Analytics.
   statistics. A visitor gets no persistent ID. PostHog builds a hash from IP address, user agent
   and a daily salt, and the hash changes every day.
 - The site records page views (`$pageview`) and these events: `deploy_click`, a click on a "Deploy
-  to Cloudflare" button or link, and `waitlist_submit`, a submit of the waitlist form (see
-  below). `waitlist_submit` is sent only on pages that show the form. It carries the page path and
+  to Cloudflare" button or link, and `waitlist_submit`, sent when the waitlist form sends a
+  sign-up (see below). `waitlist_submit` is sent only on pages that show the form. It carries the page path and
   nothing else: no email address, no token and no answer of the server.
 - There is no autocapture, no session replay, no survey and no feature flag. URLs are sent
   without query string and fragment.

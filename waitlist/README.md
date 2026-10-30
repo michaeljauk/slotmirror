@@ -14,6 +14,7 @@ Free plan limits apply: one D1 round trip per step, no loops over rows, no Durab
 3. The link opens a landing page. A GET changes nothing. The button on the page sends a POST.
    This stops mail scanners from confirming an address.
 4. Unconfirmed entries are deleted after 7 days. Confirmed entries stay until `RETENTION_UNTIL`.
+   Keep `RETENTION_UNTIL` set: the privacy page names this deadline.
 
 ## Endpoint
 

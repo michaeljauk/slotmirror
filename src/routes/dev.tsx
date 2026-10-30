@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../app-env";
 import { accountSync } from "../durable";
 import { setGroupMembership } from "../editor";
+import type { Provider } from "../config";
+import { fakePagePath, measureFetchBudget } from "../providers/fake-calendar";
 
 /**
  * Load tests with simulated calendars, on a local server or on a separate test deployment. Only
@@ -25,16 +27,60 @@ function intParam(raw: string | undefined, fallback: number, max: number): numbe
   return Number.isInteger(value) && value >= 1 && value <= max ? value : null;
 }
 
-/** One request to the fetch target, so that a bad target stops the probe before it starts. */
-async function fetchTargetState(url: string | undefined): Promise<"off" | "ok" | "failed"> {
-  if (!url) return "off";
+/** Accounts outside the simulation. Any of them means that real calendars are in reach. */
+async function realAccountCount(env: Env): Promise<number> {
+  const real = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM accounts WHERE id NOT GLOB 'sim-*'",
+  ).first<{ n: number }>();
+  return real?.n ?? 0;
+}
+
+/** The database time as an ISO string: audit rows after it belong to the work that follows. */
+async function databaseTime(env: Env): Promise<string | null> {
+  const clock = await env.DB.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS now").first<{
+    now: string;
+  }>();
+  return clock?.now ?? null;
+}
+
+/** Fetches of the limit check: one more than the Free plan allows per invocation. */
+const LIMIT_CHECK_FETCHES = 51;
+const PROVIDERS: readonly Provider[] = ["microsoft", "google"];
+/** A page below this size is not a calendar page. The route does not parse: that costs its CPU. */
+const MIN_PAGE_BYTES = 100_000;
+/** Calls to another instance in the RPC check. The limit must leave room for them and a fetch. */
+const RPC_CHECK_CALLS = 25;
+
+/** True if the fetch target serves a page in real size per provider. */
+async function servesPages(url: string): Promise<boolean> {
   try {
-    const response = await fetch(url);
-    await response.arrayBuffer();
-    return response.ok ? "ok" : "failed";
+    for (const provider of PROVIDERS) {
+      const response = await fetch(new URL(fakePagePath(provider), url).href);
+      const page = await response.arrayBuffer();
+      if (!response.ok || page.byteLength < MIN_PAGE_BYTES) return false;
+    }
+    return true;
   } catch {
-    return "failed";
+    return false;
   }
+}
+
+/**
+ * What the fetch target tells about the plan of this instance. On the Free plan the runtime refuses
+ * the 51st fetch of an invocation; on the Paid plan it succeeds.
+ */
+async function subrequestState(url: string | undefined) {
+  if (!url) return { simulatedFetch: "off", subrequestLimit: "unknown", fetches: 0 } as const;
+  if (!(await servesPages(url))) {
+    return { simulatedFetch: "failed", subrequestLimit: "unknown", fetches: 0 } as const;
+  }
+  const budget = await measureFetchBudget(url, LIMIT_CHECK_FETCHES - PROVIDERS.length);
+  const fetches = budget.fetches + PROVIDERS.length;
+  if (budget.state === "failed") {
+    return { simulatedFetch: "failed", subrequestLimit: "unknown", fetches } as const;
+  }
+  const subrequestLimit = budget.state === "limited" ? "enforced" : "absent";
+  return { simulatedFetch: "ok", subrequestLimit, fetches } as const;
 }
 
 /**
@@ -43,10 +89,7 @@ async function fetchTargetState(url: string | undefined): Promise<"off" | "ok" |
  * 409. The check covers all users of the instance.
  */
 dev.get("/probe", async (c) => {
-  const real = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM accounts WHERE id NOT GLOB 'sim-*'",
-  ).first<{ n: number }>();
-  const realAccounts = real?.n ?? 0;
+  const realAccounts = await realAccountCount(c.env);
   if (realAccounts > 0) {
     return c.json({ testInstance: false, fakeCalendars: true, realAccounts }, 409);
   }
@@ -54,15 +97,29 @@ dev.get("/probe", async (c) => {
     testInstance: true,
     fakeCalendars: true,
     realAccounts: 0,
-    simulatedFetch: await fetchTargetState(c.env.DEV_FAKE_FETCH_URL),
+    ...(await subrequestState(c.env.DEV_FAKE_FETCH_URL)),
   });
+});
+
+/**
+ * Does Durable Object RPC count as a subrequest? One instance measures its fetches alone, then
+ * after calls to another instance. If RPC counts, the second number drops by the number of calls.
+ * It runs in an instance, because the sync makes these calls there.
+ */
+dev.get("/rpc-budget", async (c) => {
+  if (!c.env.DEV_FAKE_FETCH_URL) return c.json({ error: "DEV_FAKE_FETCH_URL is not set" }, 400);
+  const stub = accountSync(c.env, "sim-rpc-budget");
+  const peer = "sim-rpc-budget-peer";
+  const baseline = await stub.fakeFetchBudget(peer, 0, LIMIT_CHECK_FETCHES);
+  const mixed = await stub.fakeFetchBudget(peer, RPC_CHECK_CALLS, LIMIT_CHECK_FETCHES);
+  return c.json({ rpcCalls: RPC_CHECK_CALLS, baseline, mixed });
 });
 
 /**
  * Create `accounts` simulated accounts with `events` meetings each, all in the block group.
  * `days` sets the window of the user and of the rules between simulated accounts, and the spread
  * of the meetings. `startedAt` is the database time before the seed: audit rows after it belong
- * to this seed. Invalid values change nothing.
+ * to this seed. Invalid values change nothing, and an instance with real accounts answers 409.
  */
 dev.post("/seed", async (c) => {
   const user = c.get("user");
@@ -73,9 +130,9 @@ dev.post("/seed", async (c) => {
   if (accounts === null || events === null || days === null) {
     return c.json({ error: "accounts: 1-20, events: 1-10000, days: 1-365" }, 400);
   }
-  const clock = await c.env.DB.prepare(
-    "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS now",
-  ).first<{ now: string }>();
+  const realAccounts = await realAccountCount(c.env);
+  if (realAccounts > 0) return c.json({ testInstance: false, realAccounts }, 409);
+  const startedAt = await databaseTime(c.env);
   await c.env.DB.prepare(
     "UPDATE users SET sync_settings = json_set(sync_settings, '$.daysAhead', ?) WHERE id = ?",
   )
@@ -120,8 +177,22 @@ dev.post("/seed", async (c) => {
     accounts: results.length,
     eventsPerAccount: events,
     days,
-    startedAt: clock?.now ?? null,
+    startedAt,
   });
+});
+
+/**
+ * A burst of changes: `events` meetings of the first simulated account move. `startedAt` works as
+ * in `/dev/seed`. The next cycle must update their mirrors.
+ */
+dev.post("/burst", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.notFound();
+  const events = intParam(c.req.query("events"), 50, 10_000);
+  if (events === null) return c.json({ error: "events: 1-10000" }, 400);
+  const startedAt = await databaseTime(c.env);
+  await accountSync(c.env, `sim-${user.id}-1`).shiftFake(events);
+  return c.json({ events, startedAt });
 });
 
 /** Start one sync cycle for every simulated account, as the cron does. */
@@ -139,7 +210,9 @@ dev.post("/cycle", async (c) => {
 
 /**
  * What the simulated accounts did since `since` (ISO time): provider calls, blocks, sync runs, and
- * the last finished run of each rule. A step that a Worker limit stopped leaves no run here.
+ * the last finished run of each rule. A step that a Worker limit stopped leaves no run here, so
+ * compare `startedSteps` with the runs. `count=1` also counts the stored blocks per calendar; that
+ * bills every row, so call it at the end of a stage, not in a poll.
  */
 dev.get("/stats", async (c) => {
   const user = c.get("user");
@@ -153,14 +226,19 @@ dev.get("/stats", async (c) => {
   let blocks = 0;
   let rowsWritten = 0;
   let rowsRead = 0;
+  let startedSteps = 0;
+  const countBlocks = c.req.query("count") === "1";
+  const storedBlocks: number[] = [];
   for (const row of results) {
-    const stats = await accountSync(c.env, row.id).fakeStats();
+    const stats = await accountSync(c.env, row.id).fakeStats(countBlocks);
     for (const [operation, count] of Object.entries(stats.calls)) {
       calls[operation] = (calls[operation] ?? 0) + count;
     }
     blocks += stats.blocks;
     rowsWritten += stats.rowsWritten;
     rowsRead += stats.rowsRead;
+    startedSteps += stats.startedSteps;
+    storedBlocks.push(...(stats.storedBlocks ?? []));
   }
   const since = c.req.query("since") ?? "1970-01-01";
   const runs = await c.env.DB.prepare(
@@ -213,6 +291,8 @@ dev.get("/stats", async (c) => {
     rules: rules?.n ?? 0,
     ruleDays: { min: rules?.minDays ?? null, max: rules?.maxDays ?? null },
     calls,
+    startedSteps,
+    storedBlocks: countBlocks ? storedBlocks : null,
     blocks,
     rowsWritten,
     rowsRead,

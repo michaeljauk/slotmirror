@@ -7,6 +7,7 @@ import {
   formatPlan,
   formatReport,
   isSettled,
+  judgeRpc,
   judgeWindow,
   limitsStatement,
   limitsWarning,
@@ -24,6 +25,8 @@ import {
 } from "../scripts/capacity-probe-lib";
 
 const stats = (over: Partial<Stats> = {}): Stats => ({
+  startedSteps: (over.runs ?? 6) + (over.failedRuns ?? 0),
+  storedBlocks: null,
   accounts: 3,
   rules: 6,
   ruleDays: { min: 90, max: 90 },
@@ -97,35 +100,67 @@ describe("parseArgs", () => {
       ok: true,
       options: { dailyRows: 100_000, passedBefore: null },
     });
-    expect(parseArgs([...base, "--daily-rows", "0", "--passed-before", "2500"], env)).toMatchObject(
-      { ok: true, options: { dailyRows: 0, passedBefore: 2500 } },
-    );
+    expect(
+      parseArgs([...base, "--daily-rows", "0", "--stages", "5000", "--passed-before", "2500"], env),
+    ).toMatchObject({ ok: true, options: { dailyRows: 0, passedBefore: 2500 } });
     expect(parseArgs([...base, "--daily-rows", "-1"], env)).toMatchObject({ ok: false });
     expect(
       parseArgs(["--target", "https://a.example", "--cookie", "c", "--passed-before", "2500"], env),
     ).toMatchObject({ ok: false });
   });
+  it("takes only the stage below the first stage as --passed-before", () => {
+    const base = ["--target", "https://a.example", "--cookie", "c", "--window", "90"];
+    const passed = (stages: string, value: string) =>
+      parseArgs([...base, "--stages", stages, "--passed-before", value], env);
+    expect(passed("10000", "5000")).toMatchObject({ ok: true, options: { passedBefore: 5000 } });
+    expect(passed("10000", "2500")).toMatchObject({ ok: false, message: /5000/ });
+    expect(passed("5000", "5000")).toMatchObject({ ok: false });
+    expect(passed("5000", "7000")).toMatchObject({ ok: false });
+    expect(passed("1000,2500", "500")).toMatchObject({ ok: false, message: /there is none/ });
+  });
   it("rejects a target that is not http(s)", () => {
     expect(normalizeTarget("ftp://x.example")).toBeNull();
     expect(normalizeTarget("not a url")).toBeNull();
   });
+  it("takes http only for a local target, because the cookie travels with every request", () => {
+    expect(parseArgs(["--target", "http://probe.example", "--cookie", "c"], env)).toMatchObject({
+      ok: false,
+      message: /https/,
+    });
+    expect(parseArgs(["--target", "http://127.0.0.1:8787", "--cookie", "c"], env)).toMatchObject({
+      ok: true,
+    });
+  });
 });
 
 describe("checkTestInstance", () => {
-  const marker = { testInstance: true, fakeCalendars: true, simulatedFetch: "ok" };
+  const remote = "https://probe.example";
+  const marker = {
+    testInstance: true,
+    fakeCalendars: true,
+    simulatedFetch: "ok",
+    subrequestLimit: "enforced",
+  };
   it("accepts only the test marker", () => {
-    expect(checkTestInstance(200, marker)).toBeNull();
-    expect(checkTestInstance(404, "Not Found")).toMatch(/not a test instance/);
-    expect(checkTestInstance(200, { ...marker, testInstance: false })).not.toBeNull();
-    expect(checkTestInstance(200, null)).not.toBeNull();
+    expect(checkTestInstance(200, marker, remote)).toBeNull();
+    expect(checkTestInstance(404, "Not Found", remote)).toMatch(/not a test instance/);
+    expect(checkTestInstance(200, { ...marker, testInstance: false }, remote)).not.toBeNull();
+    expect(checkTestInstance(200, null, remote)).not.toBeNull();
   });
   it("refuses an instance with real accounts", () => {
-    expect(checkTestInstance(409, { realAccounts: 2 })).toMatch(
+    expect(checkTestInstance(409, { realAccounts: 2 }, remote)).toMatch(
       /2 accounts that are not simulated/,
     );
   });
   it("refuses an instance that cannot reach its fetch target", () => {
-    expect(checkTestInstance(200, { ...marker, simulatedFetch: "failed" })).toMatch(/FETCH_URL/);
+    expect(checkTestInstance(200, { ...marker, simulatedFetch: "failed" }, remote)).toMatch(
+      /FETCH_URL/,
+    );
+  });
+  it("refuses a remote instance whose 51st fetch succeeds", () => {
+    const paid = { ...marker, subrequestLimit: "absent" };
+    expect(checkTestInstance(200, paid, remote)).toMatch(/not on the Workers Free plan/);
+    expect(checkTestInstance(200, paid, "http://localhost:8787")).toBeNull();
   });
 });
 
@@ -134,6 +169,21 @@ describe("limitsWarning", () => {
     expect(limitsWarning("http://localhost:8787", { simulatedFetch: "ok" })).toMatch(/Local run/);
     expect(limitsWarning("https://a.example", { simulatedFetch: "off" })).toMatch(/subrequests/);
     expect(limitsWarning("https://a.example", { simulatedFetch: "ok" })).toBeNull();
+  });
+});
+
+describe("judgeRpc", () => {
+  const limited = (fetches: number) => ({ state: "limited", fetches });
+  it("reads the lost fetches", () => {
+    const check = (baseline: number, mixed: number) =>
+      judgeRpc({ rpcCalls: 25, baseline: limited(50), mixed: limited(mixed) }).result;
+    expect(check(50, 25)).toBe("counted");
+    expect(check(50, 50)).toBe("not counted");
+    expect(check(50, 40)).toBe("unclear");
+  });
+  it("draws no conclusion without a limit", () => {
+    const open = { state: "unlimited", fetches: 51 };
+    expect(judgeRpc({ rpcCalls: 25, baseline: open, mixed: open }).result).toBe("unclear");
   });
 });
 
@@ -157,6 +207,9 @@ describe("planDays", () => {
   it("counts the mirrors, not the native events, as the main cost", () => {
     expect(stageCost(10_000, 3).rowsWritten).toBeGreaterThan(60_000);
     expect(stageCost(10_000, 3).rowsWritten).toBeLessThan(100_000);
+  });
+  it("adds the change burst to the cost", () => {
+    expect(stageCost(10_000, 3).rowsWritten).toBeGreaterThan(70_660);
   });
 });
 
@@ -217,6 +270,25 @@ describe("summarizeStage and stageFailures", () => {
   it("fails on a wrong number of blocks", () => {
     expect(stageFailures(stage(1000, { blocks: 5999 }))).toEqual(["5999 blocks instead of 6000"]);
   });
+  it("fails when a started step has no finished run, even if the retry ended clean", () => {
+    expect(stageFailures(stage(1000, { startedSteps: 7 }))).toEqual([
+      "7 alarm steps started, 6 runs finished",
+    ]);
+  });
+  it("counts a failed run as finished", () => {
+    const result = stage(1000, { runs: 6, failedRuns: 1, startedSteps: 7 });
+    expect(stageFailures(result)).toEqual(["1 sync runs failed"]);
+  });
+  it("compares the stored rows of each calendar", () => {
+    const good = stage(1000, { storedBlocks: [2000, 2000, 2000] });
+    expect(stageFailures(good)).toEqual([]);
+    expect(stageFailures(stage(1000, { storedBlocks: [2000, 1999, 2001] }))).toEqual([
+      "the calendars store 2000, 1999, 2001 blocks, not 2000 each",
+    ]);
+    expect(stageFailures(stage(1000, { storedBlocks: [] }))).toEqual([
+      "the calendars store 0 blocks, not 2000 each",
+    ]);
+  });
 });
 
 describe("profileMismatch", () => {
@@ -276,6 +348,27 @@ describe("formatReport", () => {
     const verdict = judgeWindow(90, 5, [stage(1000, { accounts: 5 })]);
     expect(limitsStatement(verdict)).toContain("5 accounts");
   });
+  it("names the simulation and the gaps in the statement", () => {
+    const statement = limitsStatement(judgeWindow(90, 3, [stage(1000)]));
+    expect(statement).toContain("simulated calendars");
+    expect(statement).toContain("CPU time per invocation");
+    expect(statement).toContain("D1 rows per day");
+  });
+  it("gives no statement if a warning stands", () => {
+    const verdict = judgeWindow(90, 3, [stage(1000)]);
+    const statement = limitsStatement(verdict, ["Local run."]);
+    expect(statement).toBe("No statement for limits.md: Local run.");
+    expect(formatReport([verdict], [], { warnings: ["Local run."] })).not.toContain("Passed up to");
+  });
+  it("marks a value from --passed-before", () => {
+    const verdict = judgeWindow(90, 3, [stage(5000, { failedRuns: 1 })], { passedBefore: 2500 });
+    expect(limitsStatement(verdict)).toContain(
+      "Passed up to 2500 events per source calendar, from an earlier run",
+    );
+    expect(formatReport([verdict])).toContain("Stage 2500 comes from --passed-before");
+    const measured = judgeWindow(90, 3, [stage(5000)], { passedBefore: 2500 });
+    expect(limitsStatement(measured)).not.toContain("earlier run");
+  });
 });
 
 const options = (over: Partial<ProbeOptions> = {}): ProbeOptions => ({
@@ -297,6 +390,8 @@ const options = (over: Partial<ProbeOptions> = {}): ProbeOptions => ({
  */
 function instance(handlers: {
   probe?: () => { status: number; body: unknown };
+  rpc?: () => { status: number; body: unknown };
+  burst?: () => { status: number; body: unknown } | undefined;
   seed?: (events: number) => { status: number; body: unknown } | undefined;
   cycle?: () => { status: number; body: unknown } | undefined;
   stats?: (events: number, days: number) => Partial<Stats> | { status: number };
@@ -304,6 +399,7 @@ function instance(handlers: {
   let clock = 0;
   let events = 0;
   let days = 0;
+  let cycles = 0;
   const calls: string[] = [];
   const log: string[] = [];
   const io: ProbeIo = {
@@ -314,9 +410,29 @@ function instance(handlers: {
         return (
           handlers.probe?.() ?? {
             status: 200,
-            body: { testInstance: true, fakeCalendars: true, simulatedFetch: "ok" },
+            body: {
+              testInstance: true,
+              fakeCalendars: true,
+              simulatedFetch: "ok",
+              subrequestLimit: "enforced",
+            },
           }
         );
+      }
+      if (path === "/dev/rpc-budget") {
+        return (
+          handlers.rpc?.() ?? {
+            status: 200,
+            body: {
+              rpcCalls: 25,
+              baseline: { state: "limited", fetches: 50 },
+              mixed: { state: "limited", fetches: 50 },
+            },
+          }
+        );
+      }
+      if (path.startsWith("/dev/burst")) {
+        return handlers.burst?.() ?? { status: 200, body: { startedAt: "2026-10-30T10:05" } };
       }
       if (path.startsWith("/dev/seed")) {
         const query = new URLSearchParams(path.split("?")[1]);
@@ -325,6 +441,7 @@ function instance(handlers: {
         return handlers.seed?.(events) ?? { status: 200, body: { startedAt: "2026-10-30T10:00" } };
       }
       if (path === "/dev/cycle") {
+        cycles += 1;
         return handlers.cycle?.() ?? { status: 200, body: { started: 3 } };
       }
       const over = handlers.stats?.(events, days) ?? {};
@@ -333,6 +450,7 @@ function instance(handlers: {
         status: 200,
         body: stats({
           ruleDays: { min: days, max: days },
+          calls: { sourceEvents: 12 + cycles, applyBatch: 30 },
           blocks: expectedBlocks(events, 3),
           ...over,
         }),
@@ -376,6 +494,112 @@ describe("runProbe", () => {
     const outcome = await runProbe(options(), io);
     expect(outcome.exitCode).toBe(EXIT.stageFailed);
     expect(outcome.verdicts[0]).toMatchObject({ lastPassed: 1000, failedAt: { events: 2500 } });
+  });
+
+  it("fails a stage in which a stopped alarm came back and ended clean", async () => {
+    const { io } = instance({
+      stats: (events) => (events === 2500 ? { startedSteps: 7 } : {}),
+    });
+    const outcome = await runProbe(options(), io);
+    expect(outcome.exitCode).toBe(EXIT.stageFailed);
+    expect(outcome.verdicts[0]?.failedAt?.reasons).toEqual([
+      "7 alarm steps started, 6 runs finished",
+    ]);
+  });
+
+  it("runs the change burst after the first sync and reports it", async () => {
+    const { io, calls } = instance({});
+    const outcome = await runProbe(options({ stages: [1000] }), io);
+    expect(outcome.exitCode).toBe(EXIT.passed);
+    const burst = calls.indexOf("POST /dev/burst");
+    expect(burst).toBeGreaterThan(calls.indexOf("POST /dev/cycle"));
+    expect(calls.lastIndexOf("POST /dev/cycle")).toBeGreaterThan(burst);
+    expect(outcome.verdicts[0]?.results[0]?.burst).toMatchObject({
+      events: 50,
+      expectedWrites: 100,
+      writes: 100,
+      settled: true,
+    });
+    expect(outcome.report).toContain("50 events, 100 of 100 writes");
+  });
+
+  it("fails a stage if the sync does not react to the burst", async () => {
+    let burst = false;
+    const { io } = instance({
+      burst: () => {
+        burst = true;
+        return undefined;
+      },
+      stats: () => (burst ? { calls: { sourceEvents: 1 } } : {}),
+    });
+    const outcome = await runProbe(options({ stages: [1000], timeoutMs: 60_000 }), io);
+    expect(outcome.exitCode).toBe(EXIT.stageFailed);
+    expect(outcome.verdicts[0]?.failedAt?.reasons).toContain(
+      "the sync did not settle after the change burst",
+    );
+  });
+
+  it("fails a stage whose burst wrote the wrong number of blocks", async () => {
+    let burst = false;
+    const { io } = instance({
+      burst: () => {
+        burst = true;
+        return undefined;
+      },
+      stats: () => (burst ? { writes: 99 } : {}),
+    });
+    const outcome = await runProbe(options({ stages: [1000] }), io);
+    expect(outcome.verdicts[0]?.failedAt?.reasons).toEqual([
+      "99 writes after the change burst instead of 100",
+    ]);
+  });
+
+  it("asks for the block count once, at the end of a stage", async () => {
+    const paths: string[] = [];
+    const { io } = instance({});
+    const logged: ProbeIo = {
+      ...io,
+      call: (method, path) => {
+        paths.push(path);
+        return io.call(method, path);
+      },
+    };
+    await runProbe(options({ stages: [1000] }), logged);
+    const counts = paths.filter((path) => path.includes("count=1"));
+    expect(counts).toHaveLength(1);
+    expect(paths.at(-1)).toContain("count=1");
+  });
+
+  it("reports the result of the RPC check, and goes on without it", async () => {
+    const { io } = instance({
+      rpc: () => ({
+        status: 200,
+        body: {
+          rpcCalls: 25,
+          baseline: { state: "limited", fetches: 50 },
+          mixed: { state: "limited", fetches: 25 },
+        },
+      }),
+    });
+    const outcome = await runProbe(options({ stages: [1000] }), io);
+    expect(outcome.rpc?.result).toBe("counted");
+    expect(outcome.report).toContain("RPC as a subrequest: counted");
+
+    const broken = instance({ rpc: () => ({ status: 500, body: "" }) });
+    const without = await runProbe(options({ stages: [1000] }), broken.io);
+    expect(without.exitCode).toBe(EXIT.passed);
+    expect(without.rpc).toBeNull();
+    expect(without.report).toContain("The RPC check did not run");
+  });
+
+  it("gives no statement if a Durable Object shows no limit", async () => {
+    const open = { state: "unlimited", fetches: 51 };
+    const { io } = instance({
+      rpc: () => ({ status: 200, body: { rpcCalls: 25, baseline: open, mixed: open } }),
+    });
+    const outcome = await runProbe(options({ stages: [1000] }), io);
+    expect(outcome.warnings).toHaveLength(1);
+    expect(outcome.report).not.toContain("Passed up to");
   });
 
   it("reports the stage before a 5xx on the seed and exits as broken", async () => {
@@ -445,6 +669,45 @@ describe("runProbe", () => {
     expect(real.log.join()).toContain("not simulated");
   });
 
+  it("refuses a remote target on the Paid plan and seeds nothing", async () => {
+    const { io, calls, log } = instance({
+      probe: () => ({
+        status: 200,
+        body: {
+          testInstance: true,
+          fakeCalendars: true,
+          simulatedFetch: "ok",
+          subrequestLimit: "absent",
+        },
+      }),
+    });
+    expect((await runProbe(options(), io)).exitCode).toBe(EXIT.refused);
+    expect(calls).toEqual(["GET /dev/probe"]);
+    expect(log.join()).toContain("Free plan");
+  });
+
+  it("runs a local target without a limit, and gives no statement", async () => {
+    const { io } = instance({
+      probe: () => ({
+        status: 200,
+        body: {
+          testInstance: true,
+          fakeCalendars: true,
+          simulatedFetch: "ok",
+          subrequestLimit: "absent",
+        },
+      }),
+    });
+    const outcome = await runProbe(
+      options({ target: "http://localhost:8787", stages: [1000] }),
+      io,
+    );
+    expect(outcome.exitCode).toBe(EXIT.passed);
+    expect(outcome.warnings[0]).toMatch(/Local run/);
+    expect(outcome.report).not.toContain("Passed up to");
+    expect(outcome.report).toContain("No statement for limits.md");
+  });
+
   it("reports an unreachable target as a broken run", async () => {
     const { io } = instance({
       probe: () => {
@@ -478,6 +741,7 @@ describe("runProbe", () => {
     const outcome = await runProbe(options({ stages: [5000], passedBefore: 2500 }), io);
     expect(outcome.exitCode).toBe(EXIT.stageFailed);
     expect(outcome.report).toContain("Passed up to 2500");
+    expect(outcome.report).toContain("from an earlier run");
   });
 
   it("marks a run without a fetch target as no capacity statement", async () => {
@@ -486,5 +750,7 @@ describe("runProbe", () => {
     });
     const outcome = await runProbe(options({ stages: [1000] }), io);
     expect(outcome.report).toContain("the limit of 50 cannot trip");
+    expect(outcome.warnings[0]).toContain("the limit of 50 cannot trip");
+    expect(outcome.report).not.toContain("Passed up to");
   });
 });

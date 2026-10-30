@@ -1,4 +1,6 @@
 import type { Provider } from "../config";
+import { parseGoogleEvent } from "../sync/google-events";
+import { parseGraphEvent } from "../sync/graph-events";
 import type { ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
 import type { BatchResult } from "../sync/throttle";
 import type {
@@ -9,12 +11,63 @@ import type {
   TimeWindow,
   Watch,
 } from "./calendar-client";
+import { GRAPH_BATCH_LIMIT } from "./graph-calendar";
 
 /** Events per page: Graph `$top`, Google `maxResults`. See the two real clients. */
 const PAGE_SIZE: Record<Provider, number> = { microsoft: 500, google: 2500 };
 
+/** Writes per batch: Graph `$batch`, Google batch. See the two real clients. */
+const BATCH_LIMIT: Record<Provider, number> = { microsoft: GRAPH_BATCH_LIMIT, google: 50 };
+
 const DAY_MS = 86_400_000;
 const HALF_HOUR_MS = 1_800_000;
+const QUARTER_HOUR_MS = 900_000;
+
+/** The operation that counts started alarm steps. It is no provider call. */
+const STEP_OPERATION = "alarmStep";
+
+/** A page in real size lies at this path of DEV_FAKE_FETCH_URL. See scripts/probe-sink/. */
+export function fakePagePath(provider: Provider): string {
+  return `pages/${provider}.json`;
+}
+
+/**
+ * Parse a page as the real client does and return its number of events. The events stay unused:
+ * the page exists for its CPU cost. The sync reads the simulated events.
+ */
+export function parseFakePage(provider: Provider, body: unknown): number {
+  const page = (body ?? {}) as { value?: unknown; items?: unknown };
+  const items = provider === "microsoft" ? page.value : page.items;
+  if (!Array.isArray(items)) throw new Error("The fetch target served no calendar page");
+  const parse = provider === "microsoft" ? parseGraphEvent : parseGoogleEvent;
+  for (const item of items as unknown[]) parse(item);
+  return items.length;
+}
+
+/** How many fetches of one invocation worked, and how the attempts ended. */
+export interface FetchBudget {
+  /** `limited`: the runtime refused a fetch. `unlimited`: every attempt worked. */
+  state: "limited" | "unlimited" | "failed";
+  fetches: number;
+}
+
+/**
+ * Fetch `url` until the runtime refuses or `attempts` are done. Any other error is `failed`, so
+ * that a broken target never looks like a limit.
+ */
+export async function measureFetchBudget(url: string, attempts: number): Promise<FetchBudget> {
+  for (let fetches = 0; fetches < attempts; fetches++) {
+    try {
+      const response = await fetch(url);
+      await response.arrayBuffer();
+      if (!response.ok) return { state: "failed", fetches };
+    } catch (error) {
+      const refused = error instanceof Error && /too many subrequests/i.test(error.message);
+      return { state: refused ? "limited" : "failed", fetches };
+    }
+  }
+  return { state: "unlimited", fetches: attempts };
+}
 
 /** The pages a read of `items` events costs at this provider. An empty read costs one page. */
 export function fakePages(items: number, provider: Provider): number {
@@ -31,10 +84,11 @@ export type FakeEnv = Pick<Env, "DEV_FAKE_LATENCY_MS" | "DEV_FAKE_FETCH_URL">;
  *
  * Reads cost pages as at the real provider, and a target read scans the native events too. Every
  * page and every batch counts as one call. With DEV_FAKE_FETCH_URL, a call is also one real
- * `fetch`, so that the Workers subrequest limit applies as it does with a real provider.
+ * `fetch`, so that the Workers subrequest limit applies as it does with a real provider. A read
+ * also fetches and parses a page in real size, so that its CPU cost is real too.
  */
 export class FakeCalendar implements CalendarClient {
-  readonly batchLimit = 20;
+  readonly batchLimit: number;
 
   private readonly latencyMs: number;
   private readonly fetchUrl: string | null;
@@ -45,6 +99,7 @@ export class FakeCalendar implements CalendarClient {
     env: FakeEnv = {},
   ) {
     ensureTables(sql);
+    this.batchLimit = BATCH_LIMIT[provider];
     this.latencyMs = Number(env.DEV_FAKE_LATENCY_MS ?? 0);
     this.fetchUrl = env.DEV_FAKE_FETCH_URL || null;
   }
@@ -221,7 +276,8 @@ export class FakeCalendar implements CalendarClient {
   private async readPages(operation: string, items: number, rowsRead: number): Promise<void> {
     const pages = fakePages(items, this.provider);
     for (let page = 0; page < pages; page++) {
-      await this.call(operation, page === 0 ? rowsRead : 0);
+      await this.network(true);
+      this.record(operation, { rowsRead: page === 0 ? rowsRead : 0 });
     }
   }
 
@@ -231,12 +287,17 @@ export class FakeCalendar implements CalendarClient {
   }
 
   /** What one provider call costs the Worker: a real subrequest if set up, and the wait. */
-  private async network(): Promise<void> {
+  private async network(page = false): Promise<void> {
     if (this.fetchUrl) {
       // An error stays an error: the subrequest limit of the Workers runtime surfaces here.
-      const response = await fetch(this.fetchUrl);
-      await response.arrayBuffer();
-      if (!response.ok) throw new Error(`The simulated provider call got ${response.status}`);
+      const url = page ? new URL(fakePagePath(this.provider), this.fetchUrl).href : this.fetchUrl;
+      const response = await fetch(url);
+      if (!response.ok) {
+        await response.arrayBuffer();
+        throw new Error(`The simulated provider call got ${response.status}`);
+      }
+      if (page) parseFakePage(this.provider, await response.json());
+      else await response.arrayBuffer();
     }
     if (this.latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, this.latencyMs));
   }
@@ -277,6 +338,8 @@ interface StoredSeed extends Record<string, SqlStorageValue> {
   count: number;
   start_ms: number;
   span_ms: number;
+  /** The first events of the seed that a burst of changes moved. */
+  shifted: number;
 }
 
 /**
@@ -291,7 +354,8 @@ function fakeEvents(seed: StoredSeed, window: TimeWindow): FakeEvent[] {
   const events: FakeEvent[] = [];
   for (let i = 0; i < seed.count; i++) {
     const start = seed.start_ms + Math.floor((i * seed.accounts + seed.account - 1) * step);
-    const end = start + (1 + (i % 4)) * HALF_HOUR_MS;
+    const shift = i < seed.shifted ? QUARTER_HOUR_MS : 0;
+    const end = start + (1 + (i % 4)) * HALF_HOUR_MS + shift;
     if (end <= from || start >= to) continue;
     events.push({
       id: `${seed.account}-${i}`,
@@ -307,7 +371,8 @@ function fakeEvents(seed: StoredSeed, window: TimeWindow): FakeEvent[] {
 function ensureTables(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS fake_seed (
     id INTEGER PRIMARY KEY CHECK (id = 1), account INTEGER NOT NULL, accounts INTEGER NOT NULL,
-    count INTEGER NOT NULL, start_ms INTEGER NOT NULL, span_ms INTEGER NOT NULL)`);
+    count INTEGER NOT NULL, start_ms INTEGER NOT NULL, span_ms INTEGER NOT NULL,
+    shifted INTEGER NOT NULL DEFAULT 0)`);
   // WITHOUT ROWID: a second index on the key would add a billed row to every block.
   sql.exec(`CREATE TABLE IF NOT EXISTS fake_blocks (
     id TEXT PRIMARY KEY, calendar_id TEXT NOT NULL, rule_tag TEXT NOT NULL, marker TEXT NOT NULL,
@@ -349,10 +414,30 @@ export function seedFakeEvents(sql: SqlStorage, seed: FakeSeed, count: number): 
   );
 }
 
+/** Move the end of the first `count` meetings, so that their mirrors need an update. */
+export function shiftFakeEvents(sql: SqlStorage, count: number): void {
+  ensureTables(sql);
+  sql.exec(`UPDATE fake_seed SET shifted = ?`, count);
+}
+
+/** Count one alarm step that starts a rule. */
+export function recordFakeStep(sql: SqlStorage): void {
+  ensureTables(sql);
+  sql.exec(
+    `INSERT INTO fake_calls (operation, count) VALUES (?, 1)
+     ON CONFLICT (operation) DO UPDATE SET count = count + 1`,
+    STEP_OPERATION,
+  );
+}
+
 /** What the simulation counted since the last seed. */
 export interface FakeStats {
   /** Calls per operation. A read counts one call per page. */
   calls: Record<string, number>;
+  /** Alarm steps that started a rule. Each must end in one audit row. */
+  startedSteps: number;
+  /** Stored rows per calendar; null unless the caller asked, because the count bills every row. */
+  storedBlocks: number[] | null;
   /** Blocks in the account's calendars. */
   blocks: number;
   /** Rows the simulation wrote and read in its own tables. A real provider costs none of them. */
@@ -360,9 +445,16 @@ export interface FakeStats {
   rowsRead: number;
 }
 
-export function readFakeStats(sql: SqlStorage): FakeStats {
+export function readFakeStats(sql: SqlStorage, countBlocks = false): FakeStats {
   ensureTables(sql);
-  const stats: FakeStats = { calls: {}, blocks: 0, rowsWritten: 0, rowsRead: 0 };
+  const stats: FakeStats = {
+    calls: {},
+    startedSteps: 0,
+    storedBlocks: null,
+    blocks: 0,
+    rowsWritten: 0,
+    rowsRead: 0,
+  };
   const rows = sql.exec<{
     operation: string;
     count: number;
@@ -371,11 +463,19 @@ export function readFakeStats(sql: SqlStorage): FakeStats {
     blocks: number;
   }>(`SELECT operation, count, rows_written, rows_read, blocks FROM fake_calls`);
   for (const row of rows) {
-    stats.calls[row.operation] = row.count;
+    if (row.operation === STEP_OPERATION) stats.startedSteps = row.count;
+    else stats.calls[row.operation] = row.count;
     stats.blocks += row.blocks;
     // The counter row of each call is one written row too.
     stats.rowsWritten += row.rows_written + row.count;
     stats.rowsRead += row.rows_read;
+  }
+  if (countBlocks) {
+    const counts = sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM fake_blocks GROUP BY calendar_id`,
+    );
+    stats.storedBlocks = counts.toArray().map((row) => row.n);
+    stats.rowsRead += counts.rowsRead;
   }
   return stats;
 }

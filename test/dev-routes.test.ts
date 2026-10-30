@@ -1,11 +1,15 @@
 import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PAGE_ITEMS, providerPage } from "../scripts/probe-sink/pages";
+import { calendarClient } from "../src/providers/calendar-client";
 import {
   FakeCalendar,
   fakePages,
+  parseFakePage,
   readFakeStats,
   seedFakeEvents,
+  shiftFakeEvents,
 } from "../src/providers/fake-calendar";
 import app from "../src/index";
 import { BASE, signIn } from "./helpers";
@@ -32,8 +36,32 @@ const request = (method: string, path: string, cookie: string) =>
 
 const json = async <T>(response: Response) => (await response.json()) as T;
 
-function stubFetch(answer = () => new Response("ok")) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(answer()));
+const pages = { microsoft: providerPage("microsoft"), google: providerPage("google") };
+
+/** The fetch target: a page in real size below `pages/`, a small file elsewhere. */
+function sink(url: string): Response {
+  if (url.endsWith("pages/microsoft.json")) return new Response(pages.microsoft);
+  if (url.endsWith("pages/google.json")) return new Response(pages.google);
+  return new Response("ok");
+}
+
+function stubFetch(answer: (url: string) => Response = sink) {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation((input) => Promise.resolve(answer(String(input as string))));
+}
+
+/** As the runtime on the Free plan: it refuses each fetch after the first `limit`. */
+function stubLimit(limit: number) {
+  let count = 0;
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    count += 1;
+    if (count > limit) {
+      count = 0;
+      return Promise.reject(new Error("Too many subrequests."));
+    }
+    return Promise.resolve(sink(String(input as string)));
+  });
 }
 
 /** Run the alarms of the accounts until none is left. */
@@ -56,6 +84,10 @@ interface Stats {
   blocks: number;
   rowsWritten: number;
   runs: number;
+  writes: number | null;
+  failedRuns: number;
+  startedSteps: number;
+  storedBlocks: number[] | null;
   lastRuns: { ruleId: string; failed: number; remaining: number }[];
 }
 
@@ -77,7 +109,9 @@ describe("/dev access", () => {
     const off = { ...env, DEV_FAKE_CALENDARS: undefined };
     for (const [method, path] of [
       ["GET", "/dev/probe"],
+      ["GET", "/dev/rpc-budget"],
       ["POST", "/dev/seed"],
+      ["POST", "/dev/burst"],
       ["POST", "/dev/cycle"],
       ["GET", "/dev/stats"],
     ] as const) {
@@ -122,7 +156,88 @@ describe("GET /dev/probe", () => {
     const { cookie } = await admin();
     expect(await (await request("GET", "/dev/probe", cookie)).json()).toMatchObject({
       simulatedFetch: "failed",
+      subrequestLimit: "unknown",
     });
+  });
+
+  it("reports a fetch target without pages in real size", async () => {
+    stubFetch(() => new Response("ok"));
+    const { cookie } = await admin();
+    expect(await (await request("GET", "/dev/probe", cookie)).json()).toMatchObject({
+      simulatedFetch: "failed",
+    });
+  });
+
+  it("reports the limit if the runtime refuses the 51st fetch", async () => {
+    const fetchSpy = stubLimit(50);
+    const { cookie } = await admin();
+    expect(await (await request("GET", "/dev/probe", cookie)).json()).toMatchObject({
+      simulatedFetch: "ok",
+      subrequestLimit: "enforced",
+      fetches: 50,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(51);
+  });
+
+  it("reports no limit if the 51st fetch succeeds", async () => {
+    const fetchSpy = stubFetch();
+    const { cookie } = await admin();
+    expect(await (await request("GET", "/dev/probe", cookie)).json()).toMatchObject({
+      simulatedFetch: "ok",
+      subrequestLimit: "absent",
+      fetches: 51,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(51);
+  });
+
+  it("does not take another error for the limit", async () => {
+    let count = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      ++count > 10
+        ? Promise.reject(new Error("network connection lost"))
+        : Promise.resolve(sink(String(input as string))),
+    );
+    const { cookie } = await admin();
+    expect(await (await request("GET", "/dev/probe", cookie)).json()).toMatchObject({
+      simulatedFetch: "failed",
+      subrequestLimit: "unknown",
+    });
+  });
+
+  it("makes no fetch without a target", async () => {
+    const fetchSpy = stubFetch();
+    const { cookie } = await admin();
+    const response = await app.fetch(new Request(`${BASE}/dev/probe`, { headers: { cookie } }), {
+      ...env,
+      DEV_FAKE_FETCH_URL: undefined,
+    });
+    expect(await response.json()).toMatchObject({
+      simulatedFetch: "off",
+      subrequestLimit: "unknown",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /dev/rpc-budget", () => {
+  it("measures the fetches of an instance with and without RPC", async () => {
+    stubLimit(50);
+    const { cookie } = await admin();
+    const response = await request("GET", "/dev/rpc-budget", cookie);
+    expect(await response.json()).toEqual({
+      rpcCalls: 25,
+      baseline: { state: "limited", fetches: 50 },
+      mixed: { state: "limited", fetches: 50 },
+    });
+  });
+
+  it("answers 400 without a fetch target", async () => {
+    const { cookie } = await admin();
+    const response = await app.fetch(
+      new Request(`${BASE}/dev/rpc-budget`, { headers: { cookie } }),
+      { ...env, DEV_FAKE_FETCH_URL: undefined },
+    );
+    expect(response.status).toBe(400);
   });
 });
 
@@ -166,31 +281,25 @@ describe("POST /dev/seed", () => {
     expect(after).toMatchObject({ rules: 6, ruleDays: { min: 365, max: 365 } });
   });
 
-  it("leaves the window of other rules alone", async () => {
+  it("refuses with 409 and changes nothing as soon as an account is not simulated", async () => {
     const { user, cookie } = await admin();
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO accounts (id, user_id, provider, email) VALUES ('other-a', ?, 'microsoft', 'c@d.example')",
-      ).bind(user.id),
-      env.DB.prepare(
-        `INSERT INTO calendars (id, account_id, remote_id, name)
-         VALUES ('other-cal', 'other-a', 'x', 'Work'), ('other-dst', 'other-a', 'y', 'Test')`,
-      ),
-      env.DB.prepare(
-        `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options)
-         VALUES ('other-rule', ?, 'other-cal', 'other-dst', '{"daysAhead":30}')`,
-      ).bind(user.id),
-    ]);
-    await request("POST", "/dev/seed?accounts=2&events=1&days=365", cookie);
-    const rule = await env.DB.prepare("SELECT options FROM rules WHERE id = 'other-rule'").first<{
-      options: string;
-    }>();
-    expect(JSON.parse(rule?.options ?? "{}")).toEqual({ daysAhead: 30 });
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM rules WHERE id = 'other-rule'"),
-      env.DB.prepare("DELETE FROM calendars WHERE account_id = 'other-a'"),
-      env.DB.prepare("DELETE FROM accounts WHERE id = 'other-a'"),
-    ]);
+    await env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email) VALUES ('real-2', ?, 'microsoft', 'c@d.example')",
+    )
+      .bind(user.id)
+      .run();
+    const response = await request("POST", "/dev/seed?accounts=2&events=1&days=365", cookie);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ testInstance: false, realAccounts: 1 });
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+    const settings = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ json: string }>();
+    expect(settings?.json).not.toContain("daysAhead");
+    await env.DB.prepare("DELETE FROM accounts WHERE id = 'real-2'").run();
   });
 });
 
@@ -219,15 +328,65 @@ describe("a stage on simulated calendars", () => {
       expect(fetchSpy).toHaveBeenCalledTimes(calls);
       expect(stats.rowsWritten).toBeGreaterThanOrEqual(240);
       expect(stats.rowsWritten).toBeLessThan(400);
+      expect(stats.startedSteps).toBe(stats.runs + stats.failedRuns);
+      expect(stats.storedBlocks).toBeNull();
     },
   );
 
+  it("updates the mirrors of a burst of changes and counts the stored blocks", async () => {
+    stubFetch();
+    const { user, cookie } = await admin();
+    const seed = await request("POST", "/dev/seed?accounts=3&events=40&days=90", cookie);
+    const { startedAt } = await json<{ startedAt: string }>(seed);
+    await request("POST", "/dev/cycle", cookie);
+    const accounts = [1, 2, 3].map((i) => `sim-${user.id}-${i}`);
+    await drain(accounts);
+
+    const burst = await request("POST", "/dev/burst?events=5", cookie);
+    expect(burst.status).toBe(200);
+    const since = (await json<{ startedAt: string }>(burst)).startedAt;
+    await request("POST", "/dev/cycle", cookie);
+    await drain(accounts);
+
+    const after = await json<Stats>(
+      await request("GET", `/dev/stats?since=${encodeURIComponent(since)}`, cookie),
+    );
+    // Five events of one account, each with a mirror in the two other accounts.
+    expect(after.writes).toBe(10);
+    const stats = await json<Stats>(
+      await request("GET", `/dev/stats?since=${encodeURIComponent(startedAt)}&count=1`, cookie),
+    );
+    expect(stats.blocks).toBe(240);
+    expect(stats.storedBlocks).toEqual([80, 80, 80]);
+    expect(stats.startedSteps).toBe(stats.runs + stats.failedRuns);
+    expect(stats.lastRuns.every((run) => run.failed === 0 && run.remaining === 0)).toBe(true);
+  });
+
+  it("counts a step that ends without a run", async () => {
+    stubFetch();
+    const { user, cookie } = await admin();
+    const { startedAt } = await json<{ startedAt: string }>(
+      await request("POST", "/dev/seed?accounts=2&events=1&days=30", cookie),
+    );
+    await request("POST", "/dev/cycle", cookie);
+    const stub = env.ACCOUNT_SYNC.getByName(`sim-${user.id}-1`);
+    await runInDurableObject(stub, (instance) => {
+      const internals = instance as unknown as { runRuleAfterOthers(id: string): Promise<never> };
+      vi.spyOn(internals, "runRuleAfterOthers").mockRejectedValue(new Error("stopped"));
+    });
+    await runDurableObjectAlarm(stub);
+    const stats = await json<Stats>(
+      await request("GET", `/dev/stats?since=${encodeURIComponent(startedAt)}`, cookie),
+    );
+    expect(stats).toMatchObject({ startedSteps: 1, runs: 0, failedRuns: 0 });
+  });
+
   it("fails a run whose simulated call fails, and writes nothing for it", async () => {
     let answers = 0;
-    stubFetch(() => {
+    stubFetch((url) => {
       // Reads pass, the first batch fails.
       answers += 1;
-      return new Response("ok", { status: answers > 2 ? 500 : 200 });
+      return answers > 2 ? new Response("no", { status: 500 }) : sink(url);
     });
     const { user, cookie } = await admin();
     const { startedAt } = await json<{ startedAt: string }>(
@@ -240,6 +399,7 @@ describe("a stage on simulated calendars", () => {
     );
     expect(stats.blocks).toBe(0);
     expect(stats.failedRuns).toBeGreaterThan(0);
+    expect(stats.startedSteps).toBe(stats.runs + stats.failedRuns);
   });
 });
 
@@ -275,6 +435,76 @@ describe("FakeCalendar", () => {
     expect(fakePages(0, "microsoft")).toBe(1);
     expect(fakePages(500, "microsoft")).toBe(1);
     expect(fakePages(501, "microsoft")).toBe(2);
+  });
+
+  it("writes batches of the size of the real clients", async () => {
+    await inInstance("fake-batches", (sql) => {
+      for (const provider of ["microsoft", "google"] as const) {
+        const real = calendarClient(provider, "token").batchLimit;
+        expect(new FakeCalendar(sql, provider).batchLimit).toBe(real);
+      }
+      return Promise.resolve();
+    });
+  });
+
+  it("serves pages with the real number of events, in the shape of the real clients", () => {
+    for (const provider of ["microsoft", "google"] as const) {
+      const body = pages[provider];
+      expect(fakePages(PAGE_ITEMS[provider], provider)).toBe(1);
+      expect(fakePages(PAGE_ITEMS[provider] + 1, provider)).toBe(2);
+      expect(parseFakePage(provider, JSON.parse(body))).toBe(PAGE_ITEMS[provider]);
+      // A size per event that a real page reaches. A body of a few bytes measures no parsing.
+      expect(body.length / PAGE_ITEMS[provider]).toBeGreaterThan(300);
+    }
+  });
+
+  it("refuses a body that is no calendar page", () => {
+    expect(() => parseFakePage("microsoft", { items: [] })).toThrow("no calendar page");
+    expect(() => parseFakePage("google", null)).toThrow("no calendar page");
+    expect(() => parseFakePage("google", { items: [{ id: 1 }] })).toThrow();
+  });
+
+  it("fetches and parses the page of the provider, not the small file", async () => {
+    const fetchSpy = stubFetch();
+    await inInstance("fake-page-url", async (sql) => {
+      seedFakeEvents(sql, { account: 1, accounts: 2, days: 90 }, 10);
+      const client = new FakeCalendar(sql, "google", {
+        DEV_FAKE_FETCH_URL: "https://sink.example/",
+      });
+      await client.sourceEvents("main", window(90));
+      expect(fetchSpy).toHaveBeenCalledWith("https://sink.example/pages/google.json");
+      await client.applyBatch("main", "tag", [block(0)]);
+      expect(fetchSpy).toHaveBeenLastCalledWith("https://sink.example/");
+    });
+  });
+
+  it("fails a read if the fetch target serves no page", async () => {
+    stubFetch(() => new Response("ok"));
+    await inInstance("fake-no-page", async (sql) => {
+      seedFakeEvents(sql, { account: 1, accounts: 2, days: 90 }, 10);
+      const client = new FakeCalendar(sql, "microsoft", {
+        DEV_FAKE_FETCH_URL: "https://sink.example/",
+      });
+      await expect(client.sourceEvents("main", window(90))).rejects.toThrow();
+      expect(readFakeStats(sql).calls).toEqual({});
+    });
+  });
+
+  it("moves the first events of a burst and leaves the others", async () => {
+    await inInstance("fake-burst", async (sql) => {
+      seedFakeEvents(sql, { account: 1, accounts: 2, days: 90 }, 10);
+      const client = new FakeCalendar(sql, "microsoft");
+      const before = await client.sourceEvents("main", window(90));
+      shiftFakeEvents(sql, 3);
+      const after = await client.sourceEvents("main", window(90));
+      const changed = before.filter((event, i) => event.end !== after[i]?.end);
+      expect(changed.map((event) => event.occurrenceKey)).toEqual([
+        "event:1-0",
+        "event:1-1",
+        "event:1-2",
+      ]);
+      expect(after.map((event) => event.start)).toEqual(before.map((event) => event.start));
+    });
   });
 
   it("pages a read at each provider's page size, one fetch per page", async () => {

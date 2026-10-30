@@ -43,7 +43,8 @@ interface WorkerSecrets {
   DEV_FAKE_LATENCY_MS?: string;
   /**
    * Load tests only: a URL that the operator owns. With DEV_FAKE_CALENDARS=1, each simulated
-   * provider call fetches it once, so that the subrequest limit applies. Unset: no fetch.
+   * provider call fetches it or a page below it once, so that the subrequest limit applies.
+   * Unset: no fetch.
    */
   DEV_FAKE_FETCH_URL?: string;
   /** Tests only: delay before a requested sync starts, in milliseconds. Default 5000. */

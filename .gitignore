@@ -7,3 +7,5 @@ node_modules/
 coverage/
 website/dist/
 website/.astro/
+scripts/probe-sink/public/pages/
+wrangler.probe.jsonc

@@ -41,6 +41,11 @@ interface WorkerSecrets {
   DEV_FAKE_CALENDARS?: string;
   /** Local load tests only: simulated network time per provider call, in milliseconds. */
   DEV_FAKE_LATENCY_MS?: string;
+  /**
+   * Load tests only: a URL that the operator owns. With DEV_FAKE_CALENDARS=1, each simulated
+   * provider call fetches it once, so that the subrequest limit applies. Unset: no fetch.
+   */
+  DEV_FAKE_FETCH_URL?: string;
   /** Tests only: delay before a requested sync starts, in milliseconds. Default 5000. */
   SYNC_DEBOUNCE_MS?: string;
   /** Tests only: delay between two alarm runs, in milliseconds. Default 1000. */

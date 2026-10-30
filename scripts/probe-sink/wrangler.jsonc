@@ -1,0 +1,7 @@
+{
+  // The fetch target of the capacity probe: one static file and no script. See scripts/README.md.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "slotmirror-probe-sink",
+  "compatibility_date": "2026-10-25",
+  "assets": { "directory": "./public" },
+}

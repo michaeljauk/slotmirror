@@ -35,7 +35,7 @@ import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
 import { accountSync } from "./durable";
 import type { Watch } from "./providers/calendar-client";
-import { FakeCalendar, fakeCallCounts, seedFakeEvents } from "./providers/fake-calendar";
+import { FakeCalendar, readFakeStats, seedFakeEvents } from "./providers/fake-calendar";
 import { notifyChange, requestSyncs, SyncRequestError, webhookToken, webhookUrl } from "./webhooks";
 import { sendReconnectAlert } from "./alerts";
 
@@ -1099,16 +1099,16 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /** Local load tests only: replace this account's simulated events. */
-  async seedFake(seed: number, count: number): Promise<void> {
+  async seedFake(seed: Parameters<typeof seedFakeEvents>[1], count: number): Promise<void> {
     if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
     seedFakeEvents(this.ctx.storage.sql, seed, count);
     this.sourceCache.clear();
   }
 
   /** Local load tests only: simulated provider calls since the last seed. */
-  async fakeStats(): Promise<Record<string, number>> {
+  async fakeStats(): Promise<ReturnType<typeof readFakeStats>> {
     if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
-    return fakeCallCounts(this.ctx.storage.sql);
+    return readFakeStats(this.ctx.storage.sql);
   }
 
   /**
@@ -1945,7 +1945,7 @@ export class AccountSync extends DurableObject<Env> {
     // Local load tests replace the provider; never active without DEV_FAKE_CALENDARS=1.
     const provider =
       this.env.DEV_FAKE_CALENDARS === "1" && token === "fake"
-        ? new FakeCalendar(this.ctx.storage.sql, Number(this.env.DEV_FAKE_LATENCY_MS ?? 0))
+        ? new FakeCalendar(this.ctx.storage.sql, this.providerOrDefault(), this.env)
         : calendarClient(this.providerOrDefault(), token);
     return oneCallAtATime(provider, (call) => {
       const result = this.providerQueue.then(async () => {

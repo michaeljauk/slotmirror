@@ -56,3 +56,28 @@ ends.
 
 Each deployment has a `/privacy` page. It shows `PRIVACY_CONTACT` as the contact of the operator.
 Google requires this page for a published OAuth app.
+
+## This website
+
+The website slotmirror.com and its documentation use PostHog (EU Cloud, Frankfurt) for
+privacy-friendly statistics. It replaces Cloudflare Web Analytics.
+
+- PostHog runs in cookieless mode. It sets no cookie and stores nothing in the browser for
+  statistics. A visitor gets no persistent ID. PostHog builds a hash from IP address, user agent
+  and a daily salt, and the hash changes every day.
+- The site records page views (`$pageview`) and one event, `deploy_click`: a click on a "Deploy to
+  Cloudflare" button or link.
+- There is no autocapture, no session replay, no survey and no feature flag. URLs are sent
+  without query string and fragment.
+- Only the website is measured. A slotmirror deployment that you run sends nothing to PostHog.
+- The browser talks to the own domain. A Cloudflare Worker forwards the requests to PostHog and
+  adds the visitor IP address as `X-Forwarded-For`. PostHog needs the IP address for the daily
+  hash, and without it all visitors would look like one visitor. The Worker accepts only the
+  event path (`POST /ingest/e/`) and answers every other request with 404. It forwards only the
+  headers `Content-Type`, `Content-Encoding` and `User-Agent`, plus `X-Forwarded-For`. It drops all
+  other headers, including cookies and authorisation headers, and stores nothing. The PostHog
+  project discards the IP address after it has built the hash.
+- The browser also keeps the theme choice in local storage. It is not used for tracking.
+
+Controller: [operator name and address, to be added before launch]. Contact:
+[privacy contact, to be added before launch].

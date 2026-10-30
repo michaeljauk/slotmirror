@@ -14,7 +14,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const page = (path: string) => `${base}/${path}`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const preview = new URL(page("social-preview.png"), Astro.site);
-const analyticsToken = import.meta.env.PUBLIC_CF_ANALYTICS_TOKEN;
 
 const guides = [
   {
@@ -126,16 +125,6 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         });
       })();
     </script>
-    {
-      analyticsToken ? (
-        <script
-          is:inline
-          defer
-          src="https://static.cloudflareinsights.com/beacon.min.js"
-          data-cf-beacon={JSON.stringify({ token: analyticsToken })}
-        />
-      ) : null
-    }
   </head>
   <body>
     <header class="top">
@@ -180,7 +169,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
             seconds. Microsoft 365 and Google, self-hosted on Cloudflare.
           </p>
           <div class="buttons">
-            <a class="button primary" href={deploy}
+            <a class="button primary" href={deploy} data-track="deploy_click"
               ><Fragment set:html={cloudflare} />Deploy to Cloudflare</a
             >
             <a class="button" href={repo}><Fragment set:html={github} />View on GitHub</a>
@@ -390,6 +379,10 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         <span>This site sets no cookies.</span>
       </div>
     </footer>
+
+    <script>
+      import "../scripts/analytics";
+    </script>
 
     <script>
       // A toy version of the sync. One meeting per calendar; each can move, and its copies follow

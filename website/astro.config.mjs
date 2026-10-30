@@ -6,25 +6,12 @@ const repo = "https://github.com/michaeljauk/slotmirror";
 // The only place that sets where the site lives. Pages build links from these two values.
 const site = "https://slotmirror.com";
 const base = "";
-// Cloudflare Web Analytics. The beacon token is public; the Pages workflow passes it from the
-// repository variable CF_ANALYTICS_TOKEN. Without it, the site loads no analytics script.
-const analyticsToken = process.env.PUBLIC_CF_ANALYTICS_TOKEN;
 
 /** @type {import("@astrojs/starlight/types").StarlightUserConfig["head"]} */
 const head = [
   { tag: "meta", attrs: { property: "og:image", content: `${site}${base}/social-preview.png` } },
   { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
 ];
-if (analyticsToken) {
-  head.push({
-    tag: "script",
-    attrs: {
-      defer: true,
-      src: "https://static.cloudflareinsights.com/beacon.min.js",
-      "data-cf-beacon": JSON.stringify({ token: analyticsToken }),
-    },
-  });
-}
 
 export default defineConfig({
   site,
@@ -43,6 +30,7 @@ export default defineConfig({
       },
       favicon: "/favicon.svg",
       head,
+      components: { Head: "./src/components/Head.astro" },
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/website/` },
       customCss: ["./src/styles/custom.css"],

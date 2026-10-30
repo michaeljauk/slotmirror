@@ -119,7 +119,8 @@ pnpm run deploy                               # applies the migrations, then dep
 
 Then follow steps 3 to 8. Set the provider secrets with `pnpm wrangler secret put` after step 5.
 
-All variables and secrets are in the [settings reference](../settings/).
+All variables and secrets are in the [settings reference](../settings/). To move to a newer
+version later, see [Updating your deployment](../updating/).
 
 ## Choose where events go
 

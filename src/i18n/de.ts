@@ -10,6 +10,7 @@ export const de: Messages = {
     signOut: "Abmelden",
     deleteMyData: "Meine Daten löschen",
     privacy: "Datenschutz",
+    version: "Version",
     language: "Sprache",
   },
   roles: {

@@ -106,6 +106,10 @@ every page shows a checklist of what is missing.
 
 To deploy by hand, see [Deploy by hand](https://slotmirror.com/docs/quickstart/#deploy-by-hand).
 
+`pnpm run deploy` also passes the short commit hash to the build, and the app footer shows it. A
+deploy with plain `wrangler deploy` has no hash; the footer then shows only a release version, if
+the build has one.
+
 ## Screens
 
 | Accounts                                        | Settings for all calendars                 |

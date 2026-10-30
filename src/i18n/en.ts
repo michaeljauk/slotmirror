@@ -12,6 +12,7 @@ export const en = {
     signOut: "Sign out",
     deleteMyData: "Delete my data",
     privacy: "Privacy",
+    version: "Version",
     language: "Language",
   },
   roles: {

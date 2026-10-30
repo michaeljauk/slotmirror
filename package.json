@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy --define \"__BUILD_COMMIT__:\\\"$(git rev-parse --short=9 HEAD 2>/dev/null)\\\"\"",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "cf-typegen": "wrangler types --strict-vars=false",
     "typecheck": "tsc --noEmit",

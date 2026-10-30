@@ -16,12 +16,9 @@ accounts.
    themselves, unless your tenant blocks user consent.
 5. Under **Certificates & secrets**, create a client secret. Note when it expires. The sync stops
    when it expires.
-6. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET`:
-
-```sh
-pnpm wrangler secret put MICROSOFT_CLIENT_ID
-pnpm wrangler secret put MICROSOFT_CLIENT_SECRET
-```
+6. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET` as secrets. In
+   the Cloudflare dashboard, open your Worker, **Settings**, **Variables and Secrets**. With a
+   clone, you can run `pnpm wrangler secret put <NAME>` instead.
 
 For a team on Microsoft 365, also see [Organisations](../organisations/): it explains
 `ALLOWED_TENANT_IDS`, `SIGN_IN_PROVIDERS` and SCIM.

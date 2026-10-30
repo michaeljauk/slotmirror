@@ -440,10 +440,17 @@ export const de: Messages = {
     set: "Gesetzt",
     accessHint:
       "Wer sich anmelden darf. Deine eigene Adresse für eine persönliche Installation, deine E-Mail-Domain für ein Team.",
-    sessionHint: "Mindestens 32 Zeichen. Erzeugen mit: openssl rand -base64 48",
-    keyHint: "Ein Base64-kodierter 32-Byte-Schlüssel. Erzeugen mit: openssl rand -base64 32",
+    sessionHint:
+      "Mindestens 32 Zeichen. Mit openssl: openssl rand -base64 48. Ohne openssl zeigt der Quickstart einen Weg für Windows und für den Browser.",
+    keyHint:
+      "Ein Base64-kodierter 32-Byte-Schlüssel. Mit openssl: openssl rand -base64 32. Ohne openssl zeigt der Quickstart einen Weg für Windows und für den Browser.",
     providerHint:
-      "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Die Schritte zur App-Registrierung stehen in der README.",
+      "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Der Quickstart zeigt die Schritte zur App-Registrierung.",
+    providerInvalidHint: (value: string) =>
+      `SIGN_IN_PROVIDERS steht auf „${value}“. Gültige Einträge sind microsoft und google. Beide schreibst du so: microsoft,google. Oder entferne die Variable, dann gilt jeder eingerichtete Anbieter.`,
+    jurisdictionNote:
+      "Wenn die Daten in der EU bleiben sollen, setze jetzt DATA_JURISDICTION auf eu, bevor du das erste Konto verbindest. Eine spätere Änderung trennt alle Konten. Setze außerdem PUBLIC_URL auf die Adresse dieses Workers, damit Änderungen schnell ankommen.",
+    docsLink: "Quickstart öffnen",
   },
   deleteUser: {
     titleSelf: "Meine Daten löschen",

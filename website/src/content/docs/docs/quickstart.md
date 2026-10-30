@@ -3,38 +3,122 @@ title: Quickstart
 description: Deploy slotmirror to Cloudflare, connect your calendars, and choose where events go.
 ---
 
-You need a Cloudflare account (the free plan is enough) and an OAuth app for each provider you
-use.
+You need a Cloudflare account (the free plan is enough) and one provider to start: Microsoft 365
+or Google. Plan about 30 minutes. Most of that time goes into the OAuth app of the provider.
 
-## Deploy with the button
+To mirror, you need two calendars. They can be two accounts at the same provider, for example a
+work and a private Microsoft account. Add the second provider later, if you need it.
+
+The order matters. The OAuth app needs the address of your Worker, and you get the address only
+after the deploy. So you deploy first, create the OAuth app second, and set its secrets last.
+
+## 1. Deploy with the button
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
 
-The button creates the Worker, the D1 database and the Durable Object in your account and asks
-for the secrets. Then:
+The button creates the Worker, the D1 database and the Durable Object in your account. In its form:
 
-1. Create a [Microsoft Entra app](../entra-setup/), a [Google OAuth client](../google-setup/), or
-   both.
-2. Set `ALLOWED_EMAILS` to your address, or `ALLOWED_DOMAINS` for a team, and set `ADMIN_EMAILS`.
-3. Set `PUBLIC_URL` to the address of your Worker. This turns on
-   [push notifications](../push-notifications/).
-4. Open the address of your Worker, sign in, connect your calendars, and choose where events go.
+- Generate `SESSION_SECRET` and `TOKEN_ENCRYPTION_KEY` and paste them in (see below).
+- Leave `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `GOOGLE_CLIENT_ID` and
+  `GOOGLE_CLIENT_SECRET` empty. You do not have them yet.
 
-If a required setting is missing, every page shows a checklist of what is missing.
+### Generate the two secrets
+
+Use any one of these. Keep the values: you cannot read a secret again after you save it.
+
+| Tool                     | `SESSION_SECRET`                                                                                                                 | `TOKEN_ENCRYPTION_KEY`                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `openssl` (macOS, Linux) | `openssl rand -base64 48`                                                                                                        | `openssl rand -base64 32`                                                                                                        |
+| PowerShell (Windows)     | `$b = New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)` | `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)` |
+| Node.js                  | `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"`                                                    | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`                                                    |
+
+`SESSION_SECRET` needs at least 32 characters. `TOKEN_ENCRYPTION_KEY` must decode to exactly 32
+bytes, so do not change the number 32.
+
+## 2. Set who may sign in
+
+Until you do this, your Worker shows a checklist and no sign-in page. In the Cloudflare dashboard,
+open **Workers & Pages**, your Worker, **Settings**, **Variables and Secrets**. Add these as
+**Text** variables:
+
+| Name                | Value                                                                     |
+| ------------------- | ------------------------------------------------------------------------- |
+| `ALLOWED_EMAILS`    | Your address. For a team, set `ALLOWED_DOMAINS` to your domain instead.   |
+| `ADMIN_EMAILS`      | Your address.                                                             |
+| `TIME_ZONE`         | Your time zone, for example `Europe/Vienna`. The default is `UTC`.        |
+| `DATA_JURISDICTION` | `eu`, if the data must stay in the EU. Set it now, see the warning below. |
+
+:::caution[Set DATA_JURISDICTION before the first account]
+`DATA_JURISDICTION` cannot change for existing data. If you change it after you connect an
+account, every account disconnects. Decide now. The D1 database lives in the region that the
+button chose. See [Settings](../settings/).
+:::
+
+The deploy keeps these values. A later deploy does not reset them, because `wrangler.jsonc` does
+not list them and sets `keep_vars`.
+
+If you cloned the repository, you can set a secret with `pnpm wrangler secret put <NAME>` instead
+of the dashboard. The dashboard works without any local tools.
+
+## 3. Read the address of your Worker
+
+On the page of your Worker in the dashboard, open **Settings**, then **Domains & Routes**. The
+address looks like `https://slotmirror.<your-subdomain>.workers.dev`. You need it in the next
+step.
+
+Add one more variable: `PUBLIC_URL`, set to this address, without a trailing slash. With it,
+Microsoft and Google notify the Worker about changes, and mirrored blocks update within seconds.
+Without it, the Worker polls every 10 minutes.
+
+## 4. Create the OAuth app for one provider
+
+Choose one. Both pages have six steps, and the redirect address uses the address from step 3.
+
+- Microsoft 365: [Microsoft Entra app](../entra-setup/)
+- Google Calendar: [Google OAuth client](../google-setup/)
+
+## 5. Set the secrets of the provider
+
+In **Variables and Secrets**, add these as **Secret**, with the values from the OAuth app:
+
+- Microsoft: `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET`
+- Google: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+
+Save and deploy. Reload your Worker. If the checklist still shows, it names what is missing. If
+you set `SIGN_IN_PROVIDERS`, write both providers as `microsoft,google`. The word `both` is not a
+valid value, and the checklist shows the value it read.
+
+## 6. Sign in and connect
+
+Open the address of your Worker, sign in, and connect your calendars under **Accounts**. To add
+the other provider later, repeat steps 4 and 5 for it.
+
+## 7. Watch the first block
+
+1. Under **Where your events go**, put your two calendars in the group **Block each other**, and
+   choose **Save**. See below.
+2. In one calendar, create a test event for tomorrow.
+3. Watch the other calendar. With `PUBLIC_URL`, the block appears within seconds. Without it, it
+   appears at the next run, after up to 10 minutes.
+
+When the block appears, the setup works.
 
 ## Deploy by hand
+
+You need Node 22 and pnpm 10.
 
 ```sh
 git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
-# copy the database_id into wrangler.jsonc; set variables in the dashboard
-pnpm wrangler secret put SESSION_SECRET       # openssl rand -base64 48
-pnpm wrangler secret put TOKEN_ENCRYPTION_KEY # openssl rand -base64 32
-pnpm wrangler secret put MICROSOFT_CLIENT_ID  # and the other client secrets you use
+# copy the database_id into wrangler.jsonc
+pnpm wrangler secret put SESSION_SECRET       # generate it as shown above
+pnpm wrangler secret put TOKEN_ENCRYPTION_KEY
 pnpm run deploy                               # applies the migrations, then deploys
 ```
+
+Then follow steps 2 to 7. Set the provider secrets with `pnpm wrangler secret put` after step 4.
 
 All variables and secrets are in the [settings reference](../settings/).
 

@@ -435,10 +435,17 @@ export const en = {
     set: "Set",
     accessHint:
       "Who may sign in. Your own address for a personal deployment, your email domain for a team.",
-    sessionHint: "At least 32 characters. Generate with: openssl rand -base64 48",
-    keyHint: "A base64-encoded 32-byte key. Generate with: openssl rand -base64 32",
+    sessionHint:
+      "At least 32 characters. With openssl: openssl rand -base64 48. Without it, the quickstart shows a way for Windows and for the browser.",
+    keyHint:
+      "A base64-encoded 32-byte key. With openssl: openssl rand -base64 32. Without it, the quickstart shows a way for Windows and for the browser.",
     providerHint:
-      "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. See the README for the app registration steps.",
+      "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. The quickstart shows the app registration steps.",
+    providerInvalidHint: (value: string) =>
+      `SIGN_IN_PROVIDERS is set to "${value}". Valid entries are microsoft and google. Write both as: microsoft,google. Or remove the variable to allow every configured provider.`,
+    jurisdictionNote:
+      "To keep the data in the EU, set DATA_JURISDICTION to eu now, before you connect the first account. Changing it later disconnects every account. Also set PUBLIC_URL to the address of this Worker for fast updates.",
+    docsLink: "Open the quickstart",
   },
   deleteUser: {
     titleSelf: "Delete my data",

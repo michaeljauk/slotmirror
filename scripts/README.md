@@ -4,8 +4,8 @@
 
 Measures how much load one slotmirror instance takes before the sync fails. It runs a fixed load
 profile in stages and stops at the first stage that fails. The stage before it is the answer for
-`limits.md`. A local run or a run with a warning gives no statement for `limits.md`: it proves that
-the script works.
+`limits.md`, if the manual readings confirm it (see Manual readings). A local run or a run with a
+warning gives no statement for `limits.md`: it proves that the script works.
 
 ### Load profile
 
@@ -23,7 +23,9 @@ the script works.
 The plan asks for 3 users × 3 accounts. This profile has 1 user × 3 accounts, on purpose: a seed
 works for the user of the cookie, and the mirrors of further users would use the daily row budget
 without a new load on one Durable Object. Rules and alarms of one account stay the same. What
-this does not show: the Worker, D1 and the account quota under 3 users at the same time.
+this does not show: the Worker, D1 and the account quota under 3 users at the same time, and the
+cron fan-out over 9 accounts. `POST /dev/cycle` starts the accounts of one user directly, so the
+cron handler never runs.
 
 ### When a stage passes
 
@@ -55,12 +57,14 @@ Once per run, `GET /dev/rpc-budget` answers if Durable Object RPC counts as a su
 Cloudflare limits page does not say. One instance fetches until the runtime refuses. Then it calls
 another instance 25 times and fetches again. The report says `counted`, `not counted` or `unclear`.
 The check runs from an RPC into the instance, not from an alarm. A run with `unclear` keeps its
-statement, but do not use the number.
+statement, but do not use the number. If the check does not run, for example after a 5xx, no
+Durable Object showed the limit, so the run gets a warning.
 
 ### Manual readings
 
 The script cannot see these numbers. Read them after each day of the run, for the times in the
-report. Sources were read on 2026-10-30. The Cloudflare documentation does not list all fields of
+report. A statement for `limits.md` is valid only if every invocation has an ok status and no step
+hit the CPU limit. Sources were read on 2026-10-30. The Cloudflare documentation does not list all fields of
 each dataset and advises GraphQL introspection for the rest.
 
 | Number                      | Source                                                                                                                |
@@ -94,13 +98,15 @@ Questions for the run:
   own: it computes the native events and reads the blocks from SQLite. The read pages are always
   full, also for a read of a few events. A step therefore costs some more CPU than in production.
 - **Other profiles.** See Load profile for the 3 × 3 gap. Recurring series are not part of the load.
+- **The cron fan-out.** The test Worker has no cron, and the script starts the sync itself. What
+  the cron handler costs for 3 users with 3 accounts each is not measured.
 
 ### Fetch target
 
 Without a real `fetch`, the simulation can never reach the limit of 50 subrequests. With
 `DEV_FAKE_FETCH_URL`, every simulated page and every write batch fetches once. The variable works
-only together with `DEV_FAKE_CALENDARS=1`. Without it, nothing is fetched, and the run gives no
-statement for `limits.md`.
+only together with `DEV_FAKE_CALENDARS=1`. Without it, nothing is fetched. The script then refuses
+a remote target. A local target runs and gives no statement for `limits.md`.
 
 The target must belong to you, so that the load hits no foreign service.
 `scripts/probe-sink/` is such a target: a Worker with static files and no script. Cloudflare
@@ -136,6 +142,7 @@ A Worker cannot reach a Worker on its own zone with `fetch` (error 1042). Use on
   51st. If it succeeds, the instance runs on a plan with a higher limit, and the script refuses to
   start, unless the target is local. This shows the subrequest limit only. A Paid account that
   lowers its own limits passes, so use an account as described in Prerequisites.
+- A remote target without a fetch target is refused too: it would pass every stage on any plan.
 - It calls only the `/dev` routes. They create and reset accounts named `sim-*`, which hold
   simulated calendars inside the Durable Objects with the token `fake`. No provider is called.
 - It changes the window setting (`daysAhead`) of the admin user whose cookie it gets, and of the
@@ -203,11 +210,13 @@ For a capacity statement:
 1. Create a **separate Cloudflare account on the Workers Free plan**. The limit of 100,000 requests
    per day applies per account, so a test Worker beside another deployment shares its quota. A
    separate Worker does not separate them. Run nothing else in that account during the run.
-2. Copy `wrangler.jsonc` to `wrangler.probe.jsonc` and change it: a new `name`, the ID of a new D1
-   database, and `"triggers": { "crons": [] }`. **The test Worker must have no cron.** The cron of
+2. Copy `wrangler.probe.example.jsonc` to `wrangler.probe.jsonc`. Git ignores the copy. Replace the
+   two placeholders: `account_id` with the ID of the new account, `database_id` with the ID of a
+   new D1 database. With a placeholder left, Wrangler stops. Keep `name` and `account_id`: they
+   keep a deploy away from a production Worker. **The test Worker must have no cron.** The cron of
    `wrangler.jsonc` starts sync work every 10 minutes, and that work would count as part of the
-   stage. An empty list removes the trigger; a missing `triggers` key keeps it. Use the file with
-   `-c wrangler.probe.jsonc` for `deploy` and `d1 migrations apply --remote`.
+   stage. The empty list in the file removes the trigger; a missing `triggers` key keeps it. Use
+   the file with `-c wrangler.probe.jsonc` for `deploy` and `d1 migrations apply --remote`.
 3. Set `DEV_FAKE_CALENDARS=1`, `DEV_FAKE_FETCH_URL` and the sign-in settings, and create one admin
    test user. Never turn the variables on for a deployment that holds real accounts.
 
@@ -229,15 +238,18 @@ Markdown report goes to stdout, progress to stderr.
 
 | Exit code | Meaning                                                                                       |
 | --------- | --------------------------------------------------------------------------------------------- |
-| 0         | All stages passed. With a warning, the run gives no statement for `limits.md`.                |
+| 0         | All stages passed, without a warning.                                                         |
 | 1         | A stage failed. The report names the stage before it.                                         |
 | 2         | Bad arguments, or the run does not fit into one day. Nothing started.                         |
-| 3         | No test instance, real accounts, no fetch target, or a remote target above the Free limit.    |
+| 3         | No test instance, real accounts, or a remote target without a fetch target or above Free.     |
 | 4         | The run broke: a 5xx, a timeout or a different profile. The report names the stage before it. |
+| 5         | All stages passed, but a warning stands, so the run gives no statement for `limits.md`.       |
 
 After exit 4 the broken stage has no verdict. A 5xx can still be a Worker limit, so read
-`wrangler tail` before you repeat the stage. After a stage that did not settle, the script does not
-start the next window, because queued work would run into it.
+`wrangler tail` before you repeat the stage. After a failed stage, the script does not start the
+next window, because queued work or a spent daily budget would run into it. The statement of a
+failed stage names the rows that the run wrote by estimate, so that you can see if the failure
+lies near the daily limit.
 
 Each stage reseeds the accounts, so a stage starts from clean calendars. The Durable Objects keep
 their other state between stages, so the first stage on a fresh instance is the cleanest. For a

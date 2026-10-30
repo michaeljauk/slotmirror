@@ -2,7 +2,8 @@ import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from 
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PAGE_ITEMS, providerPage } from "../scripts/probe-sink/pages";
-import { calendarClient } from "../src/providers/calendar-client";
+import type { AccountSync } from "../src/account-sync";
+import { calendarClient, type CalendarClient } from "../src/providers/calendar-client";
 import {
   FakeCalendar,
   fakePages,
@@ -400,6 +401,55 @@ describe("a stage on simulated calendars", () => {
     expect(stats.blocks).toBe(0);
     expect(stats.failedRuns).toBeGreaterThan(0);
     expect(stats.startedSteps).toBe(stats.runs + stats.failedRuns);
+  });
+});
+
+describe("the Durable Object with DEV_FAKE_CALENDARS off", () => {
+  /** Run `body` with the flag off. An instance can outlive its test, so the flag comes back. */
+  const flagOff = <T>(name: string, body: (instance: AccountSync, sql: SqlStorage) => Promise<T>) =>
+    runInDurableObject(env.ACCOUNT_SYNC.getByName(name), async (instance: AccountSync, state) => {
+      const original: unknown = Reflect.get(instance, "env");
+      Reflect.set(instance, "env", { ...env, DEV_FAKE_CALENDARS: undefined });
+      try {
+        return await body(instance, state.storage.sql);
+      } finally {
+        Reflect.set(instance, "env", original);
+      }
+    });
+
+  it("refuses every simulation call", async () => {
+    await flagOff("sim-gate", async (instance) => {
+      const refused = "Simulation is off";
+      await expect(instance.seedFake({ account: 1, accounts: 1, days: 1 }, 1)).rejects.toThrow(
+        refused,
+      );
+      await expect(instance.fakeStats()).rejects.toThrow(refused);
+      await expect(instance.shiftFake(1)).rejects.toThrow(refused);
+      await expect(instance.fakeFetchBudget("sim-gate-peer", 0, 1)).rejects.toThrow(refused);
+    });
+  });
+
+  it("counts no step", async () => {
+    const { user, cookie } = await admin();
+    await request("POST", "/dev/seed?accounts=2&events=1&days=30", cookie);
+    const steps = await flagOff(`sim-${user.id}-1`, async (instance, sql) => {
+      await (instance as unknown as { noteFakeStep(): Promise<void> }).noteFakeStep();
+      return readFakeStats(sql).startedSteps;
+    });
+    expect(steps).toBe(0);
+  });
+
+  it("treats the token of a simulated account as a real token", async () => {
+    const fetchSpy = stubFetch(() => Response.json({ value: [], items: [] }));
+    const { user, cookie } = await admin();
+    await request("POST", "/dev/seed?accounts=2&events=1&days=30", cookie);
+    await flagOff(`sim-${user.id}-1`, async (instance) => {
+      const internals = instance as unknown as { client(): Promise<CalendarClient> };
+      await (await internals.client()).listCalendars();
+    });
+    const hosts = fetchSpy.mock.calls.map(([url]) => new URL(String(url as string)).hostname);
+    expect(hosts.length).toBeGreaterThan(0);
+    for (const host of hosts) expect(host).toMatch(/^(graph\.microsoft|www\.googleapis)\.com$/);
   });
 });
 

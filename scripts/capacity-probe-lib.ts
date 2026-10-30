@@ -23,14 +23,28 @@ export const PROFILE = {
 
 /** What a run on simulated calendars cannot state. See scripts/README.md. */
 const NOT_MEASURED =
-  "Graph and Google throttling, CPU time per invocation, D1 rows per day, more than one user";
+  "Graph and Google throttling, CPU time per invocation, D1 rows per day, more than one user, the cron fan-out over 3 users with 3 accounts each";
+
+/** A passed stage counts only after these readings. The script cannot see them. */
+const READINGS =
+  "Valid only if the manual readings in scripts/README.md show an ok status for every invocation and no step that hit the CPU limit.";
 
 /** Free plan: rows per day, for SQLite in Durable Objects. D1 has its own limit of the same size. */
 export const DAILY_ROWS_WRITTEN = 100_000;
 export const DAILY_ROWS_READ = 5_000_000;
 
-/** Exit codes. `stageFailed` is a measurement; `broken` means that the run measured nothing. */
-export const EXIT = { passed: 0, stageFailed: 1, usage: 2, refused: 3, broken: 4 } as const;
+/**
+ * Exit codes. `stageFailed` is a measurement; `broken` means that the run measured nothing.
+ * `passedNoStatement`: every stage passed, but a warning stands, so `limits.md` gets no statement.
+ */
+export const EXIT = {
+  passed: 0,
+  stageFailed: 1,
+  usage: 2,
+  refused: 3,
+  broken: 4,
+  passedNoStatement: 5,
+} as const;
 
 /** Rules in the block group: every account mirrors into every other. */
 export function ruleCount(accounts: number): number {
@@ -206,6 +220,7 @@ export interface ProbeMarker {
  * DEV_FAKE_CALENDARS=1 and an admin session, so a production deployment answers 404. An instance
  * with an account that is not simulated answers 409. A remote target must show the Free plan
  * limit: on the Paid plan the limit lies at 10,000 subrequests, so a run there proves nothing.
+ * Without a fetch target the check cannot happen, so a remote target needs one.
  */
 export function checkTestInstance(status: number, body: unknown, target: string): string | null {
   const marker = body as ProbeMarker | null;
@@ -221,6 +236,9 @@ export function checkTestInstance(status: number, body: unknown, target: string)
   if (marker.simulatedFetch === "failed") {
     return "The target cannot reach DEV_FAKE_FETCH_URL. See scripts/README.md, section Fetch target.";
   }
+  if (marker.simulatedFetch !== "ok" && !isLocalTarget(target)) {
+    return "The target has no DEV_FAKE_FETCH_URL: its calls make no subrequests, so the limit of 50 cannot trip and the plan stays unknown. See scripts/README.md, section Fetch target.";
+  }
   if (marker.subrequestLimit === "absent" && !isLocalTarget(target)) {
     return "The target is not on the Workers Free plan: its 51st fetch in one request succeeded.";
   }
@@ -228,14 +246,10 @@ export function checkTestInstance(status: number, body: unknown, target: string)
 }
 
 /** Why a run on this target cannot back a statement in `limits.md`, or null. */
-export function limitsWarning(target: string, marker: ProbeMarker | null): string | null {
-  if (isLocalTarget(target)) {
-    return "Local run: no Workers limit applies here. This proves the script, not a capacity.";
-  }
-  if (marker?.simulatedFetch !== "ok") {
-    return "DEV_FAKE_FETCH_URL is not set: simulated calls make no subrequests, so the limit of 50 cannot trip.";
-  }
-  return null;
+export function limitsWarning(target: string): string | null {
+  return isLocalTarget(target)
+    ? "Local run: no Workers limit applies here. This proves the script, not a capacity."
+    : null;
 }
 
 /** What one stage costs in SQLite rows of the Durable Objects. */
@@ -312,6 +326,14 @@ export function planDays(
     }
   }
   return days;
+}
+
+/** Estimated rows that a window wrote, with the stage that failed. Durable Object rows only. */
+function estimatedRows(verdict: WindowVerdict): number {
+  return verdict.results.reduce(
+    (sum, result) => sum + stageCost(result.events, verdict.accounts).rowsWritten,
+    0,
+  );
 }
 
 /** Whether a whole plan fits into one day. `planDays` keeps windows apart, so count the rows. */
@@ -580,12 +602,19 @@ export function judgeWindow(
 /**
  * The sentence for `limits.md`: the stage before the first failure, the profile and what the run
  * did not cover. A warning means that the run backs no statement, so it replaces the sentence.
+ * A failure names the rows of the day: near the limit, the failure can come from the test setup.
+ * `rowsBefore` holds the rows of earlier windows in this run.
  */
-export function limitsStatement(verdict: WindowVerdict, warnings: readonly string[] = []): string {
+export function limitsStatement(
+  verdict: WindowVerdict,
+  warnings: readonly string[] = [],
+  rowsBefore = 0,
+): string {
   if (warnings.length > 0) return `No statement for limits.md: ${warnings.join(" ")}`;
   const profile = `${verdict.accounts} accounts in the block group, ${verdict.windowDays}-day window, each target holding its native events plus the mirrors, ${PROFILE.burstEvents} changed events, ${PROFILE.provider}`;
+  const rows = rowsBefore + estimatedRows(verdict);
   const next = verdict.failedAt
-    ? ` The next stage (${verdict.failedAt.events}) failed.`
+    ? ` The next stage (${verdict.failedAt.events}) failed, with about ${rows} of ${DAILY_ROWS_WRITTEN} daily rows written by this run.`
     : verdict.brokenAt
       ? ` The run broke at ${verdict.brokenAt.events}, so that stage has no verdict.`
       : "";
@@ -593,7 +622,7 @@ export function limitsStatement(verdict: WindowVerdict, warnings: readonly strin
   if (verdict.lastPassed === null) return `No stage passed (${profile}).${next}${gaps}`;
   const earlier =
     verdict.lastPassed === verdict.passedBefore ? ", from an earlier run, not this one" : "";
-  return `Passed up to ${verdict.lastPassed} events per source calendar${earlier} (${profile}).${next}${gaps}`;
+  return `${READINGS} Passed up to ${verdict.lastPassed} events per source calendar${earlier} (${profile}).${next}${gaps}`;
 }
 
 /** What `GET /dev/rpc-budget` answers, with the conclusion. */
@@ -641,6 +670,7 @@ export function formatReport(
 ): string {
   const lines: string[] = [...warnings, ...notes].flatMap((note) => [`**${note}**`, ""]);
   if (rpc) lines.push(rpcLine(rpc), "");
+  let rowsBefore = 0;
   for (const verdict of verdicts) {
     lines.push(`## Window ${verdict.windowDays} days`, "");
     lines.push(
@@ -674,7 +704,8 @@ export function formatReport(
     if (verdict.brokenAt) {
       lines.push(`Broke at ${verdict.brokenAt.events}: ${verdict.brokenAt.message}.`, "");
     }
-    lines.push(limitsStatement(verdict, warnings), "");
+    lines.push(limitsStatement(verdict, warnings, rowsBefore), "");
+    rowsBefore += estimatedRows(verdict);
   }
   return lines.join("\n");
 }
@@ -812,19 +843,18 @@ async function runStage(
   return summarize(await readStats(io, since, true), burst);
 }
 
-/** Whether work may still be queued, which would run into the next window. */
-function leftWork(result: StageResult): boolean {
-  return !result.settled || result.burst?.settled === false;
-}
-
-/** The RPC check. It runs once and never ends a run: without it, one number is missing. */
-async function checkRpc(io: ProbeIo, notes: string[]): Promise<RpcCheck | null> {
+/**
+ * The RPC check. It runs once and never ends a run. Only this check shows the limit inside a
+ * Durable Object, where the sync runs, so a run without it gets a warning.
+ */
+async function checkRpc(io: ProbeIo, warnings: string[]): Promise<RpcCheck | null> {
+  const noLimit = "So no Durable Object showed a limit of 50.";
   try {
     const { status, body } = await io.call("GET", "/dev/rpc-budget");
     if (status === 200) return judgeRpc(body as Omit<RpcCheck, "result">);
-    notes.push(`The RPC check did not run: GET /dev/rpc-budget answered ${status}.`);
+    warnings.push(`The RPC check did not run: GET /dev/rpc-budget answered ${status}. ${noLimit}`);
   } catch (error) {
-    notes.push(`The RPC check did not run: ${String(error)}.`);
+    warnings.push(`The RPC check did not run: ${String(error)}. ${noLimit}`);
   }
   return null;
 }
@@ -863,9 +893,9 @@ export async function runProbe(options: ProbeOptions, io: ProbeIo): Promise<Prob
   const notes: string[] = [];
   const warnings: string[] = [];
   const probeMarker = marker.body as ProbeMarker | null;
-  const warning = limitsWarning(options.target, probeMarker);
+  const warning = limitsWarning(options.target);
   if (warning) warnings.push(warning);
-  const rpc = probeMarker?.simulatedFetch === "ok" ? await checkRpc(io, notes) : null;
+  const rpc = probeMarker?.simulatedFetch === "ok" ? await checkRpc(io, warnings) : null;
   if (rpc && rpc.baseline.state !== "limited" && !isLocalTarget(options.target)) {
     warnings.push("A Durable Object showed no subrequest limit, so this run tests no limit of 50.");
   }
@@ -891,8 +921,8 @@ export async function runProbe(options: ProbeOptions, io: ProbeIo): Promise<Prob
       passedBefore: options.passedBefore,
     });
     verdicts.push(verdict);
-    // Work that is still queued would run into the next window and falsify it.
-    if (brokenAt || results.some(leftWork)) {
+    // After a failure, queued work or a spent daily budget would falsify the next window.
+    if (brokenAt || verdict.failedAt) {
       const rest = options.windows.slice(options.windows.indexOf(windowDays) + 1);
       if (rest.length > 0) notes.push(`Not run: window ${rest.join(", ")} days.`);
       break;
@@ -902,7 +932,9 @@ export async function runProbe(options: ProbeOptions, io: ProbeIo): Promise<Prob
     ? EXIT.broken
     : verdicts.some((verdict) => verdict.failedAt)
       ? EXIT.stageFailed
-      : EXIT.passed;
+      : warnings.length > 0
+        ? EXIT.passedNoStatement
+        : EXIT.passed;
   return {
     exitCode,
     report: formatReport(verdicts, notes, { warnings, rpc }),

@@ -2,6 +2,7 @@ import type { Child } from "hono/jsx";
 import { APP_NAME } from "../brand";
 import { LOCALE_NAMES, LOCALES, useI18n, useLanguageHref, type Locale } from "../i18n";
 import type { CurrentUser } from "../users";
+import { buildVersionLabel } from "../version";
 
 export type NavItem = "accounts" | "rules" | "activity" | "admin";
 
@@ -76,6 +77,7 @@ export function Layout(props: {
 }) {
   const { user } = props;
   const { locale, t } = useI18n();
+  const version = buildVersionLabel();
   return (
     <html lang={locale}>
       <head>
@@ -156,6 +158,14 @@ export function Layout(props: {
           <span>{APP_NAME}</span>
           <span aria-hidden="true">·</span>
           <a href="/privacy">{t.nav.privacy}</a>
+          {version ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span class="version" title={t.nav.version}>
+                {version}
+              </span>
+            </>
+          ) : null}
         </footer>
       </body>
     </html>

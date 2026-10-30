@@ -36,6 +36,8 @@ export default defineConfig(async () => {
         },
       }),
     ],
+    // The build sets the commit at deploy time; tests use a fixed value.
+    define: { __BUILD_COMMIT__: '"testcommit1234"' },
     test: {
       // The waitlist Worker has its own config and tests, run by `pnpm waitlist:check`.
       exclude: ["**/node_modules/**", "waitlist/**", "website/**"],

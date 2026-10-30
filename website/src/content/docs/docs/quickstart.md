@@ -72,7 +72,9 @@ of the dashboard. The dashboard works without any local tools.
 
 On the page of your Worker in the dashboard, open **Settings**, then **Domains & Routes**. The
 address looks like `https://slotmirror.<your-subdomain>.workers.dev`. You need it in the next
-step. If you use a custom domain, use its address instead, here and in the OAuth app.
+step. If you use a custom domain, use its address instead, here and in the OAuth app. Then always
+open slotmirror through that domain. The redirect URI comes from the address in your browser, so
+sign-in fails on the `workers.dev` address.
 
 Add one more variable: `PUBLIC_URL`, set to this address, without a trailing slash. With it,
 Microsoft and Google notify the Worker about changes, and mirrored blocks update when they report a change.

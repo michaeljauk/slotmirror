@@ -117,9 +117,9 @@ the build has one.
 ## Hosted version
 
 A hosted version at slotmirror.app is planned. It does not exist yet, and you cannot sign up for
-it. A waitlist for it is not open yet. When it opens, the home page of
-[slotmirror.com](https://slotmirror.com) will show the form, and joining will not be a purchase.
-Today you run slotmirror yourself, as described above. The code of the waitlist Worker is in
+it. If the waitlist is open, the home page of [slotmirror.com](https://slotmirror.com) shows the
+form. Joining the waitlist is not a purchase. Today you run slotmirror yourself, as described
+above. The code of the waitlist Worker is in
 [`waitlist/`](waitlist/README.md).
 
 ## Screens

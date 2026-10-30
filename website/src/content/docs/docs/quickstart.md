@@ -3,8 +3,17 @@ title: Quickstart
 description: Deploy slotmirror to Cloudflare, connect your calendars, and choose where events go.
 ---
 
-You need a Cloudflare account (the free plan is enough) and one provider to start: Microsoft 365
-or Google. Plan about 30 minutes. Most of that time goes into the OAuth app of the provider.
+You need:
+
+- A Cloudflare account. The free plan is enough.
+- An account at one provider to start: Microsoft 365 or Google.
+- Rights to create an OAuth app at that provider: an app registration in Microsoft Entra, or a
+  project in Google Cloud.
+- A tool to generate two random secrets (step 1).
+- For the manual deploy only: Node 22 and pnpm 10.
+
+The OAuth app of the provider takes the most effort. This page gives no time estimate, because
+none has been measured.
 
 To mirror, you need two calendars. They can be two accounts at the same provider, for example a
 work and a private Microsoft account. Add the second provider later, if you need it.
@@ -63,7 +72,7 @@ of the dashboard. The dashboard works without any local tools.
 
 On the page of your Worker in the dashboard, open **Settings**, then **Domains & Routes**. The
 address looks like `https://slotmirror.<your-subdomain>.workers.dev`. You need it in the next
-step.
+step. If you use a custom domain, use its address instead, here and in the OAuth app.
 
 Add one more variable: `PUBLIC_URL`, set to this address, without a trailing slash. With it,
 Microsoft and Google notify the Worker about changes, and mirrored blocks update when they report a change.
@@ -111,11 +120,31 @@ git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
-# copy the database_id into wrangler.jsonc
+# copy the database_id into wrangler.jsonc, see below
 pnpm wrangler secret put SESSION_SECRET       # generate it as shown above
 pnpm wrangler secret put TOKEN_ENCRYPTION_KEY
 pnpm run deploy                               # applies the migrations, then deploys
 ```
+
+`wrangler d1 create` prints the new database as a configuration block, similar to this one. The ID
+is an example:
+
+```jsonc
+{
+  "d1_databases": [
+    {
+      "binding": "slotmirror",
+      "database_name": "slotmirror",
+      "database_id": "11111111-2222-3333-4444-555555555555",
+    },
+  ],
+}
+```
+
+In `wrangler.jsonc`, replace only the `database_id` of the existing `d1_databases` entry with this
+value. Keep `"binding": "DB"`. The code reads the database under that name, and the printed
+`binding` does not match it. If Wrangler offers to add the database to your configuration for you,
+decline.
 
 Then follow steps 3 to 8. Set the provider secrets with `pnpm wrangler secret put` after step 5.
 

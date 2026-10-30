@@ -93,9 +93,10 @@ tokens stay with you and not with a sync service.
 
 ## Quickstart
 
-The full quickstart is in the [documentation](https://slotmirror.com/docs/quickstart/). It takes
-about 30 minutes with one provider. The order is: deploy, read the address of your Worker, create
-the OAuth app, set the secrets.
+The full quickstart is in the [documentation](https://slotmirror.com/docs/quickstart/). You need
+a Cloudflare account (the free plan is enough), an account at one provider (Microsoft 365 or
+Google) with the right to create an OAuth app, and a way to generate two random secrets. The order
+is: deploy, read the address of your Worker, create the OAuth app, set the secrets.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
 
@@ -112,6 +113,14 @@ To update a running deployment, see
 `pnpm run deploy` also passes the short commit hash to the build, and the app footer shows it. A
 deploy with plain `wrangler deploy` has no hash; the footer then shows only a release version, if
 the build has one.
+
+## Hosted version
+
+A hosted version at slotmirror.app is planned. It does not exist yet, and you cannot sign up for
+it. A waitlist for it is not open yet. When it opens, the home page of
+[slotmirror.com](https://slotmirror.com) will show the form, and joining will not be a purchase.
+Today you run slotmirror yourself, as described above. The code of the waitlist Worker is in
+[`waitlist/`](waitlist/README.md).
 
 ## Screens
 
@@ -167,35 +176,13 @@ contents, stay in the EU. Create the D1 database in the EU too:
 `wrangler d1 create slotmirror --jurisdiction=eu`. Neither setting can change for existing
 data. Changing `DATA_JURISDICTION` later disconnects every account.
 
-### Microsoft Entra app registration
+### Provider setup
 
-1. In the Microsoft Entra admin center, open **App registrations** and choose **New
-   registration**.
-2. Supported account types: **Accounts in any organizational directory and personal Microsoft
-   accounts**. Choose a single tenant only if every calendar is in your tenant.
-3. Redirect URI: platform **Web**, `https://<your-worker>/auth/microsoft/callback`.
-4. Under **API permissions**, add the delegated Microsoft Graph permissions `openid`, `email`,
-   `profile`, `offline_access`, `User.Read` and `Calendars.ReadWrite`. Users can consent to these
-   themselves unless your tenant blocks user consent.
-5. Under **Certificates & secrets**, create a client secret. Note when it expires; the sync stops
-   when it does.
-6. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET`.
+Each provider needs an OAuth app that you create once. The steps, the redirect addresses and the
+secrets to set are in the documentation:
 
-### Google OAuth client
-
-1. In the Google Cloud console, create a project and enable the **Google Calendar API**.
-2. In **Google Auth Platform**, fill in **Branding**: app name, your Worker's address as home
-   page, `https://<your-worker>/privacy` as privacy policy, and your Worker's domain as authorized
-   domain.
-3. Under **Data access**, add the scopes `openid`, `email`, `profile`,
-   `https://www.googleapis.com/auth/calendar.events` and
-   `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
-4. Under **Audience**, publish the app to **In production**. In **Testing**, Google expires
-   refresh tokens after 7 days. Until Google verifies the app, users see a warning that the app
-   is not verified; for your own deployment you can continue past it.
-5. Under **Clients**, create a **Web application** client with the redirect URI
-   `https://<your-worker>/auth/google/callback`.
-6. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+- Microsoft 365: [Microsoft Entra app](https://slotmirror.com/docs/entra-setup/)
+- Google Calendar: [Google OAuth client](https://slotmirror.com/docs/google-setup/)
 
 ## Users joining and leaving
 

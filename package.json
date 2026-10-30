@@ -46,24 +46,6 @@
   },
   "cloudflare": {
     "bindings": {
-      "ORG_NAME": {
-        "description": "Optional. Name shown in the dashboard, e.g. your company name."
-      },
-      "ALLOWED_EMAILS": {
-        "description": "Comma-separated email addresses that may sign in. For a personal deployment, put your own address here."
-      },
-      "ALLOWED_DOMAINS": {
-        "description": "Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team deployment."
-      },
-      "ALLOWED_TENANT_IDS": {
-        "description": "Optional. Comma-separated Entra tenant IDs. If set, Microsoft sign-ins from other tenants are refused."
-      },
-      "ADMIN_EMAILS": {
-        "description": "Comma-separated email addresses with access to the admin page. Admins may always sign in."
-      },
-      "PRIVACY_CONTACT": {
-        "description": "Email address shown on the privacy page as the contact of whoever operates this deployment. Required by Google for published OAuth apps."
-      },
       "SESSION_SECRET": {
         "description": "Random string, at least 32 characters. Signs the session cookie."
       },

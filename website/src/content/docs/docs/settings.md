@@ -28,7 +28,7 @@ secrets and a sign-in provider are present, every page shows a checklist of what
 | `ORG_NAME`                        | variable | Optional display name.                                                                        |
 | `TIME_ZONE`                       | variable | IANA time zone for dates in the dashboard, e.g. `Europe/Vienna`. Default `UTC`.               |
 | `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the contact of the operator.                          |
-| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in. Connecting accounts stays open.      |
+| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or `microsoft,google`. Limits sign-in. Accounts stay open.    |
 | `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.                  |
 | `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set it before the first account connects. |
 | `MAX_DETAIL_TO_EXTERNAL`          | variable | Optional cap from org accounts to other accounts: `busy`, `title`, `title_location`.          |

@@ -128,6 +128,8 @@ export interface SetupStatus {
   providers: Record<Provider, boolean>;
   /** At least one configured provider is allowed for sign-in. */
   signIn: boolean;
+  /** Entries of SIGN_IN_PROVIDERS that name no provider, e.g. "both". Shown on the setup page. */
+  unknownSignInEntries: string[];
   /** True if the dashboard can be used: access, both secrets, and a sign-in provider. */
   ready: boolean;
 }
@@ -144,7 +146,16 @@ export function setupStatus(env: Env): SetupStatus {
   const allowed = signInProviders(env);
   const signIn = allowed.microsoft || allowed.google;
   const ready = accessConfigured && sessionSecret && tokenEncryptionKey && signIn;
-  return { accessConfigured, sessionSecret, tokenEncryptionKey, providers, signIn, ready };
+  const unknownSignInEntries = unknownSignInProviders(env);
+  return {
+    accessConfigured,
+    sessionSecret,
+    tokenEncryptionKey,
+    providers,
+    signIn,
+    unknownSignInEntries,
+    ready,
+  };
 }
 
 /**
@@ -157,15 +168,31 @@ export function signInProviders(env: Env): Record<Provider, boolean> {
     microsoft: Boolean(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET),
     google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
   };
-  const listed = (env.SIGN_IN_PROVIDERS ?? "")
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry.length > 0);
+  const listed = signInEntries(env);
   if (listed.length === 0) return configured;
   return {
     microsoft: configured.microsoft && listed.includes("microsoft"),
     google: configured.google && listed.includes("google"),
   };
+}
+
+function signInEntries(env: Env): string[] {
+  return (env.SIGN_IN_PROVIDERS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Entries of SIGN_IN_PROVIDERS that are neither "microsoft" nor "google". The result is cut to 5
+ * entries of 40 characters each: a wrongly pasted value, such as a secret, would show on the
+ * public setup page.
+ */
+export function unknownSignInProviders(env: Env): string[] {
+  return signInEntries(env)
+    .filter((entry) => entry !== "microsoft" && entry !== "google")
+    .map((entry) => entry.slice(0, 40))
+    .slice(0, 5);
 }
 
 function isBase64Key(value: string | undefined, bytes: number): boolean {

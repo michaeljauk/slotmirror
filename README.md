@@ -93,33 +93,18 @@ tokens stay with you and not with a sync service.
 
 ## Quickstart
 
-### Deploy to Cloudflare
+The full quickstart is in the [documentation](https://slotmirror.com/docs/quickstart/). It takes
+about 30 minutes with one provider. The order is: deploy, read the address of your Worker, create
+the OAuth app, set the secrets.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
 
-The button creates the Worker, the D1 database and the Durable Object in your account and asks
-for the secrets. Then:
+Before you click, read the quickstart: the button asks for `SESSION_SECRET` and
+`TOKEN_ENCRYPTION_KEY`, and the quickstart shows how to generate them. Leave the provider fields
+empty. Until you set `ALLOWED_EMAILS` and `ADMIN_EMAILS` as variables in the Cloudflare dashboard,
+every page shows a checklist of what is missing.
 
-1. Create an Entra app registration, a Google OAuth client, or both (see below).
-2. Set `ALLOWED_EMAILS` to your address, or `ALLOWED_DOMAINS` for a team, and `ADMIN_EMAILS`.
-3. Set `PUBLIC_URL` to your Worker's address to turn on push notifications.
-4. Open the Worker's address, sign in, connect your calendars, and choose where events go.
-
-Until all required settings are present, every page shows a checklist of what is missing.
-
-### Manual deploy
-
-```sh
-git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
-pnpm install
-pnpm wrangler login
-pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
-# copy the database_id into wrangler.jsonc; set variables in the dashboard
-pnpm wrangler secret put SESSION_SECRET       # openssl rand -base64 48
-pnpm wrangler secret put TOKEN_ENCRYPTION_KEY # openssl rand -base64 32
-pnpm wrangler secret put MICROSOFT_CLIENT_ID  # and the other client secrets you use
-pnpm run deploy                               # applies the migrations, then deploys
-```
+To deploy by hand, see [Deploy by hand](https://slotmirror.com/docs/quickstart/#deploy-by-hand).
 
 ## Screens
 
@@ -147,7 +132,7 @@ locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy k
 | `ORG_NAME`                        | variable | Optional display name.                                                                     |
 | `TIME_ZONE`                       | variable | IANA time zone for dashboard dates and working hours, e.g. `Europe/Vienna`. Default `UTC`. |
 | `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
-| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or both. Limits sign-in; connecting accounts stays open.   |
+| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or `microsoft,google`. Limits sign-in; accounts stay open. |
 | `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.               |
 | `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set before the first account connects. |
 | `MAX_DETAIL_TO_EXTERNAL`          | variable | Optional cap from org accounts to other accounts: `busy`, `title`, `title_location`.       |

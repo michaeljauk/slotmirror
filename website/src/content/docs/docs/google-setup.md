@@ -15,12 +15,9 @@ slotmirror needs an OAuth client in Google Cloud to connect Google accounts.
 4. Under **Audience**, publish the app to **In production**.
 5. Under **Clients**, create a **Web application** client with the redirect URI
    `https://<your-worker>/auth/google/callback`.
-6. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`:
-
-```sh
-pnpm wrangler secret put GOOGLE_CLIENT_ID
-pnpm wrangler secret put GOOGLE_CLIENT_SECRET
-```
+6. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as secrets. In the Cloudflare dashboard,
+   open your Worker, **Settings**, **Variables and Secrets**. With a clone, you can run
+   `pnpm wrangler secret put <NAME>` instead.
 
 :::caution[Testing mode expires tokens]
 If the app stays in **Testing**, Google expires refresh tokens after 7 days. The account then

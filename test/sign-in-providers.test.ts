@@ -39,6 +39,41 @@ describe("SIGN_IN_PROVIDERS", () => {
   });
 });
 
+describe("setup checklist for an invalid SIGN_IN_PROVIDERS", () => {
+  it("names the value it read and the correction", async () => {
+    const bare = {
+      DB: env.DB,
+      ACCOUNT_SYNC: env.ACCOUNT_SYNC,
+      SESSION_SECRET: env.SESSION_SECRET,
+      TOKEN_ENCRYPTION_KEY: env.TOKEN_ENCRYPTION_KEY,
+      MICROSOFT_CLIENT_ID: env.MICROSOFT_CLIENT_ID,
+      MICROSOFT_CLIENT_SECRET: env.MICROSOFT_CLIENT_SECRET,
+      ALLOWED_EMAILS: "owner@example.com",
+      SIGN_IN_PROVIDERS: "both",
+    } as Env;
+    expect(setupStatus(bare).unknownSignInEntries).toEqual(["both"]);
+    const response = await worker.fetch(new Request(`${BASE}/`), bare, {} as ExecutionContext);
+    expect(response.status).toBe(503);
+    const html = await response.text();
+    expect(html).toContain("SIGN_IN_PROVIDERS is set to &quot;both&quot;");
+    expect(html).toContain("microsoft,google");
+    expect(html).toContain("DATA_JURISDICTION");
+    expect(html).toContain("https://slotmirror.com/docs/quickstart/");
+    expect(html).not.toContain("the README");
+  });
+
+  it("lists no entry for valid values", () => {
+    const valid = { ...env, SIGN_IN_PROVIDERS: "microsoft, Google" };
+    expect(setupStatus(valid).unknownSignInEntries).toEqual([]);
+  });
+
+  it("reports an unknown entry such as apple", () => {
+    expect(setupStatus({ ...env, SIGN_IN_PROVIDERS: "apple" }).unknownSignInEntries).toEqual([
+      "apple",
+    ]);
+  });
+});
+
 describe("DATA_JURISDICTION", () => {
   it("accepts supported jurisdictions only", () => {
     expect(dataJurisdiction({ ...env, DATA_JURISDICTION: "EU" })).toBe("eu");

@@ -2,6 +2,8 @@ import type { SetupStatus } from "../config";
 import { useI18n } from "../i18n";
 import { Layout } from "./layout";
 
+const QUICKSTART_URL = "https://slotmirror.com/docs/quickstart/";
+
 function Item(props: { ok: boolean; name: string; hint: string }) {
   const { t } = useI18n();
   return (
@@ -48,10 +50,20 @@ export function SetupPage(props: { status: SetupStatus }) {
             <Item
               ok={status.signIn}
               name="MICROSOFT_CLIENT_ID + _SECRET or GOOGLE_CLIENT_ID + _SECRET, allowed by SIGN_IN_PROVIDERS"
-              hint={t.setup.providerHint}
+              hint={
+                status.unknownSignInEntries.length > 0
+                  ? t.setup.providerInvalidHint(status.unknownSignInEntries.join(","))
+                  : t.setup.providerHint
+              }
             />
           </ul>
         </div>
+        <p class="lead">{t.setup.jurisdictionNote}</p>
+        <p class="lead">
+          <a href={QUICKSTART_URL} rel="noopener">
+            {t.setup.docsLink}
+          </a>
+        </p>
       </section>
     </Layout>
   );

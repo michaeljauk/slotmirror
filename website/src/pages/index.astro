@@ -4,7 +4,6 @@ import editor from "../../../docs/images/editor.png";
 import "../styles/home.css";
 
 const repo = "https://github.com/michaeljauk/slotmirror";
-const deploy = `https://deploy.workers.cloudflare.com/?url=${repo}`;
 const title = "slotmirror: calendar sync that keeps up with moved meetings";
 const description =
   "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Moved meetings move their copies within seconds. Runs in your own Cloudflare account, on the free plan.";
@@ -177,7 +176,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
             seconds. Microsoft 365 and Google, self-hosted on Cloudflare.
           </p>
           <div class="buttons">
-            <a class="button primary" href={deploy} data-track="deploy_click"
+            <a class="button primary" href={page("docs/quickstart/")} data-track="deploy_click"
               ><Fragment set:html={cloudflare} />Deploy to Cloudflare</a
             >
             <a class="button" href={repo}><Fragment set:html={github} />View on GitHub</a>

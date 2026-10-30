@@ -77,7 +77,7 @@ tokens stay with you and not with a sync service.
   for a main calendar is the account's address. The settings for this come with the new editor.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
-- **Changes within seconds.** Microsoft and Google notify your deployment when a calendar
+- **Changes arrive by push.** Microsoft and Google notify your deployment when a calendar
   changes. A full sync every hour catches anything a notification missed.
 - **Recurring events are exact.** Each occurrence is mirrored on its own, so a moved or
   cancelled single occurrence moves or removes its block.
@@ -232,7 +232,7 @@ To set it up:
 ## Push notifications
 
 With `PUBLIC_URL` set, slotmirror asks Microsoft and Google to notify it when a calendar that a
-rule reads or writes changes. A change then syncs within seconds. Microsoft subscriptions last up
+rule reads or writes changes. A change then starts a sync. Microsoft subscriptions last up
 to 7 days and Google channels until Google ends them; the cron renews both a day before they
 expire. Every 10 minutes the cron also syncs calendars without an active subscription. Once an
 hour it syncs every rule, so a missed notification costs at most one hour.

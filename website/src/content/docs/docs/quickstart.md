@@ -66,7 +66,7 @@ address looks like `https://slotmirror.<your-subdomain>.workers.dev`. You need i
 step.
 
 Add one more variable: `PUBLIC_URL`, set to this address, without a trailing slash. With it,
-Microsoft and Google notify the Worker about changes, and mirrored blocks update within seconds.
+Microsoft and Google notify the Worker about changes, and mirrored blocks update when they report a change.
 Without it, the Worker polls every 10 minutes.
 
 ## 5. Create the OAuth app for one provider
@@ -97,7 +97,7 @@ the other provider later, repeat steps 5 and 6 for it.
 1. Under **Where your events go**, put your two calendars in the group **Block each other**, and
    choose **Save**. See below.
 2. In one calendar, create a test event for tomorrow.
-3. Watch the other calendar. With `PUBLIC_URL`, the block appears within seconds. Without it, it
+3. Watch the other calendar. With `PUBLIC_URL`, the block appears when the notification arrives. Without it, it
    appears at the next run, after up to 10 minutes.
 
 When the block appears, the setup works.

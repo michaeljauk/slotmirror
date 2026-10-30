@@ -8,6 +8,8 @@ description: What slotmirror does not do yet, and how it stays inside the Cloudf
 - **Microsoft 365 and Google only.** iCloud and other CalDAV calendars are not supported yet.
 - **Targets are main calendars.** Blocks go into the main calendar of each account, not into
   other calendars of the account.
+- **A window of 90 days.** By default the sync mirrors the next 90 days. The window moves forward
+  every day. You can change it under **For all calendars**.
 - **Past blocks stay.** The sync looks from today forward. If you delete a rule, its blocks from
   today on are removed. Blocks before today stay as history.
 - **Unverified Google app.** Until Google verifies your OAuth client, Google shows a warning when

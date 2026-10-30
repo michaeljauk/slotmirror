@@ -26,7 +26,7 @@ The version is below 1.0. Settings and the database can still change between rel
   with title, or everything.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
-- **Changes within seconds.** Microsoft and Google notify your deployment when a calendar
+- **Changes arrive by push.** Microsoft and Google notify your deployment when a calendar
   changes. See [Push notifications](../push-notifications/).
 - **Recurring events are exact.** Each occurrence is mirrored on its own.
 - **Only differences are written.** Every run compares what each target should contain with what

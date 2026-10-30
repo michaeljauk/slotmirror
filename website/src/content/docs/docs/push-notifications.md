@@ -1,10 +1,10 @@
 ---
 title: Push notifications
-description: How slotmirror learns about calendar changes within seconds, and what runs when a notification is missed.
+description: How slotmirror learns about calendar changes, and what runs when a notification is missed.
 ---
 
 If `PUBLIC_URL` is set, slotmirror asks Microsoft and Google to notify it when a calendar changes
-that a rule reads or writes. A change then syncs within seconds.
+that a rule reads or writes. A change then starts a sync.
 
 ## Subscriptions
 

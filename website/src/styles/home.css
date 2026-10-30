@@ -4,7 +4,7 @@
   --surface: #ffffff;
   --text: #1c1c1a;
   --muted: #6e6d68;
-  --faint: #8a8983;
+  --faint: #6a6963;
   --line: #e6e5e0;
   --line-strong: #d6d5cf;
   --accent: #2b59c3;
@@ -23,7 +23,7 @@
   --surface: #1f1f1d;
   --text: #ecebe6;
   --muted: #a8a79f;
-  --faint: #8c8b84;
+  --faint: #9d9c94;
   --line: #2e2e2b;
   --line-strong: #3b3b37;
   --accent: #7a9cf0;
@@ -250,6 +250,12 @@ nav.links a:hover {
 
 .button.primary:hover {
   background: var(--accent-hover);
+}
+
+.prereq {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 16px 0 0;
 }
 
 .note {

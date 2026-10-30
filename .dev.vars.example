@@ -9,3 +9,14 @@ MICROSOFT_CLIENT_SECRET=
 
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+
+# Settings. Locally they belong here; in production they are variables in the Cloudflare
+# dashboard, not in wrangler.jsonc. Uncomment what you need. Without ALLOWED_EMAILS,
+# ALLOWED_DOMAINS or ADMIN_EMAILS the app shows the setup checklist instead of the sign-in page.
+# ALLOWED_EMAILS=you@example.com
+# ADMIN_EMAILS=you@example.com
+# ALLOWED_DOMAINS=
+# ALLOWED_TENANT_IDS=
+# PUBLIC_URL=
+# DATA_JURISDICTION=
+# TIME_ZONE=Europe/Vienna

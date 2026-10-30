@@ -8,8 +8,16 @@ and makes their own choices. Nobody sees the calendars of another user.
 
 ## Variables and secrets
 
-Set variables in `wrangler.jsonc` or in the Cloudflare dashboard. Set secrets with
+Set variables in the Cloudflare dashboard: **Workers & Pages**, your Worker, **Settings**,
+**Variables and Secrets**. `wrangler.jsonc` does not list them, and it sets `keep_vars`, so a deploy
+keeps the values you set there. For local development, put them in `.dev.vars`. Set secrets with
 `wrangler secret put <NAME>`.
+
+If you add a `vars` entry to `wrangler.jsonc`, that value replaces the dashboard value on every
+deploy, even an empty one. Use either the dashboard or the file for one name, not both.
+
+Until at least one of `ALLOWED_EMAILS`, `ALLOWED_DOMAINS` or `ADMIN_EMAILS` is set, and the
+secrets and a sign-in provider are present, every page shows a checklist of what is missing.
 
 | Name                              | Kind     | Purpose                                                                                       |
 | --------------------------------- | -------- | --------------------------------------------------------------------------------------------- |

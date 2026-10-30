@@ -114,7 +114,7 @@ git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
-# copy the database_id into wrangler.jsonc, set the variables there
+# copy the database_id into wrangler.jsonc; set variables in the dashboard
 pnpm wrangler secret put SESSION_SECRET       # openssl rand -base64 48
 pnpm wrangler secret put TOKEN_ENCRYPTION_KEY # openssl rand -base64 32
 pnpm wrangler secret put MICROSOFT_CLIENT_ID  # and the other client secrets you use
@@ -133,6 +133,10 @@ pnpm run deploy                               # applies the migrations, then dep
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars
 and makes their own choices. Nobody sees another user's calendars.
+
+Set variables in the Cloudflare dashboard (Worker, Settings, Variables and Secrets), or in `.dev.vars`
+locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy keeps your values. A
+`vars` entry in that file would replace the dashboard value on every deploy.
 
 | Name                              | Kind     | Purpose                                                                                    |
 | --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |

@@ -121,6 +121,10 @@ pnpm wrangler secret put MICROSOFT_CLIENT_ID  # and the other client secrets you
 pnpm run deploy                               # applies the migrations, then deploys
 ```
 
+`pnpm run deploy` also passes the short commit hash to the build, and the app footer shows it. A
+deploy with plain `wrangler deploy` has no hash; the footer then shows only a release version, if
+the build has one.
+
 ## Screens
 
 | Accounts                                        | Settings for all calendars                 |

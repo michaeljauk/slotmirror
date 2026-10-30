@@ -1,4 +1,4 @@
-import pkg from "../package.json";
+import { version as packageVersion } from "../package.json";
 
 /**
  * Set at deploy time: `wrangler deploy --define '__BUILD_COMMIT__:"<hash>"'`.
@@ -17,7 +17,7 @@ export function versionLabel(version: string, commit: string | undefined): strin
 /** The label of this build: the package version and the commit set at deploy time. */
 export function buildVersionLabel(): string | null {
   return versionLabel(
-    pkg.version,
+    packageVersion,
     typeof __BUILD_COMMIT__ === "undefined" ? undefined : __BUILD_COMMIT__,
   );
 }

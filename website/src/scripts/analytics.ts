@@ -106,6 +106,7 @@ async function start(projectKey: string) {
     );
     if (!target || target.tagName === "FORM") return;
     // Deploy links in the docs are plain Markdown links, so they carry no data-track attribute.
+    // The home page has no deploy link: its main button sends quickstart_click.
     const name = target.dataset.track ?? "deploy_click";
     if (isTracked(name)) send(name);
   });

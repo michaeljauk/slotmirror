@@ -8,9 +8,8 @@ const title = "slotmirror: calendar sync that keeps up with moved meetings";
 const description =
   "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Only Busy leaves a calendar. Runs in your own Cloudflare account, on the free plan.";
 
-// Hero sentence, two variants. No latency has been measured yet (task T4), so the live variant
-// names no number. After T4, replace `null` with the measured values and the conditions of the
-// measurement, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
+// Hero sentence, two variants. No latency has been measured yet, so the live variant names no
+// number. After the measurement, replace `null` with the measured values and the conditions, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
 // That one change turns on the second variant. Never fill in a figure that was not measured.
 const latency: { p50: string; p95: string; conditions: string } | null = null;
 const heroSub = latency
@@ -247,8 +246,8 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
               <b>1</b>
               <h3>Deploy</h3>
               <p>
-                Deploy the Worker and its database to your Cloudflare account, with the button or
-                with wrangler.
+                Deploy the Worker and its database to your Cloudflare account. The quickstart
+                covers both ways: the deploy button and wrangler.
               </p>
             </div>
             <div class="step" style="--c:var(--c-vermilion)">

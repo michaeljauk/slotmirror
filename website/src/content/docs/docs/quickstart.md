@@ -9,22 +9,11 @@ or Google. Plan about 30 minutes. Most of that time goes into the OAuth app of t
 To mirror, you need two calendars. They can be two accounts at the same provider, for example a
 work and a private Microsoft account. Add the second provider later, if you need it.
 
-The order matters. The OAuth app needs the address of your Worker, and you get the address only
-after the deploy. So you deploy first, create the OAuth app second, and set its secrets last.
+The order matters. The deploy form needs the two secrets, so you generate them first. The OAuth app needs the address of your Worker, and you get the address only after the deploy. So you deploy second, create the OAuth app after that, and set its secrets last.
 
-## 1. Deploy with the button
+## 1. Generate the two secrets
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
-
-The button creates the Worker, the D1 database and the Durable Object in your account. In its form:
-
-- Generate `SESSION_SECRET` and `TOKEN_ENCRYPTION_KEY` and paste them in (see below).
-- Leave `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `GOOGLE_CLIENT_ID` and
-  `GOOGLE_CLIENT_SECRET` empty. You do not have them yet.
-
-### Generate the two secrets
-
-Use any one of these. Keep the values: you cannot read a secret again after you save it.
+The form of the deploy button asks for both values at once, so create them first. Use any one of these. Keep the values: you cannot read a secret again after you save it.
 
 | Tool                     | `SESSION_SECRET`                                                                                                                 | `TOKEN_ENCRYPTION_KEY`                                                                                                           |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,7 +24,17 @@ Use any one of these. Keep the values: you cannot read a secret again after you 
 `SESSION_SECRET` needs at least 32 characters. `TOKEN_ENCRYPTION_KEY` must decode to exactly 32
 bytes, so do not change the number 32.
 
-## 2. Set who may sign in
+## 2. Deploy with the button
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+
+The button creates the Worker, the D1 database and the Durable Object in your account. In its form:
+
+- Paste in `SESSION_SECRET` and `TOKEN_ENCRYPTION_KEY` from step 1.
+- Leave `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `GOOGLE_CLIENT_ID` and
+  `GOOGLE_CLIENT_SECRET` empty. You do not have them yet.
+
+## 3. Set who may sign in
 
 Until you do this, your Worker shows a checklist and no sign-in page. In the Cloudflare dashboard,
 open **Workers & Pages**, your Worker, **Settings**, **Variables and Secrets**. Add these as
@@ -60,7 +59,7 @@ not list them and sets `keep_vars`.
 If you cloned the repository, you can set a secret with `pnpm wrangler secret put <NAME>` instead
 of the dashboard. The dashboard works without any local tools.
 
-## 3. Read the address of your Worker
+## 4. Read the address of your Worker
 
 On the page of your Worker in the dashboard, open **Settings**, then **Domains & Routes**. The
 address looks like `https://slotmirror.<your-subdomain>.workers.dev`. You need it in the next
@@ -70,14 +69,14 @@ Add one more variable: `PUBLIC_URL`, set to this address, without a trailing sla
 Microsoft and Google notify the Worker about changes, and mirrored blocks update within seconds.
 Without it, the Worker polls every 10 minutes.
 
-## 4. Create the OAuth app for one provider
+## 5. Create the OAuth app for one provider
 
-Choose one. Both pages have six steps, and the redirect address uses the address from step 3.
+Choose one. The redirect address uses the address from step 4.
 
 - Microsoft 365: [Microsoft Entra app](../entra-setup/)
 - Google Calendar: [Google OAuth client](../google-setup/)
 
-## 5. Set the secrets of the provider
+## 6. Set the secrets of the provider
 
 In **Variables and Secrets**, add these as **Secret**, with the values from the OAuth app:
 
@@ -88,12 +87,12 @@ Save and deploy. Reload your Worker. If the checklist still shows, it names what
 you set `SIGN_IN_PROVIDERS`, write both providers as `microsoft,google`. The word `both` is not a
 valid value, and the checklist shows the value it read.
 
-## 6. Sign in and connect
+## 7. Sign in and connect
 
 Open the address of your Worker, sign in, and connect your calendars under **Accounts**. To add
-the other provider later, repeat steps 4 and 5 for it.
+the other provider later, repeat steps 5 and 6 for it.
 
-## 7. Watch the first block
+## 8. Watch the first block
 
 1. Under **Where your events go**, put your two calendars in the group **Block each other**, and
    choose **Save**. See below.
@@ -118,7 +117,7 @@ pnpm wrangler secret put TOKEN_ENCRYPTION_KEY
 pnpm run deploy                               # applies the migrations, then deploys
 ```
 
-Then follow steps 2 to 7. Set the provider secrets with `pnpm wrangler secret put` after step 4.
+Then follow steps 3 to 8. Set the provider secrets with `pnpm wrangler secret put` after step 5.
 
 All variables and secrets are in the [settings reference](../settings/).
 

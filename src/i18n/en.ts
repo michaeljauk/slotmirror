@@ -436,9 +436,9 @@ export const en = {
     accessHint:
       "Who may sign in. Your own address for a personal deployment, your email domain for a team.",
     sessionHint:
-      "At least 32 characters. With openssl: openssl rand -base64 48. Without it, the quickstart shows a way for Windows and for the browser.",
+      "At least 32 characters. With openssl: openssl rand -base64 48. Without it, the quickstart shows a way for Windows.",
     keyHint:
-      "A base64-encoded 32-byte key. With openssl: openssl rand -base64 32. Without it, the quickstart shows a way for Windows and for the browser.",
+      "A base64-encoded 32-byte key. With openssl: openssl rand -base64 32. Without it, the quickstart shows a way for Windows.",
     providerHint:
       "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. The quickstart shows the app registration steps.",
     providerInvalidHint: (value: string) =>

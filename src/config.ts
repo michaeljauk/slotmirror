@@ -183,7 +183,11 @@ function signInEntries(env: Env): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-/** Entries of SIGN_IN_PROVIDERS that are neither "microsoft" nor "google", cut to a safe length. */
+/**
+ * Entries of SIGN_IN_PROVIDERS that are neither "microsoft" nor "google". The result is cut to 5
+ * entries of 40 characters each: a wrongly pasted value, such as a secret, would show on the
+ * public setup page.
+ */
 export function unknownSignInProviders(env: Env): string[] {
   return signInEntries(env)
     .filter((entry) => entry !== "microsoft" && entry !== "google")

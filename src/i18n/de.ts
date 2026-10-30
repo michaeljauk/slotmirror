@@ -441,9 +441,9 @@ export const de: Messages = {
     accessHint:
       "Wer sich anmelden darf. Deine eigene Adresse für eine persönliche Installation, deine E-Mail-Domain für ein Team.",
     sessionHint:
-      "Mindestens 32 Zeichen. Mit openssl: openssl rand -base64 48. Ohne openssl zeigt der Quickstart einen Weg für Windows und für den Browser.",
+      "Mindestens 32 Zeichen. Mit openssl: openssl rand -base64 48. Ohne openssl zeigt der Quickstart einen Weg für Windows.",
     keyHint:
-      "Ein Base64-kodierter 32-Byte-Schlüssel. Mit openssl: openssl rand -base64 32. Ohne openssl zeigt der Quickstart einen Weg für Windows und für den Browser.",
+      "Ein Base64-kodierter 32-Byte-Schlüssel. Mit openssl: openssl rand -base64 32. Ohne openssl zeigt der Quickstart einen Weg für Windows.",
     providerHint:
       "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Der Quickstart zeigt die Schritte zur App-Registrierung.",
     providerInvalidHint: (value: string) =>

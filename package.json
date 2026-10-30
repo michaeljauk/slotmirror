@@ -51,19 +51,19 @@
         "description": "Random string, at least 32 characters. Signs the session cookie."
       },
       "TOKEN_ENCRYPTION_KEY": {
-        "description": "Base64-encoded 32-byte key. Encrypts OAuth tokens at rest. Generate with `openssl rand -base64 32`."
+        "description": "Base64-encoded 32-byte key. Encrypts OAuth tokens at rest. Generate with `openssl rand -base64 32`. Without openssl, see the quickstart for other operating systems."
       },
       "MICROSOFT_CLIENT_ID": {
         "description": "Application (client) ID of your Entra app registration. Leave empty if you do not use Microsoft 365."
       },
       "MICROSOFT_CLIENT_SECRET": {
-        "description": "Client secret of your Entra app registration."
+        "description": "Client secret of your Entra app registration. Leave empty if you do not use Microsoft 365."
       },
       "GOOGLE_CLIENT_ID": {
         "description": "OAuth client ID from Google Cloud. Leave empty if you do not use Google Calendar."
       },
       "GOOGLE_CLIENT_SECRET": {
-        "description": "OAuth client secret from Google Cloud."
+        "description": "OAuth client secret from Google Cloud. Leave empty if you do not use Google Calendar."
       }
     }
   }

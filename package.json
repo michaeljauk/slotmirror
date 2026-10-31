@@ -1,6 +1,6 @@
 {
   "name": "slotmirror",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Mirror busy blocks between Microsoft 365 and Google calendars. Self-hosted on Cloudflare Workers.",
   "license": "MIT",

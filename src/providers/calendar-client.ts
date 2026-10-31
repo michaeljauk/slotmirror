@@ -57,7 +57,12 @@ export interface TimeWindow {
 export interface CalendarClient {
   /** Writes per batch request. */
   readonly batchLimit: number;
-  listCalendars(): Promise<CalendarInfo[]>;
+  /**
+   * The account's calendars, in the form for the calendar choice. With `complete`, every calendar
+   * the provider has for the account, so that a calendar left out is known to be missing: Google
+   * adds hidden calendars, and Graph reads all pages.
+   */
+  listCalendars(options?: { complete?: boolean }): Promise<CalendarInfo[]>;
   /**
    * Every occurrence in the window, series expanded, with our own blocks recognisable. The body
    * and the web link of each occurrence only on request.
@@ -73,6 +78,8 @@ export interface CalendarClient {
     window: TimeWindow,
     ruleTags: readonly string[],
   ): Promise<ExistingBlock[]>;
+  /** Blocks in the window that carry any marker, also of rules that no longer exist. */
+  allBlocks(calendarId: string, window: TimeWindow): Promise<ExistingBlock[]>;
   /**
    * Ask the provider to call `url` when events of the calendar change. `token` comes back with
    * every notification, so that the Worker can tell real ones from forged ones.
@@ -87,8 +94,21 @@ export interface CalendarClient {
    * token, only the first token. Null if the provider has no such feed.
    */
   changesSince(calendarId: string, syncToken: string | null): Promise<ChangeFeed | null>;
-  /** Apply up to `batchLimit` actions; already deleted blocks count as success. */
-  applyBatch(calendarId: string, ruleTag: string, actions: SyncAction[]): Promise<BatchResult>;
+  /**
+   * Apply up to `batchLimit` actions; already deleted blocks count as success. A provider that
+   * fixes the time of an all-day block writes it in `allDayZone`, or else in UTC.
+   */
+  applyBatch(
+    calendarId: string,
+    ruleTag: string,
+    actions: SyncAction[],
+    allDayZone?: string,
+  ): Promise<BatchResult>;
+  /**
+   * The time zone of the mailbox, for all-day blocks. Null if the provider names no zone that a
+   * write can use. Only a provider that fixes the time of an all-day block has this method.
+   */
+  mailboxZone?(address: string): Promise<string | null>;
 }
 
 /**
@@ -98,21 +118,32 @@ export function oneCallAtATime(
   client: CalendarClient,
   run: <T>(call: () => Promise<T>) => Promise<T>,
 ): CalendarClient {
+  const mailboxZone = client.mailboxZone?.bind(client);
   return {
     batchLimit: client.batchLimit,
-    listCalendars: () => run(() => client.listCalendars()),
+    listCalendars: (...args) => run(() => client.listCalendars(...args)),
     sourceEvents: (...args) => run(() => client.sourceEvents(...args)),
     existingBlocks: (...args) => run(() => client.existingBlocks(...args)),
+    allBlocks: (...args) => run(() => client.allBlocks(...args)),
     applyBatch: (...args) => run(() => client.applyBatch(...args)),
     watch: (...args) => run(() => client.watch(...args)),
     renew: (...args) => run(() => client.renew(...args)),
     unwatch: (...args) => run(() => client.unwatch(...args)),
     changesSince: (...args) => run(() => client.changesSince(...args)),
+    ...(mailboxZone ? { mailboxZone: (address) => run(() => mailboxZone(address)) } : {}),
   };
 }
 
-export function calendarClient(provider: Provider, accessToken: string): CalendarClient {
+/**
+ * The adapter for a provider. A read can take any number of pages, and each page is a subrequest,
+ * so `onRead` tells the caller about each one.
+ */
+export function calendarClient(
+  provider: Provider,
+  accessToken: string,
+  onRead?: () => void,
+): CalendarClient {
   return provider === "microsoft"
-    ? new GraphCalendar(accessToken)
-    : new GoogleCalendar(accessToken);
+    ? new GraphCalendar(accessToken, onRead)
+    : new GoogleCalendar(accessToken, onRead);
 }

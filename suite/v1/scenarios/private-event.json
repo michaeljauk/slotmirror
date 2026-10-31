@@ -1,0 +1,31 @@
+{
+  "id": "private-event",
+  "title": "A private event blocks its time and shows no content",
+  "covers": "private event",
+  "expectedText": "The target is busy on Tuesday 10:00 to 11:00 UTC, and no field of the block holds the title or the location.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "doctor",
+      "event": {
+        "start": "week+1d@10:00Z",
+        "end": "week+1d@11:00Z",
+        "visibility": "private",
+        "title": "SUITE-PRIVATE-TITLE-4K9",
+        "location": "SUITE-PRIVATE-LOCATION-4K9"
+      }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 4300,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]],
+        "noDuplicates": true,
+        "forbidden": ["SUITE-PRIVATE-TITLE-4K9", "SUITE-PRIVATE-LOCATION-4K9"]
+      }
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { de } from "../src/i18n/de";
+import { en } from "../src/i18n/en";
 import { BASE, signIn } from "./helpers";
 
 async function addEvent(orgId: string, userId: string | null, kind: string, detail = "{}") {
@@ -48,6 +50,47 @@ describe("activity", () => {
     expect(html).toContain("+3 / ~1 / −0");
     expect(html).not.toContain("org-b-secret");
     expect(html).not.toContain("b@org-b.test");
+  });
+
+  it("names the run and pause events and describes them, in every language", async () => {
+    const owner = await signIn("owner@example.com");
+    await addEvent("default", owner.user.id, "sync_run_aborted", '{"runId":"r","startedAt":"t"}');
+    await addEvent("default", owner.user.id, "account_paused", '{"code":"invalid_grant"}');
+    await addEvent("default", owner.user.id, "account_resumed", '{"code":"invalid_grant"}');
+
+    for (const [lang, messages] of [
+      ["en", en],
+      ["de", de],
+    ] as const) {
+      const html = await (await get(`/activity?lang=${lang}`, owner.cookie)).text();
+      const { kinds } = messages.activity;
+      for (const kind of ["sync_run_aborted", "account_paused", "account_resumed"] as const) {
+        expect(html).toContain(kinds[kind]);
+        expect(html).not.toContain(`<td>${kind}</td>`);
+      }
+      expect(html).toContain(messages.activity.abortedDetail);
+      expect(html).toContain(messages.activity.pausedDetail("invalid_grant"));
+      expect(html).toContain(messages.activity.resumedDetail);
+    }
+  });
+
+  it("describes the reason of an alert, in every language", async () => {
+    const owner = await signIn("owner@example.com");
+    const codes = ["rule_silent", "run_aborted", "check_blind"] as const;
+    for (const code of codes) {
+      await addEvent("default", owner.user.id, "alert_sent", JSON.stringify({ code }));
+    }
+
+    for (const [lang, messages] of [
+      ["en", en],
+      ["de", de],
+    ] as const) {
+      const html = await (await get(`/activity?lang=${lang}`, owner.cookie)).text();
+      for (const code of codes) {
+        expect(html).toContain(messages.activity.alertDetails[code]);
+        expect(html).not.toContain(`<td>${code}</td>`);
+      }
+    }
   });
 
   it("hides the org-wide table from members", async () => {

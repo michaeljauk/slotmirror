@@ -2,6 +2,7 @@ import { errorLogFields, recordAudit } from "./audit";
 import type { FeedRead } from "./account-sync";
 import { accessPolicySchema, DEFAULT_ORG_ID, policyAdmitsAnyone } from "./access";
 import { ruleOptionsSchema, setupStatus } from "./config";
+import type { CalendarInfo } from "./providers/calendar-client";
 import { accountSync } from "./durable";
 import { i18nFor, isLocale, LOCALES, type Locale } from "./i18n";
 import { renderBusyCalendar, type BusyEvent } from "./ics";
@@ -26,8 +27,9 @@ export const FEED_DAYS_BEHIND = 7;
 export const MAX_FEED_CALENDARS = 5;
 export const MAX_FEEDS_PER_USER = 10;
 /**
- * Busy blocks per feed, after merging. Keeps a fetch inside the 10 ms CPU of the Free plan. Above
- * it, past blocks go first, then the end of the window.
+ * Busy blocks per feed, after merging, and busy events per calendar before that. Bounds the work of
+ * a fetch, with the 10 ms CPU of the Free plan in mind; no measurement shows that a fetch at this
+ * limit stays inside it. Above it, past blocks go first, then the end of the window.
  */
 export const MAX_FEED_EVENTS = 1000;
 /**
@@ -35,6 +37,16 @@ export const MAX_FEED_EVENTS = 1000;
  * should fetch it.
  */
 export const FEED_CACHE_SECONDS = 15 * 60;
+/**
+ * How long one fetch holds a feed while it reads and renders. `lease_until` stores the end, and a
+ * stored render or failure clears it. Parallel fetches answer from the last copy, or with 503 if
+ * the feed names a lost calendar. So a feed is read by one fetch at a time, and a render that ends
+ * without a result is not repeated before this time. Only the fetch whose value is still in the row
+ * stores its render: a slower render can hold a calendar that a later fetch found lost.
+ */
+export const FEED_LEASE_MS = 60_000;
+/** A parallel fetch of a feed without a copy still reads, this long after the lease started. */
+export const FEED_PARALLEL_READ_MS = 5_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -367,6 +379,7 @@ interface FeedRow {
   lastKey: string | null;
   errorCalendarId: string | null;
   errorUntil: number | null;
+  leaseUntil: number | null;
   orgId: string;
   email: string;
   tenantId: string | null;
@@ -381,6 +394,7 @@ const FEED_SELECT = `
          f.days_ahead AS daysAhead, f.include_all_day AS includeAllDay, f.locale,
          f.last_body AS lastBody, f.last_rendered_at AS lastRenderedAt, f.last_key AS lastKey,
          f.error_calendar_id AS errorCalendarId, f.error_until AS errorUntil,
+         f.lease_until AS leaseUntil,
          u.org_id AS orgId, u.email, u.tenant_id AS tenantId, u.active, o.policy,
          (SELECT json_group_array(json_object('id', c.id, 'accountId', c.account_id,
                                               'remoteId', c.remote_id,
@@ -436,11 +450,18 @@ function forSubscriber(body: BodyInit | null): Response {
  *    settings admit nobody, the setup is broken: 503, and the feeds stay.
  * 3. A failure in the last 15 minutes answers 503 again, without a read.
  * 4. A calendar the account no longer owns, or no longer can read, gives 503 and a notice on the
- *    start page: subscribers never get a partial feed.
+ *    start page: subscribers never get a partial feed. The name stays until a read succeeds, also
+ *    after the 15 minutes, and until then no copy answers: it would show the lost calendar.
  * 5. A copy younger than 15 minutes from the same calendars and settings answers at once. Then the
  *    Cache API, keyed by feed, token hash and calendar set.
- * 6. Otherwise each calendar is read through its account's Durable Object. While an account is
- *    throttled, the last copy answers, however old; without one, 503 with the remaining wait.
+ * 6. If another fetch holds the lease, the last copy answers, however old. Without a copy, the
+ *    fetch reads too in the first seconds of the lease, and after them gets 503 with the wait.
+ *    With a named calendar, it gets that 503 at once.
+ * 7. Otherwise each calendar is read through its account's Durable Object. While an account is
+ *    throttled, the last copy answers, however old. Without one, or with a named calendar, the
+ *    fetch gets 503 with the remaining wait.
+ * 8. The holder of the lease stores the render. If another fetch or a failure replaced the lease,
+ *    nothing is stored and the fetch gets 503. A fetch without the lease answers and stores nothing.
  */
 export async function feedResponse(
   env: Env,
@@ -489,17 +510,21 @@ export async function feedResponse(
     feed.includeAllDay,
     locale,
   ].join("|");
-  const sameCopy = feed.lastBody !== null && feed.lastKey === renderKey;
+  const errorLeft = (feed.errorUntil ?? 0) - now.getTime();
   // A failed read answers from the row for 15 minutes, so that failures cost no reads either.
-  if ((feed.errorUntil ?? 0) > now.getTime()) {
-    return unavailable((feed.errorUntil ?? 0) - now.getTime());
-  }
+  if (errorLeft > 0) return unavailable(errorLeft);
+  // Until a read succeeds, the blocks of a named calendar must not reach a subscriber.
+  const named = feed.errorCalendarId !== null;
+  const copy = !named && feed.lastKey === renderKey ? feed.lastBody : null;
   /** Store a failure; `calendarId` names a calendar for the start page. Then answer 503. */
   const failed = async (calendarId: string | null) => {
     const until = now.getTime() + FEED_CACHE_SECONDS * 1000;
     await env.DB.prepare(
-      "UPDATE feeds SET error_until = ?, error_calendar_id = COALESCE(?, error_calendar_id) WHERE id = ?",
+      `UPDATE feeds SET error_until = ?, error_calendar_id = COALESCE(?, error_calendar_id),
+              lease_until = NULL
+       WHERE id = ?`,
     )
+      // A failure that names no calendar keeps the name, also one stored during this fetch.
       .bind(until, calendarId, feed.id)
       .run();
     return unavailable(until - now.getTime());
@@ -508,27 +533,52 @@ export async function feedResponse(
   // would be partial.
   const unowned = calendars.find((calendar) => calendar.dataOwned !== 1);
   if (unowned) return failed(unowned.id);
-  if (sameCopy && now.getTime() - (feed.lastRenderedAt ?? 0) < FEED_CACHE_SECONDS * 1000) {
-    return forSubscriber(feed.lastBody);
+  if (copy !== null && now.getTime() - (feed.lastRenderedAt ?? 0) < FEED_CACHE_SECONDS * 1000) {
+    return forSubscriber(copy);
   }
 
   const cacheKey = new Request(
     `${origin}/ics-cache/${feed.id}/${feed.tokenHash}?${new URLSearchParams({ key: renderKey }).toString()}`,
   );
   const cache = caches.default;
-  const cached = await cache.match(cacheKey).catch(() => undefined);
+  const cached = named ? undefined : await cache.match(cacheKey).catch(() => undefined);
   if (cached) return forSubscriber(cached.body);
 
   // Without its tokens the account cannot be read; every attempt would only ask the provider again.
   if (calendars.some((calendar) => calendar.needsReconnect)) return unavailable();
 
+  // Stored before the reads: a render that the CPU limit ends can store nothing afterwards.
+  const leaseLeft = (feed.leaseUntil ?? 0) - now.getTime();
+  const leaseUntil = now.getTime() + FEED_LEASE_MS;
+  const lease =
+    leaseLeft > 0
+      ? null
+      : await env.DB.prepare(
+          "UPDATE feeds SET lease_until = ? WHERE id = ? AND COALESCE(lease_until, 0) <= ?",
+        )
+          .bind(leaseUntil, feed.id, now.getTime())
+          .run();
+  const holdsLease = lease !== null && lease.meta.changes > 0;
+  if (!holdsLease) {
+    if (copy !== null) return forSubscriber(copy);
+    // A fetch that the update turned away arrived together with the lease.
+    const wait = leaseLeft > 0 ? leaseLeft : FEED_LEASE_MS;
+    if (named || FEED_LEASE_MS - wait >= FEED_PARALLEL_READ_MS) return unavailable(wait);
+  }
+
   const window = feedWindow(feed.daysAhead, now);
-  const reads: { calendarId: string; events: SourceEvent[] }[] = [];
+  const today = new Date(window.start.getTime() + FEED_DAYS_BEHIND * DAY_MS);
+  const limits = { includeAllDay: feed.includeAllDay === 1, today };
+  const reads: { calendarId: string; events: SourceEvent[]; cutAt?: string | null }[] = [];
   for (const calendar of calendars) {
     let read: FeedRead;
     try {
       // One after another: two calendars of one account share its mailbox's request limit.
-      read = await accountSync(env, calendar.accountId).readFeedEvents(calendar.remoteId, window);
+      read = await accountSync(env, calendar.accountId).readFeedEvents(
+        calendar.remoteId,
+        window,
+        limits,
+      );
     } catch (error) {
       console.error(
         "Reading a feed calendar failed",
@@ -540,17 +590,16 @@ export async function feedResponse(
     }
     if (read.kind === "throttled") {
       // Stale is better than nothing, and no further call may extend the penalty.
-      return sameCopy ? forSubscriber(feed.lastBody) : unavailable(read.retryAfterMs);
+      return copy !== null ? forSubscriber(copy) : unavailable(read.retryAfterMs);
     }
     if (read.kind === "unavailable") {
       console.error("A feed calendar can no longer be read", feed.id, calendar.id);
       return failed(calendar.id);
     }
-    reads.push({ calendarId: calendar.id, events: read.events });
+    reads.push({ calendarId: calendar.id, events: read.events, cutAt: read.cutAt });
   }
 
   const { t } = i18nFor(locale);
-  const today = new Date(window.start.getTime() + FEED_DAYS_BEHIND * DAY_MS);
   const blocks = await busyEvents(reads, {
     includeAllDay: feed.includeAllDay === 1,
     uidSalt: feed.uidSalt,
@@ -563,13 +612,15 @@ export async function feedResponse(
     events: blocks.events,
     now,
   });
-  await env.DB.prepare(
+  if (!holdsLease) return forSubscriber(body);
+  const stored = await env.DB.prepare(
     `UPDATE feeds SET last_body = ?, last_rendered_at = ?, last_key = ?, cut_at = ?,
-            error_calendar_id = NULL, error_until = NULL
-     WHERE id = ?`,
+            error_calendar_id = NULL, error_until = NULL, lease_until = NULL
+     WHERE id = ? AND lease_until = ?`,
   )
-    .bind(body, now.getTime(), renderKey, blocks.cutAt, feed.id)
+    .bind(body, now.getTime(), renderKey, blocks.cutAt, feed.id, leaseUntil)
     .run();
+  if (stored.meta.changes === 0) return unavailable(FEED_LEASE_MS);
   try {
     await cache.put(
       cacheKey,
@@ -618,6 +669,118 @@ function merge(sorted: Block[]): Block[] {
   return merged;
 }
 
+/** Start order, shorter first. */
+function byStart(a: { start: number; end: number }, b: { start: number; end: number }): number {
+  return a.start - b.start || a.end - b.end;
+}
+
+/**
+ * At most MAX_FEED_EVENTS of `sorted`. Past items go first, those that ended earliest first; an
+ * item that runs into `today`, such as a multi-day absence, is not past. Then the latest items go,
+ * and `cutAt` is the start of the first of them.
+ */
+function withinFeedCap<T extends { start: number; end: number }>(
+  sorted: T[],
+  today: number,
+): { kept: T[]; cutAt: string | null } {
+  const overflow = sorted.length - MAX_FEED_EVENTS;
+  if (overflow <= 0) return { kept: sorted, cutAt: null };
+  const dropped = new Set(
+    sorted
+      .filter((item) => item.end <= today)
+      .sort((a, b) => a.end - b.end)
+      .slice(0, overflow),
+  );
+  const kept = sorted.filter((item) => !dropped.has(item));
+  const first = kept[MAX_FEED_EVENTS];
+  return {
+    kept: kept.slice(0, MAX_FEED_EVENTS),
+    cutAt: first ? new Date(first.start).toISOString() : null,
+  };
+}
+
+/** What a read needs to know about the feed it is for. */
+export interface FeedLimits {
+  includeAllDay: boolean;
+  /** Start of the UTC day of the fetch. */
+  today: Date;
+}
+
+/**
+ * The events of one calendar that a feed can show, at most MAX_FEED_EVENTS. `cutAt` is the start of
+ * the first event left out at the end, or null if the end is complete.
+ */
+export function limitFeedEvents(
+  events: SourceEvent[],
+  feed: FeedLimits,
+): { events: SourceEvent[]; cutAt: string | null } {
+  const options = { ...DEFAULT_OPTIONS, skipAllDay: !feed.includeAllDay };
+  const shown = events.filter((event) => isIncluded(event, options));
+  if (shown.length <= MAX_FEED_EVENTS) return { events: shown, cutAt: null };
+  const spans = shown
+    .map((event) => ({ event, start: Date.parse(event.start), end: Date.parse(event.end) }))
+    .sort(byStart);
+  const { kept, cutAt } = withinFeedCap(spans, feed.today.getTime());
+  return { events: kept.map((span) => span.event), cutAt };
+}
+
+/** A calendar of an account that is in a feed. */
+export interface OwnershipRow {
+  id: string;
+  remoteId: string;
+  dataOwned: number;
+}
+
+/** The calendars of an account that are in a feed. */
+export async function feedCalendarsOfAccount(
+  db: D1Database,
+  accountId: string,
+): Promise<OwnershipRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT DISTINCT c.id, c.remote_id AS remoteId, c.data_owned AS dataOwned
+       FROM calendars c JOIN feed_calendars fc ON fc.calendar_id = c.id
+       WHERE c.account_id = ?`,
+    )
+    .bind(accountId)
+    .all<OwnershipRow>();
+  return results;
+}
+
+/**
+ * True if the list holds the account's main calendar as owned. The owner of the other calendars is
+ * derived from it, so a list without it says nothing about who owns them.
+ */
+export function namesOwners(listed: CalendarInfo[]): boolean {
+  return listed.some((calendar) => calendar.isDefault && calendar.dataOwned);
+}
+
+/**
+ * Store what a complete calendar list says about who owns the calendars in `stored`. Without
+ * `namesOwners` this throws and nothing changes. A calendar the list does not name counts as not
+ * owned until a list names it again, because its owner is not known. Returns true if a calendar
+ * stopped counting as owned.
+ */
+export async function storeFeedOwnership(
+  db: D1Database,
+  stored: OwnershipRow[],
+  listed: CalendarInfo[],
+): Promise<boolean> {
+  if (!namesOwners(listed)) throw new Error("The calendar list has no owned main calendar");
+  const changes = stored.flatMap((calendar) => {
+    const entry = listed.find((candidate) => candidate.id === calendar.remoteId);
+    const owned = entry?.dataOwned ? 1 : 0;
+    return owned !== calendar.dataOwned ? [{ id: calendar.id, owned }] : [];
+  });
+  if (changes.length === 0) return false;
+  await db.batch(
+    changes.map(({ id, owned }) =>
+      db.prepare("UPDATE calendars SET data_owned = ? WHERE id = ?").bind(owned, id),
+    ),
+  );
+  return changes.some(({ owned }) => owned === 0);
+}
+
 /**
  * The busy blocks of the read calendars: events that block time, merged where they overlap or
  * touch, without any content. All-day events form their own blocks. A UID is an HMAC of the
@@ -626,49 +789,32 @@ function merge(sorted: Block[]): Block[] {
  *
  * Above MAX_FEED_EVENTS blocks, past blocks go first, those that ended earliest first; a block
  * that runs into today is not past. Then the latest blocks go. `cutAt` is then the start of the
- * first block left out at the end, or null if the end is complete.
+ * first block left out at the end, or null if the end is complete. A read that lost events at its
+ * own limit names a `cutAt` too. The earliest one ends the whole feed: behind it, that calendar
+ * would look free. Events from it on stay out before merging, so that they extend no block.
  */
 export async function busyEvents(
-  reads: { calendarId: string; events: SourceEvent[] }[],
+  reads: { calendarId: string; events: SourceEvent[]; cutAt?: string | null }[],
   feed: { includeAllDay: boolean; uidSalt: string; today: Date },
 ): Promise<{ events: BusyEvent[]; cutAt: string | null }> {
   const options = { ...DEFAULT_OPTIONS, skipAllDay: !feed.includeAllDay };
   const timed: Block[] = [];
   const allDay: Block[] = [];
+  const readCut = reads.flatMap((read) => read.cutAt ?? []).sort()[0] ?? null;
+  const readEnd = readCut === null ? Infinity : Date.parse(readCut);
   for (const { events } of reads) {
     for (const event of events) {
       if (!isIncluded(event, options)) continue;
       const start = Date.parse(event.start);
       const end = Date.parse(event.end);
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start || start >= readEnd) continue;
       (event.allDay ? allDay : timed).push({ allDay: event.allDay, start, end });
     }
   }
-  const byStart = (a: Block, b: Block) => a.start - b.start || a.end - b.end;
-  let blocks = [...merge(timed.sort(byStart)), ...merge(allDay.sort(byStart))].sort(
+  const merged = [...merge(timed.sort(byStart)), ...merge(allDay.sort(byStart))].sort(
     (a, b) => byStart(a, b) || Number(a.allDay) - Number(b.allDay),
   );
-
-  let cutAt: string | null = null;
-  const overflow = blocks.length - MAX_FEED_EVENTS;
-  if (overflow > 0) {
-    // Past blocks go first, those that ended earliest first. A block that runs into today, such
-    // as a multi-day absence, is not past.
-    const today = feed.today.getTime();
-    const dropped = new Set(
-      blocks
-        .filter((block) => block.end <= today)
-        .sort((a, b) => a.end - b.end)
-        .slice(0, overflow),
-    );
-    blocks = blocks.filter((block) => !dropped.has(block));
-    // Then the end of the window, at a block boundary.
-    if (blocks.length > MAX_FEED_EVENTS) {
-      const first = blocks[MAX_FEED_EVENTS];
-      if (first) cutAt = new Date(first.start).toISOString();
-      blocks = blocks.slice(0, MAX_FEED_EVENTS);
-    }
-  }
+  const { kept: blocks, cutAt } = withinFeedCap(merged, feed.today.getTime());
 
   const hmac = await crypto.subtle.importKey(
     "raw",
@@ -695,5 +841,6 @@ export async function busyEvents(
       allDay: block.allDay,
     });
   }
-  return { events, cutAt };
+  // Blocks that stayed start before `readCut`, so a cut among them comes first.
+  return { events, cutAt: cutAt ?? readCut };
 }

@@ -181,9 +181,9 @@ describe("SCIM users", () => {
     ).toBeNull();
     expect(await removalsOf(account)).toEqual([expect.objectContaining({ ruleId })]);
     const retiring = await runInDurableObject(env.ACCOUNT_SYNC.getByName(account), (_i, state) =>
-      state.storage.get<boolean>("retiring"),
+      state.storage.get<string>("retiring"),
     );
-    expect(retiring).toBe(true);
+    expect(retiring).toEqual(expect.any(String));
     const audit = await env.DB.prepare(
       "SELECT user_id, detail FROM audit_events WHERE kind = 'user_deleted' ORDER BY id DESC",
     ).first<{ user_id: string | null; detail: string }>();

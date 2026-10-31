@@ -1,0 +1,29 @@
+{
+  "id": "disconnect-source",
+  "title": "Disconnecting the source account frees the target",
+  "covers": "disconnect",
+  "expectedText": "After the source account is disconnected, the target is free in the whole week.",
+  "requires": ["disconnect"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]]
+      }
+    },
+    { "do": "control", "action": "disconnect", "calendar": "source" },
+    {
+      "do": "sync",
+      "timeoutSeconds": 1800,
+      "expect": { "window": ["week@00:00Z", "week+7d@00:00Z"], "busy": [] }
+    }
+  ]
+}

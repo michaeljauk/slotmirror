@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { busyEvents, MAX_FEED_EVENTS } from "../src/feeds";
+import { busyEvents, limitFeedEvents, MAX_FEED_EVENTS } from "../src/feeds";
 import { escapeText, foldLine, renderBusyCalendar, type BusyEvent } from "../src/ics";
 import type { SourceEvent } from "../src/sync/types";
 
@@ -386,5 +386,148 @@ describe("busy events", () => {
     );
     expect(result.events).toHaveLength(10);
     expect(result.cutAt).toBeNull();
+  });
+});
+
+describe("limitFeedEvents", () => {
+  const HOUR = 3_600_000;
+  const limits = { includeAllDay: false, today: TODAY };
+
+  /** `count` separate events, one per hour from `from`, latest first as a provider may list them. */
+  function hourly(count: number, from: number, prefix: string): SourceEvent[] {
+    return Array.from({ length: count }, (_, index) =>
+      sourceEvent({
+        occurrenceKey: `${prefix}${index}`,
+        start: new Date(from + index * HOUR).toISOString(),
+        end: new Date(from + index * HOUR + HOUR / 2).toISOString(),
+      }),
+    ).reverse();
+  }
+
+  it("keeps every busy event of a calendar below the limit", () => {
+    const events = hourly(MAX_FEED_EVENTS, TODAY.getTime(), "f");
+    const result = limitFeedEvents(events, limits);
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBeNull();
+  });
+
+  it("does not count events that no feed shows", () => {
+    const events = [
+      ...hourly(MAX_FEED_EVENTS, TODAY.getTime(), "f"),
+      sourceEvent({ occurrenceKey: "free", showAs: "free" }),
+      sourceEvent({ occurrenceKey: "declined", declined: true }),
+      sourceEvent({ occurrenceKey: "mirror", isMirror: true }),
+      sourceEvent({ occurrenceKey: "day", allDay: true, start: "2026-10-27", end: "2026-10-28" }),
+    ];
+    const result = limitFeedEvents(events, limits);
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBeNull();
+    expect(result.events.map((event) => event.occurrenceKey)).not.toContain("free");
+  });
+
+  it("counts all-day events only for a feed that shows them", () => {
+    const day = sourceEvent({ allDay: true, start: "2026-10-27", end: "2026-10-28" });
+    expect(limitFeedEvents([day], limits).events).toHaveLength(0);
+    expect(limitFeedEvents([day], { ...limits, includeAllDay: true }).events).toHaveLength(1);
+  });
+
+  it("leaves out past events first, the oldest first", () => {
+    const past = hourly(60, TODAY.getTime() - 5 * 86_400_000, "p");
+    const future = hourly(MAX_FEED_EVENTS - 10, TODAY.getTime(), "f");
+    const result = limitFeedEvents([...past, ...future], limits);
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBeNull();
+    const starts = result.events.map((event) => event.start).sort();
+    expect(starts[0]).toBe(new Date(TODAY.getTime() - 5 * 86_400_000 + 50 * HOUR).toISOString());
+  });
+
+  it("cuts the end of the window once no past event is left, and says where", () => {
+    const events = hourly(MAX_FEED_EVENTS + 20, TODAY.getTime(), "f");
+    const result = limitFeedEvents(events, limits);
+    const firstLeftOut = new Date(TODAY.getTime() + MAX_FEED_EVENTS * HOUR).toISOString();
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBe(firstLeftOut);
+    expect(result.events.every((event) => event.start < firstLeftOut)).toBe(true);
+  });
+
+  it("reports the earliest cut of all calendars for the feed", async () => {
+    const result = await busyEvents(
+      [
+        {
+          calendarId: "c1",
+          events: hourly(3, TODAY.getTime(), "a"),
+          cutAt: "2026-11-20T09:00:00.000Z",
+        },
+        {
+          calendarId: "c2",
+          events: hourly(3, TODAY.getTime(), "b"),
+          cutAt: "2026-11-10T09:00:00.000Z",
+        },
+        { calendarId: "c3", events: hourly(3, TODAY.getTime(), "c"), cutAt: null },
+      ],
+      { includeAllDay: false, uidSalt: SALT, today: TODAY },
+    );
+    expect(result.cutAt).toBe("2026-11-10T09:00:00.000Z");
+  });
+
+  it("ends every calendar at the earliest cut", async () => {
+    const from = TODAY.getTime();
+    const cut = new Date(from + 5 * HOUR);
+    const result = await busyEvents(
+      [
+        { calendarId: "a", events: hourly(5, from, "a"), cutAt: cut.toISOString() },
+        {
+          calendarId: "b",
+          events: [
+            // Starts before the cut and stays whole. The event behind the cut must not extend it.
+            sourceEvent({
+              occurrenceKey: "across",
+              start: new Date(from + 4.75 * HOUR).toISOString(),
+              end: new Date(from + 6 * HOUR).toISOString(),
+            }),
+            ...hourly(20, from + 6 * HOUR, "b"),
+            sourceEvent({
+              occurrenceKey: "day",
+              allDay: true,
+              start: "2026-10-27",
+              end: "2026-10-28",
+            }),
+          ],
+          cutAt: null,
+        },
+      ],
+      { includeAllDay: true, uidSalt: SALT, today: TODAY },
+    );
+    expect(result.cutAt).toBe(cut.toISOString());
+    expect(result.events).toHaveLength(6);
+    expect(result.events.at(-1)).toMatchObject({
+      start: new Date(from + 4.75 * HOUR).toISOString(),
+      end: new Date(from + 6 * HOUR).toISOString(),
+    });
+    expect(result.events.every((event) => event.start < cut.toISOString())).toBe(true);
+  });
+
+  it("names the cut of the merged blocks if it comes before a calendar's cut", async () => {
+    const from = TODAY.getTime();
+    const between = Array.from({ length: MAX_FEED_EVENTS }, (_, index) =>
+      sourceEvent({
+        occurrenceKey: `b${index}`,
+        start: new Date(from + (index + 0.6) * HOUR).toISOString(),
+        end: new Date(from + (index + 0.9) * HOUR).toISOString(),
+      }),
+    );
+    const result = await busyEvents(
+      [
+        {
+          calendarId: "a",
+          events: hourly(MAX_FEED_EVENTS, from, "a"),
+          cutAt: new Date(from + MAX_FEED_EVENTS * HOUR).toISOString(),
+        },
+        { calendarId: "b", events: between, cutAt: null },
+      ],
+      { includeAllDay: false, uidSalt: SALT, today: TODAY },
+    );
+    expect(result.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(result.cutAt).toBe(new Date(from + (MAX_FEED_EVENTS / 2) * HOUR).toISOString());
   });
 });

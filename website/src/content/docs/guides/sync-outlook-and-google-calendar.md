@@ -31,5 +31,6 @@ other.
 
 - Copies go into the main calendar of each account.
 - Events marked private in the source never carry more than "Busy".
-- All-day events such as holidays are skipped by default, so they do not block a whole day. To
-  mirror them, turn off **Skip all-day events** under **For all calendars**.
+- All-day events such as holidays are mirrored by default, so they block a whole day. Events that
+  are marked as free stay out. To leave out all all-day events, turn on **Skip all-day events**
+  under **For all calendars**.

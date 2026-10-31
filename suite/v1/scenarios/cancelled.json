@@ -1,0 +1,51 @@
+{
+  "id": "cancelled",
+  "title": "Cancelled and declined events do not block time",
+  "covers": "cancelled event",
+  "expectedText": "An event that the organizer cancels stops blocking, an event that the owner declined never blocks, and the witness event on Thursday stays busy.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "cancelled-later",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "declined",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z", "response": "declined" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "witness",
+      "event": { "start": "week+3d@10:00Z", "end": "week+3d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@10:00Z", "week+1d@11:00Z"],
+          ["week+3d@10:00Z", "week+3d@11:00Z"]
+        ]
+      }
+    },
+    {
+      "do": "write",
+      "change": "update",
+      "key": "cancelled-later",
+      "event": { "status": "cancelled" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+3d@10:00Z", "week+3d@11:00Z"]]
+      }
+    }
+  ]
+}

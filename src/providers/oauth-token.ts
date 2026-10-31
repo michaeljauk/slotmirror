@@ -1,5 +1,6 @@
 import * as z from "zod/mini";
 import { fromBase64url } from "../session";
+import { providerFetch, TIMEOUT_REASON, TOKEN_TIMEOUT_MS } from "./provider-fetch";
 
 /** Token endpoint response shared by Microsoft and Google (RFC 6749 with OpenID Connect). */
 export const tokenResponseSchema = z.object({
@@ -15,6 +16,8 @@ export type TokenResponse = z.infer<typeof tokenResponseSchema>;
 const tokenErrorSchema = z.object({
   error: z.string(),
   error_description: z.optional(z.string()),
+  // Microsoft lists the AADSTS number here, e.g. [7000215].
+  error_codes: z.optional(z.array(z.unknown())),
 });
 
 /**
@@ -23,26 +26,43 @@ const tokenErrorSchema = z.object({
  * `console` call. The description is dropped; nothing reads it.
  */
 export class TokenError extends Error {
-  constructor(readonly code: string) {
+  /** The AADSTS number from `error_codes`, digits only, so that it is safe to show and log. */
+  readonly aadsts: string | undefined;
+
+  constructor(
+    readonly code: string,
+    aadsts?: unknown,
+  ) {
     super(/^[a-z0-9_]{1,64}$/i.test(code) ? code : "unknown_error");
+    this.aadsts =
+      typeof aadsts === "number" && /^\d{4,7}$/.test(String(aadsts)) ? String(aadsts) : undefined;
   }
 }
 
-/** POST a form to a token endpoint. Throws TokenError with the provider's error code. */
+/**
+ * POST a form to a token endpoint. Throws TokenError with the provider's error code, or with the
+ * code "timeout" if the endpoint does not answer. A timeout does not say that the token is refused.
+ */
 export async function requestToken(
   url: string,
   form: Record<string, string>,
 ): Promise<TokenResponse> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(form),
-  });
-  const body: unknown = await response.json();
+  const response = await providerFetch(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(form),
+    },
+    TOKEN_TIMEOUT_MS,
+    () => new TokenError(TIMEOUT_REASON),
+  );
+  // A refusal whose body stalled has none; see `providerFetch`.
+  const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = tokenErrorSchema.safeParse(body);
     throw error.success
-      ? new TokenError(error.data.error)
+      ? new TokenError(error.data.error, error.data.error_codes?.[0])
       : new TokenError(`http_${response.status}`);
   }
   return tokenResponseSchema.parse(body);

@@ -1,0 +1,36 @@
+{
+  "id": "event-moved",
+  "title": "A moved event frees the old time and blocks the new time",
+  "covers": "moved event",
+  "expectedText": "After the move the target is busy on Wednesday 14:00 to 15:30 UTC only; Tuesday is free.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]]
+      }
+    },
+    {
+      "do": "write",
+      "change": "update",
+      "key": "meeting",
+      "event": { "start": "week+2d@14:00Z", "end": "week+2d@15:30Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+2d@14:00Z", "week+2d@15:30Z"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

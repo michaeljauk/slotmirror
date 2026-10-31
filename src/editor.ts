@@ -338,10 +338,9 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       choice: choiceOf(parseRuleOptions(row.options), row.enabled === 1),
     }));
   const json = settingsRow?.json ?? "{}";
-  const daysAhead = shownDaysAhead(
-    json,
-    ruleRows.map((row) => parseRuleOptions(row.options)),
-  );
+  const ruleOptions = ruleRows.map((row) => parseRuleOptions(row.options));
+  const daysAhead = shownDaysAhead(json, ruleOptions);
+  const skipAllDay = shownSkipAllDay(json, ruleOptions);
   const rules = ruleRows.map((row) => ({
     from: row.sourceAccountId,
     to: row.targetAccountId,
@@ -353,7 +352,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       optionsJson: row.options,
     },
   }));
-  const settings = { ...parseSettings(json), daysAhead };
+  const settings = { ...parseSettings(json), daysAhead, skipAllDay };
   return { accounts, directions, others, rules, settings };
 }
 
@@ -381,11 +380,24 @@ function shownDaysAhead(json: string, rules: RuleOptions[]): number {
   return Math.max(...rules.map((options) => options.daysAhead));
 }
 
+/**
+ * The all-day switch the settings show: the stored one, or else on if any rule of the user skips
+ * all-day events. Stored settings often lack it, and rules can be older than the default. New rules
+ * take the switch, so the default alone would turn the skip off for them.
+ */
+function shownSkipAllDay(json: string, rules: RuleOptions[]): boolean {
+  const stored = (JSON.parse(json) as { skipAllDay?: unknown }).skipAllDay;
+  if (stored !== undefined || rules.length === 0) return parseSettings(json).skipAllDay;
+  return rules.some((options) => options.skipAllDay);
+}
+
 /** Settings from the form. The window can be missing, for example if no choice matched. */
 export type SettingsForm = Omit<SyncSettings, "daysAhead"> & {
   daysAhead?: number;
   /** The window that the form showed. */
   daysAheadShown?: number;
+  /** The all-day switch that the form showed. */
+  skipAllDayShown?: boolean;
 };
 
 /** Options of a new rule: the user's settings with the given detail level. */
@@ -401,8 +413,10 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
  * stays; it is the choice per direction. The window applies only if the user changed it from the
  * one the form showed, and only in that direction: a higher window raises the rules below it, a
  * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
- * removal of the blocks beyond it, which no run reads any more. Throws `EditorConflict` if a rule
- * changed since the read; then nothing is stored.
+ * removal of the blocks beyond it, which no run reads any more. The all-day switch applies only if
+ * the user changed it from the one the form showed; then every rule follows. Otherwise each rule
+ * keeps its own value, because a rule that turns to skipping loses its all-day blocks. Throws
+ * `EditorConflict` if a rule changed since the read; then nothing is stored.
  */
 export async function setSettings(
   env: Env,
@@ -428,15 +442,20 @@ export async function setSettings(
     .bind(user.id)
     .first<{ json: string }>();
   const json = stored?.json ?? "{}";
-  const current = shownDaysAhead(
-    json,
-    results.map((row) => parseRuleOptions(row.options)),
-  );
-  const { daysAhead: chosen, daysAheadShown, ...rest } = form;
+  const ruleOptions = results.map((row) => parseRuleOptions(row.options));
+  const current = shownDaysAhead(json, ruleOptions);
+  const currentSkipAllDay = shownSkipAllDay(json, ruleOptions);
+  const { daysAhead: chosen, daysAheadShown, skipAllDayShown, skipAllDay, ...rest } = form;
   // A page from before `daysAheadShown` existed showed the stored window, or the default.
   const shown = daysAheadShown ?? parseSettings(json).daysAhead;
   const windowChanged = chosen !== undefined && chosen !== shown;
-  const settings: SyncSettings = { ...rest, daysAhead: windowChanged ? chosen : current };
+  // A page from before `skipAllDayShown` existed can show another default, so compare with now.
+  const skipAllDayChanged = skipAllDay !== (skipAllDayShown ?? currentSkipAllDay);
+  const settings: SyncSettings = {
+    ...rest,
+    daysAhead: windowChanged ? chosen : current,
+    skipAllDay: skipAllDayChanged ? skipAllDay : currentSkipAllDay,
+  };
   const windowOf = (previous: number) =>
     !windowChanged
       ? previous
@@ -458,6 +477,7 @@ export async function setSettings(
       ...previous,
       ...settings,
       daysAhead: windowOf(previous.daysAhead),
+      skipAllDay: skipAllDayChanged ? settings.skipAllDay : previous.skipAllDay,
     });
     // A parked exception stays parked. A rule that changed since the read fails the batch.
     const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;

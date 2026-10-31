@@ -16,6 +16,7 @@ import { ALL_WEEKDAYS, hasWorkingHours } from "../sync/working-hours";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { Layout } from "./layout";
+import { OperatorNotice } from "./operator-notice";
 
 export type Notice = { kind: "info" | "error"; text: string };
 
@@ -126,30 +127,35 @@ export function ReconnectNotice(props: {
     email: string;
     needsReconnect: boolean;
   }[];
+  /** The operator's notice. It leads the banner, which is the page's first connect link. */
+  operatorNotice?: string;
 }) {
   const { t } = useI18n();
   const broken = props.accounts.filter((account) => account.needsReconnect);
   if (broken.length === 0) return null;
   return (
-    <div class="reconnect-notice" role="alert">
-      {broken.map((account) => (
-        <p>
-          <span>
-            <strong>
-              {t.editor.reconnectTitle(account.email, PROVIDER_LABEL[account.provider])}
-            </strong>{" "}
-            {t.editor.reconnectText}
-          </span>
-          <a
-            class="button small"
-            href={reconnectUrl(account)}
-            aria-label={t.editor.reconnect(account.email)}
-          >
-            {t.editor.reconnectShort}
-          </a>
-        </p>
-      ))}
-    </div>
+    <>
+      <OperatorNotice text={props.operatorNotice} />
+      <div class="reconnect-notice" role="alert">
+        {broken.map((account) => (
+          <p>
+            <span>
+              <strong>
+                {t.editor.reconnectTitle(account.email, PROVIDER_LABEL[account.provider])}
+              </strong>{" "}
+              {t.editor.reconnectText}
+            </span>
+            <a
+              class="button small"
+              href={reconnectUrl(account)}
+              aria-label={t.editor.reconnect(account.email)}
+            >
+              {t.editor.reconnectShort}
+            </a>
+          </p>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -163,8 +169,9 @@ function SettingsCard(props: { state: EditorState }) {
         <strong>{t.editor.settingsTitle}</strong>
         <span class="group-text">{t.editor.settingsLead}</span>
       </div>
-      {/* A save of other settings keeps each rule's window; see setSettings. */}
+      {/* A save of other settings keeps each rule's window and all-day value; see setSettings. */}
       <input type="hidden" name="daysAheadShown" value={String(settings.daysAhead)} />
+      <input type="hidden" name="skipAllDayShown" value={settings.skipAllDay ? "1" : "0"} />
       <div class="settings-row">
         <span class="settings-label">{t.editor.window}</span>
         <span class="choices">
@@ -781,6 +788,8 @@ export function Overview(props: { state: EditorState }) {
 
 /** Before two accounts are connected: what to do, with the buttons to do it. */
 function FirstSteps(props: {
+  /** The operator's notice, unless the reconnect banner above already shows it. */
+  operatorNotice?: string;
   connected: number;
   providers: Record<"microsoft" | "google", boolean>;
 }) {
@@ -794,6 +803,7 @@ function FirstSteps(props: {
         <li class={props.connected >= 2 ? "done" : ""}>{t.editor.stepConnectSecond}</li>
         <li>{t.editor.stepChoose}</li>
       </ol>
+      <OperatorNotice text={props.operatorNotice} />
       <div class="actions">
         {providers.map((provider) => (
           <a class="button" href={`/auth/${provider}/connect`}>
@@ -831,6 +841,7 @@ export function CalendarEditorPage(props: {
   open: string[];
   notice?: Notice;
   status?: Child;
+  operatorNotice?: string;
 }) {
   const { t } = useI18n();
   const ready = props.state.accounts.filter((account) => account.calendar);
@@ -845,10 +856,16 @@ export function CalendarEditorPage(props: {
         </div>
 
         {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
-        <ReconnectNotice accounts={props.state.accounts} />
+        <ReconnectNotice accounts={props.state.accounts} operatorNotice={props.operatorNotice} />
 
         {ready.length < 2 ? (
-          <FirstSteps connected={ready.length} providers={props.providers} />
+          <FirstSteps
+            connected={ready.length}
+            providers={props.providers}
+            operatorNotice={
+              props.state.accounts.some((a) => a.needsReconnect) ? undefined : props.operatorNotice
+            }
+          />
         ) : (
           <>
             <div class="editor-grid">

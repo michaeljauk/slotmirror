@@ -9,9 +9,14 @@ import {
   throttleDelayMs,
 } from "../src/sync/throttle";
 import { GraphError } from "../src/providers/graph-calendar";
-import type { SyncAction } from "../src/sync/types";
+import type { DesiredBlock, SyncAction } from "../src/sync/types";
 
 const remove = (targetId: string): SyncAction => ({ kind: "delete", targetId, marker: "m" });
+
+function write(kind: "create" | "update", allDay: boolean): SyncAction {
+  const block = { allDay } as DesiredBlock;
+  return kind === "create" ? { kind, block } : { kind, targetId: "t", block };
+}
 
 describe("parseRetryAfter", () => {
   it("reads delay seconds and HTTP dates", () => {
@@ -63,6 +68,39 @@ describe("summarizeBatch", () => {
       statuses: { 400: 1, 429: 2 },
       retryAfterMs: 9_000,
     });
+  });
+
+  it("counts the writes of all-day blocks that a provider refused with 400", () => {
+    const actions = [write("create", true), write("update", true), write("create", true)];
+    const statuses = [400, 400, 201];
+    expect(summarizeBatch(actions, (index) => ({ status: statuses[index] })).allDayRefused).toBe(2);
+  });
+
+  it("counts the writes of all-day blocks that a provider accepted", () => {
+    const actions = [write("create", true), write("update", true), write("create", true)];
+    const statuses = [201, 200, 400];
+    expect(summarizeBatch(actions, (index) => ({ status: statuses[index] })).allDayAccepted).toBe(
+      2,
+    );
+  });
+
+  it("does not count another action as an accepted all-day write", () => {
+    const actions = [write("create", false), write("update", false), remove("a")];
+    expect(summarizeBatch(actions, () => ({ status: 200 })).allDayAccepted).toBeUndefined();
+    expect(summarizeBatch(actions, () => ({ status: 404 })).allDayAccepted).toBeUndefined();
+    const failed = [write("create", true)];
+    expect(summarizeBatch(failed, () => ({ status: 500 })).allDayAccepted).toBeUndefined();
+  });
+
+  it("does not count a 400 for another action, or another status for an all-day write", () => {
+    const refused = (action: SyncAction, status: number) =>
+      summarizeBatch([action], () => ({ status })).allDayRefused;
+    expect(refused(write("create", false), 400)).toBeUndefined();
+    expect(refused(write("update", false), 400)).toBeUndefined();
+    expect(refused(remove("a"), 400)).toBeUndefined();
+    for (const status of [401, 403, 404, 409, 429, 500, 503, 504]) {
+      expect(refused(write("create", true), status)).toBeUndefined();
+    }
   });
 
   it("counts a missing status as failed", () => {

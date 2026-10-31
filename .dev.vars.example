@@ -1,6 +1,10 @@
 # Copy to .dev.vars for local development. Set the same names as secrets in production
 # (`wrangler secret put <NAME>`). The Deploy to Cloudflare button asks for these values.
 
+# Optional. Shown before users connect an account and on /privacy. Leave empty for a personal
+# deployment.
+OPERATOR_NOTICE=
+
 SESSION_SECRET=
 TOKEN_ENCRYPTION_KEY=
 

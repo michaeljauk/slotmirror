@@ -17,6 +17,7 @@ pnpm dev               # wrangler dev on http://localhost:8787
 pnpm db:migrate:local  # apply D1 migrations to the local database
 pnpm check             # format check, lint, typecheck, tests: run before every commit
 pnpm test              # Vitest inside the Workers runtime
+pnpm suite             # scenario suite against the simulated calendars, see suite/README.md
 pnpm cf-typegen        # regenerate worker-configuration.d.ts after changing wrangler.jsonc
 ```
 
@@ -36,6 +37,7 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `src/pages/`                    | Server-rendered Hono JSX pages                                                    |
 | `migrations/`                   | D1 migrations (registry: orgs, users, accounts, calendars, rules, runs)           |
 | `test/`                         | Vitest tests with `@cloudflare/vitest-plugin`                                     |
+| `suite/`                        | Scenario suite: frozen list in `v1/`, own oracle, drivers. Not in the Worker      |
 | `design/`                       | Logo and design assets                                                            |
 
 ## Rules
@@ -56,6 +58,9 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
   `calendarClient()` directly or start provider calls in parallel. On 429 or 503, and on Google's
   403 `rateLimitExceeded`, wait for `Retry-After` through the alarm, never inside the invocation
   (`src/sync/throttle.ts`).
+- **Every provider `fetch` goes through `providerFetch()`** (`src/providers/provider-fetch.ts`). A
+  call without a deadline holds the provider queue of its account. A test fails on a bare `fetch`.
+  The one exception is the operator webhook in `src/alerts.ts`, which has its own deadline.
 - **Plain `fetch` for Graph and Google.** No `googleapis`, MSAL or Graph SDK: they do not fit
   workerd or the bundle.
 - **No Node-only APIs.** Use Web Crypto, `fetch`, `TextEncoder`.

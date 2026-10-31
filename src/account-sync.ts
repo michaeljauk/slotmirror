@@ -1,5 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
-import { accountOwner, errorCode, errorLogFields, recordAudit, type SyncRunDetail } from "./audit";
+import {
+  accountOwner,
+  auditStatement,
+  errorCode,
+  errorLogFields,
+  recordAudit,
+  recordAuditChecked,
+  runsWithOutcome,
+  type AuditEvent,
+  type AuditKind,
+  type CleanupResult,
+  type SyncRunDetail,
+} from "./audit";
 import type { Provider } from "./config";
 import {
   calendarClient,
@@ -10,44 +22,101 @@ import {
 } from "./providers/calendar-client";
 import { clientCredentials, oauthClient } from "./providers/oauth-clients";
 import { TokenError, type TokenResponse } from "./providers/oauth-token";
-import { claimsFrom, desiredBlocks, inPrecedenceOrder, planSync, ruleTagFor } from "./sync/plan";
+import {
+  blocksAtEdge,
+  claimsFrom,
+  countDuplicates,
+  desiredBlocks,
+  endsAtStart,
+  inPrecedenceOrder,
+  markerFor,
+  planSync,
+  ruleTagFor,
+  type EdgeRead,
+} from "./sync/plan";
 import {
   cleanupWindow,
+  edgeReadWindow,
+  leftoverCalendars,
   loadRule,
   originLine,
   ownerMayRun,
   ruleWritesInto,
+  rulesIntoCalendar,
   rulesRunningFromAlarm,
   rulesTargetingAccount,
+  rulesThroughOtherRows,
+  type RuleContext,
   siblingRuleIds,
   readWindow,
   startsBeyond,
   syncWindow,
+  targetCalendars,
   targetReadWindow,
 } from "./sync/rules";
+import {
+  addSlice,
+  blockReadWindow,
+  COMPARE_TIMEOUT_MS,
+  compareSlice,
+  failureDetail,
+  finishScan,
+  halveSlice,
+  MAX_SLICE_ITEMS,
+  MAX_SLICE_READS,
+  newCompare,
+  ruleSetHash,
+  scanHorizon,
+  sliceAfter,
+  sliceItems,
+  type SliceWindow,
+  sourceReadWindow,
+  startConfirmScan,
+  type CompareFailure,
+  type CompareMode,
+  type CompareReport,
+  type CompareRule,
+  type CompareState,
+} from "./sync/compare";
 import {
   clampRetryAfter,
   formatStatuses,
   throttleDelayMs,
   type BatchResult,
 } from "./sync/throttle";
-import type { SourceEvent, SyncPlan } from "./sync/types";
+import type { ExistingBlock, SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
 import { accountSync } from "./durable";
+import {
+  feedCalendarsOfAccount,
+  limitFeedEvents,
+  storeFeedOwnership,
+  type FeedLimits,
+} from "./feeds";
 import type { Watch } from "./providers/calendar-client";
 import {
+  addFakeEvent,
   FakeCalendar,
+  injectFakeFault,
   measureFetchBudget,
   readFakeStats,
   recordFakeStep,
   seedFakeEvents,
   shiftFakeEvents,
+  type FakeEvent,
+  type FakeFault,
   type FetchBudget,
 } from "./providers/fake-calendar";
 import { notifyChange, requestSyncs, SyncRequestError, webhookToken, webhookUrl } from "./webhooks";
 import { OWNER_COLUMNS, ownerAdmission, type OwnerColumns } from "./users";
-import { sendReconnectAlert } from "./alerts";
+import {
+  compareAlertsAfter,
+  sendAbortAlert,
+  sendCompareAlert,
+  sendReconnectAlert,
+  type CompareAlert,
+} from "./alerts";
 
 export interface StoredTokens {
   refreshToken: string;
@@ -77,6 +146,8 @@ export interface RunOptions {
    * source account needs reconnecting.
    */
   fromAlarm?: boolean;
+  /** Set by `startRun`. `closed` turns true once the marker of the run may go. */
+  progress?: { runId: string; closed: boolean };
 }
 
 /** Pause between two alarm runs of one queue when nothing is throttled. */
@@ -186,6 +257,12 @@ const RETRY_ALARM = "retry";
 /** Mark of an alarm that only waits for a removal's next attempt. */
 const REMOVAL_ALARM = "removal";
 
+/** Mark of an alarm that only reads the next slice of a comparison. */
+const COMPARE_ALARM = "compare";
+
+/** Alarm marks that other work may replace; the alarm sets them again when it is done. */
+const WAITING_ALARMS: readonly unknown[] = [RETRY_ALARM, REMOVAL_ALARM, COMPARE_ALARM];
+
 /**
  * Durable Object storage key of sync requests that failed after a change: the accounts (all that
  * the change concerns if unknown), the failed attempts, and when to try again.
@@ -212,6 +289,15 @@ const FULL_CYCLE_KEY = "fullCycleAt";
  * between polls only rules whose calendars have no active watch.
  */
 const FULL_CYCLE_EVERY_MS = 60 * 60_000;
+
+/** Durable Object storage key: when the next check of the owners of feed calendars is due. */
+const FEED_OWNERSHIP_CHECK_KEY = "feedOwnershipCheckAt";
+
+/** A successful check of the owners of feed calendars holds for this long. */
+const FEED_OWNERSHIP_CHECK_EVERY_MS = 24 * 60 * 60_000;
+
+/** A check that lost a calendar holds for this long, so that one short list soon heals. */
+const FEED_OWNERSHIP_RECHECK_MS = 60 * 60_000;
 
 /** Durable Object storage key of block removals for deleted or switched-off rules. */
 const REMOVAL_QUEUE_KEY = "removalQueue";
@@ -273,17 +359,133 @@ class PenaltyActive extends Error {
 
 /** Outcome of a feed read. A throttled or unreadable calendar is an answer, not an error. */
 export type FeedRead =
-  | { kind: "events"; events: SourceEvent[] }
+  | { kind: "events"; events: SourceEvent[]; cutAt?: string | null }
   | { kind: "throttled"; retryAfterMs: number }
   | { kind: "unavailable" };
 
-/** Durable Object storage key: forget the tokens once every queued removal ran. */
+/**
+ * Durable Object storage prefix of start markers, `runStarted:<ruleId>:<runId>`. A real run writes
+ * its marker first and removes it once its audit event is written. Each run has its own key, so a
+ * later run cannot overwrite the marker of a run that died.
+ */
+const RUN_MARKER_PREFIX = "runStarted:";
+
+/** Aborted runs that one tick or alarm reports. The rest follows in the next one. */
+const MAX_ABORT_REPORTS = 5;
+
+/**
+ * Durable Object storage key: IDs of rules with an aborted run that the operator has not heard of
+ * yet. They stay until the webhook accepts the alert.
+ */
+const ABORT_ALERTS_KEY = "abortAlerts";
+
+/**
+ * Durable Object storage key: finished comparisons with confirmed deviations that the operator has
+ * not heard of yet, at most one per calendar. They stay until the webhook accepts the alert, also
+ * through the repeat lock of their calendar, or until a newer result replaces or ends them.
+ */
+const COMPARE_ALERTS_KEY = "compareAlerts";
+
+/** The ID of a comparison. A calendar has one open comparison, and a new one starts later. */
+function compareRunKey(alert: CompareAlert): string {
+  return `${alert.calendarId}@${alert.scanStartedAt}`;
+}
+
+interface RunMarker {
+  ruleId: string;
+  runId: string;
+  /** Unix ms. */
+  startedAt: number;
+}
+
+/** Durable Object storage prefix of open comparisons, `compare:<calendarId>`. See `CompareState`. */
+const COMPARE_PREFIX = "compare:";
+
+/**
+ * Durable Object storage prefix: the start time of a rule's last successful run. A hit of a
+ * comparison counts only after such a run; see `finishScan`.
+ */
+const RULE_OK_PREFIX = "ruleOkAt:";
+
+/** Durable Object storage key: when the last daily comparison started. */
+const NEAR_COMPARE_KEY = "nearCompareAt";
+
+/** What a request to start comparisons did with each calendar. */
+export interface CompareStart {
+  started: number;
+  /** A comparison was open already. */
+  open: number;
+  /** The calendar cannot be compared now; the audit log names the reason. */
+  failed: number;
+}
+
+/** The daily comparison of the first slice. It is no substitute for a full comparison. */
+const NEAR_COMPARE_EVERY_MS = 24 * 60 * 60_000;
+
+/** A read of a comparison met a condition that ends it. */
+class CompareStopped extends Error {
+  constructor(readonly failure: CompareFailure) {
+    super(failure.reason);
+  }
+}
+
+/** The failure of a comparison for an error from its reads. */
+function compareFailure(error: unknown): CompareFailure {
+  if (error instanceof CompareStopped) return error.failure;
+  if (error instanceof PenaltyActive) return { reason: "throttled", code: "penalty" };
+  const code = errorCode(error);
+  if (throttleDelayMs(error) !== null) return { reason: "throttled", code };
+  return { reason: code.startsWith("token_") ? "token_lost" : "read_failed", code };
+}
+
+/** The platform refused a read at the subrequest limit, so the slice takes too many pages. */
+function isSubrequestLimit(error: unknown): boolean {
+  return error instanceof Error && /^Too many subrequests/.test(error.message);
+}
+
+/** The rules of a calendar as a comparison needs them, and their hash. */
+interface CompareContext {
+  rules: RuleContext[];
+  inputs: CompareRule[];
+  /** See `SliceInput.others`. */
+  others: string[];
+  hash: string;
+}
+
+function compareRule(rule: RuleContext): CompareRule {
+  const { accountId, remoteCalendarId } = rule.source;
+  return { id: rule.id, options: rule.options, source: `${accountId}|${remoteCalendarId}` };
+}
+
+/**
+ * Durable Object storage key: forget the tokens once every queued removal ran. The value is the
+ * generation of the request that started the retirement. It is `true` if an alarm resumed the
+ * retirement, or if a version without generations stored it.
+ */
 const RETIRING_KEY = "retiring";
+
+/**
+ * Durable Object storage key: a retirement ended, and an alarm must read the account's row. A
+ * delete can land after the end, and then no cron reaches this instance. Every end writes a new
+ * `id`, so that a check under way sees that its read is stale.
+ */
+const RETIREMENT_CHECK_KEY = "retirementCheck";
+
+interface RetirementCheck {
+  id: string;
+  endedAt: number;
+}
+
+/**
+ * Wait before the next alarm of a retirement whose alarm failed, for example in a D1 outage. A check
+ * also waits this long after the end before it trusts a row: a delete may still be under way.
+ */
+const RETIREMENT_RETRY_MS = 60_000;
 
 /** Durable Object storage key: the retiring account tried to stop its watches; `forget()` retries. */
 const WATCHES_TRIED_KEY = "watchesTried";
 
-/** Give up on a removal after this many failed attempts; the blocks then stay. */
+/** Give up on a removal after this many failed attempts in a row; the blocks then stay. */
 const MAX_REMOVAL_ATTEMPTS = 5;
 
 /**
@@ -295,14 +497,46 @@ const REMOVAL_BACKOFF_MS = [60_000, 10 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_0
 interface Removal {
   ruleId: string;
   remoteCalendarId: string;
+  /**
+   * Failed attempts in a row. An attempt that removed blocks starts the count again, unless its
+   * edge read failed. Such an attempt keeps the count while blocks are left. Once none is left, it
+   * counts as failed, so that a lasting failure of that read ends the job.
+   */
   attempts: number;
   /** After a failed attempt: do not try again before this time. */
   notBefore?: number;
+  /**
+   * An attempt ran, with any outcome. `attempts` cannot tell this: it goes back to 0 after progress
+   * and stays 0 after throttling. Jobs stored before this field count as started if `attempts > 0`.
+   * A trim never reads this, so it never sets it.
+   */
+  started?: true;
   /**
    * Remove only the blocks beyond the rule's current sync window, after its `daysAhead` went down.
    * The rule stays; no run reads that far, so no run removes them.
    */
   trim?: true;
+  /** Set if an offboarding queued the job. The job then ends with an entry in the audit log. */
+  offboarding?: OffboardingProgress;
+  /**
+   * How often a request queued this job again. A step that read the rule from D1 compares this,
+   * so that it does not act on a read older than the request. The next step starts from 0. A trim
+   * never reads this, so it never counts.
+   */
+  requeued?: number;
+}
+
+/** Who gets the result of an offboarding's removal. The rows are gone when the job ends. */
+export interface OffboardingOwner {
+  orgId: string;
+  userId: string;
+}
+
+interface OffboardingProgress extends OffboardingOwner {
+  /** Blocks removed over all steps of the job. */
+  removed: number;
+  /** Blocks left after the last step that could count them. */
+  left?: number;
 }
 
 function sameRemoval(a: Removal, b: Removal): boolean {
@@ -319,6 +553,8 @@ type RemovalResult = {
   remaining: number;
   throttled: boolean;
   retryAfterMs?: number;
+  /** The edge read failed, so a block at the start of the window may still be there. */
+  edgeReadFailed: boolean;
 };
 
 /** The first queued removal that may run at `now`. */
@@ -338,11 +574,47 @@ function nextRemoval(queue: Removal[]): Removal | undefined {
 /** Refresh the access token this long before it expires. */
 const REFRESH_MARGIN_MS = 60_000;
 
-/**
- * Write batches per invocation. With reads and token refresh this stays well inside the Free plan
- * limit of 50 subrequests; a larger plan continues in the next alarm.
- */
+/** Write batches per invocation; a larger plan continues in the next alarm. */
 const MAX_BATCHES_PER_RUN = 25;
+
+/** How long the zone of a mailbox counts before the next lookup. */
+const MAILBOX_ZONE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a failed lookup counts. A block keeps the zone of its write, because the zone is not in
+ * `contentHash`. So each all-day block that a run writes after a failure can stay off the local
+ * day, and a short wait keeps that number small. Only a run with all-day writes makes a lookup.
+ */
+const MAILBOX_ZONE_RETRY_MS = 15 * 60 * 1000;
+
+/** Durable Object storage key: the last lookup of the mailbox zone; see `allDayZone()`. */
+const MAILBOX_ZONE_KEY = "mailboxZone";
+
+/**
+ * The answer of a lookup. Null: the mailbox names no usable zone, Graph refused the zone, or a
+ * lookup failed with no zone known.
+ */
+interface MailboxZone {
+  zone: string | null;
+  at: number;
+  /** The lookup failed, so this keeps the known zone for `MAILBOX_ZONE_RETRY_MS`. */
+  failed?: boolean;
+}
+
+/**
+ * Provider requests per invocation, reads and write batches together. The Free plan allows 50
+ * subrequests. A token refresh can take one more, which this count does not include.
+ */
+const MAX_PROVIDER_REQUESTS = 48;
+
+/**
+ * The write batches of an invocation after `reads` provider reads. The rest waits for the next
+ * step, which plans again from the calendars. A read has no page limit, so one batch always runs:
+ * a step makes progress, or it fails at the limit and counts as failed.
+ */
+function batchBudget(reads: number): number {
+  return Math.max(1, Math.min(MAX_BATCHES_PER_RUN, MAX_PROVIDER_REQUESTS - reads));
+}
 
 /**
  * One instance per connected account (named by `accounts.id`).
@@ -362,10 +634,19 @@ export class AccountSync extends DurableObject<Env> {
   /** The last queued provider call. See `client()`. */
   private providerQueue: Promise<unknown> = Promise.resolve();
   /**
+   * Provider reads of this instance so far. A step compares the count before and after its reads;
+   * see `batchBudget`. Reads of a request during the step count too: they leave fewer batches.
+   */
+  private providerReads = 0;
+  /**
    * Real rule runs in progress, by rule ID. In memory is enough: requests to one instance share it,
    * and a new instance has no run in progress.
    */
   private runningRules = new Map<string, Promise<RunResult>>();
+  /** The report of aborted runs in progress. A tick and an alarm can overlap; they share it. */
+  private abortReport: Promise<void> | null = null;
+  /** A post of the reconnect alert runs. Lost with the instance, where the stored flag remains. */
+  private sendingReconnectAlert = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -396,6 +677,8 @@ export class AccountSync extends DurableObject<Env> {
   async tick(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) return;
+    await this.reportAbortedRuns(accountId, { retryAlerts: true });
+    await this.sendCompareAlerts(accountId);
     // The pages show the D1 flag, so the pause follows it. A flag without a pause pauses and
     // probes; a pause whose flag is gone, after its own D1 write, is stale and ends.
     const row = await this.env.DB.prepare(
@@ -408,11 +691,13 @@ export class AccountSync extends DurableObject<Env> {
       await this.unpause();
       return;
     }
-    if (!pause && row?.flag === 1) pause = await this.pauseForStaleFlag();
+    if (!pause && row?.flag === 1) pause = await this.pauseForStaleFlag(accountId);
     if (pause) {
+      await this.failOpenCompares({ reason: "paused", code: pause.code });
       await this.whilePaused(accountId, pause);
       return;
     }
+    await this.compareTick();
     const lastFull = (await this.ctx.storage.get<number>(FULL_CYCLE_KEY)) ?? 0;
     if (Date.now() - lastFull >= FULL_CYCLE_EVERY_MS) {
       await this.requestSync();
@@ -560,8 +845,7 @@ export class AccountSync extends DurableObject<Env> {
     if (otherWork) await this.setSyncAlarm(Date.now() + delayMs);
     else if (left) {
       // The alarm is for the checks now; other work must not take it for the retry's.
-      const kind = await this.ctx.storage.get(FEED_ONLY_ALARM_KEY);
-      if (kind === RETRY_ALARM || kind === REMOVAL_ALARM) {
+      if (WAITING_ALARMS.includes(await this.ctx.storage.get(FEED_ONLY_ALARM_KEY))) {
         await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, true);
       }
       await this.ctx.storage.setAlarm(Date.now() + delayMs);
@@ -706,13 +990,28 @@ export class AccountSync extends DurableObject<Env> {
 
   /**
    * The pending alarm, or null if it only waits for a retry of a failed sync request or for a
-   * removal's next attempt. Other work may then set an earlier alarm; the alarm sets the waiting
-   * one again when it is done.
+   * removal's next attempt, or only reads a slice of a comparison. Other work may then set an
+   * earlier alarm; the alarm sets the waiting one again when it is done.
    */
   private async pendingAlarm(): Promise<number | null> {
     const pending = await this.ctx.storage.getAlarm();
-    const kind = await this.ctx.storage.get(FEED_ONLY_ALARM_KEY);
-    return kind === RETRY_ALARM || kind === REMOVAL_ALARM ? null : pending;
+    return WAITING_ALARMS.includes(await this.ctx.storage.get(FEED_ONLY_ALARM_KEY))
+      ? null
+      : pending;
+  }
+
+  /**
+   * Keep an alarm for the next slice of a comparison, unless sync work has one. It comes before the
+   * waits of removals and retries, which `alarm()` sets again once the scan is over. A retiring
+   * account scans no more, so its alarm would only replace the wait of a removal.
+   */
+  private async keepCompareAlarm(): Promise<void> {
+    if (!this.accountIdOrNull() || (await this.retiring())) return;
+    if ((await this.pendingAlarm()) !== null) return;
+    const scanning = (await this.openCompares()).some((state) => state.phase === "scanning");
+    if (!scanning) return;
+    await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, COMPARE_ALARM);
+    await this.ctx.storage.setAlarm(Date.now() + this.delays().nextRun);
   }
 
   /**
@@ -769,7 +1068,8 @@ export class AccountSync extends DurableObject<Env> {
 
   /**
    * Store the tokens of an OAuth connect. They end any pause, also one that a refusal stored while
-   * this call ran.
+   * this call ran, and any retirement: a reconnect of an account whose row stayed keeps its ID.
+   * Queued removals stay and run with the new tokens.
    */
   async storeTokens(
     accountId: string,
@@ -777,6 +1077,7 @@ export class AccountSync extends DurableObject<Env> {
     provider: Provider = "microsoft",
   ): Promise<void> {
     await this.writeTokens(accountId, tokens, provider);
+    await this.endRetirement();
     await this.unpause();
   }
 
@@ -824,8 +1125,13 @@ export class AccountSync extends DurableObject<Env> {
    * pause after this: it compares the refused token with the stored one first, in one step.
    */
   private async unpause(): Promise<void> {
-    if (!(await this.pause())) return;
-    await this.ctx.storage.delete([PAUSE_KEY, RULE_QUEUE_KEY, FULL_CYCLE_KEY]);
+    // The read and the delete are one step, so that of two overlapping calls only one goes on.
+    const pause = await this.ctx.storage.transaction(async (txn) => {
+      const current = await txn.get<Pause>(PAUSE_KEY);
+      if (current) await txn.delete([PAUSE_KEY, RULE_QUEUE_KEY, FULL_CYCLE_KEY]);
+      return current;
+    });
+    if (!pause) return;
     // Removals that wait after attempts with the refused token may run now.
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) =>
       queue.map(({ notBefore: _wait, ...job }) => job),
@@ -835,6 +1141,10 @@ export class AccountSync extends DurableObject<Env> {
     await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
       .bind(accountId)
       .run();
+    await this.auditAccount(accountId, "account_resumed", {
+      code: pause.code,
+      pausedMs: Date.now() - pause.since,
+    });
     await this.requestSync();
     // The accounts that read from this one skipped its rules; they sync now too. A failed request
     // is retried by a later alarm.
@@ -874,7 +1184,9 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.put(PAUSE_KEY, pause);
       return true;
     });
-    if (started) await this.finishPause(accountId, since);
+    if (!started) return;
+    await this.auditAccount(accountId, "account_paused", { code });
+    await this.finishPause(accountId, since);
   }
 
   /**
@@ -883,10 +1195,12 @@ export class AccountSync extends DurableObject<Env> {
    * if the token works, the probe ends the pause and clears the flag. No alert; the flag was set
    * before.
    */
-  private async pauseForStaleFlag(): Promise<Pause> {
-    return this.ctx.blockConcurrencyWhile(async () => {
+  private async pauseForStaleFlag(accountId: string): Promise<Pause> {
+    let started = false;
+    const stored = await this.ctx.blockConcurrencyWhile(async () => {
       const current = await this.pause();
       if (current) return current;
+      started = true;
       const now = Date.now();
       const pause: Pause = {
         code: "needs_reconnect",
@@ -898,6 +1212,42 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.put(PAUSE_KEY, pause);
       return pause;
     });
+    if (started) await this.auditAccount(accountId, "account_paused", { code: stored.code });
+    return stored;
+  }
+
+  /** Record an event of this account. Never throws: the work goes on without its event. */
+  private async auditAccount(
+    accountId: string,
+    kind: AuditKind,
+    detail: Record<string, string | number | boolean>,
+  ): Promise<void> {
+    try {
+      const owner = await accountOwner(this.env.DB, accountId);
+      if (owner) await recordAudit(this.env.DB, { ...owner, accountId, kind, detail });
+    } catch (error) {
+      console.error("Audit lookup failed", kind, ...errorLogFields(error));
+    }
+  }
+
+  /**
+   * `auditAccount` for a row that must not get lost. Returns true if D1 took the row, or if the
+   * account is gone, so that no row can ever be written.
+   */
+  private async auditAccountChecked(
+    accountId: string,
+    kind: AuditKind,
+    detail: Record<string, string | number | boolean>,
+  ): Promise<boolean> {
+    try {
+      const owner = await accountOwner(this.env.DB, accountId);
+      return (
+        !owner || (await recordAuditChecked(this.env.DB, { ...owner, accountId, kind, detail }))
+      );
+    } catch (error) {
+      console.error("Audit lookup failed", kind, ...errorLogFields(error));
+      return false;
+    }
   }
 
   /** Set the D1 flag and send the alert of a pause, each at most once. */
@@ -919,13 +1269,18 @@ export class AccountSync extends DurableObject<Env> {
         return;
       }
     }
-    // Claimed before the request, so that the alert goes out at most once. A failed post is lost.
-    let claimed = false;
-    await this.updatePause(since, (current) => {
-      claimed = current.alertPending;
-      return { ...current, alertPending: false };
-    });
-    if (claimed) await sendReconnectAlert(this.env, this.providerOrDefault());
+    if (!pause.alertPending || this.sendingReconnectAlert) return;
+    // The stored flag stays until the post ends, so that a call that dies during it loses no alert.
+    // The cost is one more alert. In memory, this field keeps two overlapping calls to one post.
+    this.sendingReconnectAlert = true;
+    try {
+      const outcome = await sendReconnectAlert(this.env, this.providerOrDefault());
+      if (outcome !== "failed") {
+        await this.updatePause(since, (current) => ({ ...current, alertPending: false }));
+      }
+    } finally {
+      this.sendingReconnectAlert = false;
+    }
   }
 
   /** The alarm's and the tick's work while paused: finish the pause, and probe once a day. */
@@ -965,6 +1320,10 @@ export class AccountSync extends DurableObject<Env> {
   /** Delete tokens and subscriptions, and cancel a pending sync. */
   async forget(): Promise<void> {
     await this.stopWatches();
+    await this.wipe();
+  }
+
+  private async wipe(): Promise<void> {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     // The instance can live on after deleteAll(); give it empty tables again.
@@ -994,8 +1353,16 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
-  private async retiring(): Promise<boolean> {
-    return (await this.ctx.storage.get<boolean>(RETIRING_KEY)) ?? false;
+  /** True if a retirement runs. A request asks this before it starts rules of the account. */
+  async retiring(): Promise<boolean> {
+    return (await this.ctx.storage.get(RETIRING_KEY)) !== undefined;
+  }
+
+  /** True if this instance still holds tokens and owes a step of a retirement. */
+  private async retirementOpen(): Promise<boolean> {
+    if (!this.accountIdOrNull()) return false;
+    if (await this.retiring()) return true;
+    return (await this.ctx.storage.get(RETIREMENT_CHECK_KEY)) !== undefined;
   }
 
   async listCalendars(): Promise<CalendarInfo[]> {
@@ -1035,21 +1402,22 @@ export class AccountSync extends DurableObject<Env> {
    * Busy events of one calendar of this account for a free/busy feed. While the provider throttles
    * the account, the read makes no provider call, so that a feed never extends the penalty. A
    * calendar the provider no longer finds or lets the account read is reported as unavailable.
+   * With `limits`, only the events that the feed can show leave this instance. A comparison reads
+   * without them, because it needs every event.
    */
   async readFeedEvents(
     remoteCalendarId: string,
     window: { start: Date; end: Date },
+    limits?: FeedLimits,
   ): Promise<FeedRead> {
     // A quick answer before queueing; the queued call checks again, see `client()`.
     const left = await this.penaltyLeft();
     if (left > 0) return { kind: "throttled", retryAfterMs: left };
     try {
-      return {
-        kind: "events",
-        events: await this.readSourceEvents(remoteCalendarId, window, false, {
-          respectPenalty: true,
-        }),
-      };
+      const events = await this.readSourceEvents(remoteCalendarId, window, false, {
+        respectPenalty: true,
+      });
+      return { kind: "events", ...(limits ? limitFeedEvents(events, limits) : { events }) };
     } catch (error) {
       if (error instanceof PenaltyActive) {
         return { kind: "throttled", retryAfterMs: error.retryAfterMs };
@@ -1064,6 +1432,52 @@ export class AccountSync extends DurableObject<Env> {
       }
       throw error;
     }
+  }
+
+  /**
+   * True if the owners of this account's feed calendars are due for a check. The first call only
+   * starts the wait: a connected account has just loaded its calendars.
+   */
+  private async feedOwnershipDue(): Promise<boolean> {
+    const at = await this.ctx.storage.get<number>(FEED_OWNERSHIP_CHECK_KEY);
+    if (at === undefined) {
+      await this.ctx.storage.put(
+        FEED_OWNERSHIP_CHECK_KEY,
+        Date.now() + FEED_OWNERSHIP_CHECK_EVERY_MS,
+      );
+      return false;
+    }
+    return Date.now() >= at;
+  }
+
+  /**
+   * Read who owns this account's feed calendars. A feed answers 503 once the provider names another
+   * owner, or a complete list no longer names the calendar. A list that fails changes nothing, and
+   * a later full cycle reads it again. The time goes into storage first, so that a failed step
+   * cannot repeat in the next alarm. Returns the delay of the next alarm.
+   */
+  private async checkFeedOwnership(accountId: string): Promise<number> {
+    await this.ctx.storage.put(FEED_OWNERSHIP_CHECK_KEY, Date.now() + FULL_CYCLE_EVERY_MS);
+    try {
+      const stored = await feedCalendarsOfAccount(this.env.DB, accountId);
+      let lost = false;
+      if (stored.length > 0) {
+        const client = await this.client({ respectPenalty: true });
+        lost = await storeFeedOwnership(
+          this.env.DB,
+          stored,
+          await client.listCalendars({ complete: true }),
+        );
+      }
+      await this.ctx.storage.put(
+        FEED_OWNERSHIP_CHECK_KEY,
+        Date.now() + (lost ? FEED_OWNERSHIP_RECHECK_MS : FEED_OWNERSHIP_CHECK_EVERY_MS),
+      );
+    } catch (error) {
+      console.error("Checking feed calendars failed", ...errorLogFields(error));
+      return throttleDelayMs(error) ?? this.delays().nextRun;
+    }
+    return this.delays().nextRun;
   }
 
   /** Milliseconds left of the current provider penalty, or 0. */
@@ -1114,6 +1528,20 @@ export class AccountSync extends DurableObject<Env> {
   async seedFake(seed: Parameters<typeof seedFakeEvents>[1], count: number): Promise<void> {
     if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
     seedFakeEvents(this.ctx.storage.sql, seed, count);
+    this.sourceCache.clear();
+  }
+
+  /** Local tests only: add one simulated event. */
+  async addFakeEvent(event: FakeEvent): Promise<void> {
+    if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
+    addFakeEvent(this.ctx.storage.sql, event);
+    this.sourceCache.clear();
+  }
+
+  /** Local tests only: put a fault into this account's simulated calendar. */
+  async injectFakeFault(fault: FakeFault): Promise<void> {
+    if (this.env.DEV_FAKE_CALENDARS !== "1") throw new Error("Simulation is off");
+    injectFakeFault(this.ctx.storage.sql, fault);
     this.sourceCache.clear();
   }
 
@@ -1176,12 +1604,156 @@ export class AccountSync extends DurableObject<Env> {
     return this.startRun(ruleId, { fromAlarm: true });
   }
 
+  /**
+   * A real run, between its start marker and the end. The marker stays if the run ends without a
+   * written audit event, and it is what remains if the instance dies. A run without a stored marker
+   * still runs: the marker only serves the audit log. Dry runs do not come here.
+   */
   private startRun(ruleId: string, options: RunOptions = {}): Promise<RunResult> {
-    const run: Promise<RunResult> = this.runRuleOnce(ruleId, options).finally(() => {
-      if (this.runningRules.get(ruleId) === run) this.runningRules.delete(ruleId);
-    });
+    const marker: RunMarker = { ruleId, runId: crypto.randomUUID(), startedAt: Date.now() };
+    const key = `${RUN_MARKER_PREFIX}${ruleId}:${marker.runId}`;
+    const progress = { runId: marker.runId, closed: false };
+    const run: Promise<RunResult> = this.storeRunMarker(key, marker)
+      .then(() => this.runRuleOnce(ruleId, { ...options, progress }))
+      .finally(async () => {
+        // The marker goes first: without its rule in `runningRules`, it would count as an abort.
+        if (progress.closed) await this.dropRunMarker(key);
+        if (this.runningRules.get(ruleId) === run) this.runningRules.delete(ruleId);
+      });
     this.runningRules.set(ruleId, run);
     return run;
+  }
+
+  private async storeRunMarker(key: string, marker: RunMarker): Promise<void> {
+    try {
+      await this.ctx.storage.put(key, marker);
+    } catch (error) {
+      console.error("Storing a run marker failed", ...errorLogFields(error));
+    }
+  }
+
+  /** A marker that stays is settled by the next report, so a failure must not fail the run. */
+  private async dropRunMarker(key: string): Promise<void> {
+    try {
+      await this.ctx.storage.delete(key);
+    } catch (error) {
+      console.error("Removing a run marker failed", ...errorLogFields(error));
+    }
+  }
+
+  /**
+   * Write `sync_run_aborted` for markers without a run in progress. A run with an outcome event in
+   * D1 did not abort: its instance died or failed before it removed the marker. A marker goes only
+   * after its event is found or written, so a failed lookup or write repeats in the next tick or
+   * alarm. The same call alerts the operator: an invocation that died at a limit cannot. A failed
+   * alert waits for a tick, so that a dead webhook costs no subrequest and no wait in every alarm.
+   * Never throws: the report must not stop a tick or an alarm.
+   */
+  private reportAbortedRuns(
+    accountId: string,
+    { retryAlerts = false }: { retryAlerts?: boolean } = {},
+  ): Promise<void> {
+    this.abortReport ??= this.writeAbortEvents(accountId)
+      .then(async (found) => {
+        if (found || retryAlerts) await this.sendAbortAlerts(accountId);
+      })
+      .catch((error: unknown) => {
+        console.error("Reporting aborted runs failed", ...errorLogFields(error));
+      })
+      .finally(() => {
+        this.abortReport = null;
+      });
+    return this.abortReport;
+  }
+
+  /** Returns true if this call found aborted runs. */
+  private async writeAbortEvents(accountId: string): Promise<boolean> {
+    const markers = await this.ctx.storage.list<RunMarker>({
+      prefix: RUN_MARKER_PREFIX,
+      // Each run in progress holds a marker. They must not use up the limit of the others.
+      limit: MAX_ABORT_REPORTS + this.runningRules.size,
+    });
+    const aborted = [...markers]
+      .filter(([, marker]) => !this.runningRules.has(marker.ruleId))
+      .slice(0, MAX_ABORT_REPORTS);
+    if (aborted.length === 0) return false;
+    const owner = await accountOwner(this.env.DB, accountId);
+    const settled = owner
+      ? await runsWithOutcome(
+          this.env.DB,
+          owner.userId,
+          aborted.map(([, marker]) => marker),
+        )
+      : null;
+    const lost = aborted.filter(([, { runId }]) => owner && !settled?.has(runId));
+    // Stored before the events: once an event exists, its marker counts as settled, and a report
+    // that dies between the two would lose the alert.
+    if (lost.length > 0) {
+      await this.updateQueue<string>(ABORT_ALERTS_KEY, (queue) => [
+        ...new Set([...queue, ...lost.map(([, { ruleId }]) => ruleId)]),
+      ]);
+    }
+    for (const [key, { ruleId, runId, startedAt }] of aborted) {
+      // A disconnected account has no owner to record the event for, now or later.
+      if (owner && !settled?.has(runId)) {
+        const written = await recordAuditChecked(this.env.DB, {
+          ...owner,
+          accountId,
+          ruleId,
+          kind: "sync_run_aborted",
+          detail: { runId, startedAt: new Date(startedAt).toISOString() },
+        });
+        // The next tick or alarm tries again; more inserts now would likely fail too.
+        if (!written) return true;
+      }
+      await this.ctx.storage.delete(key);
+    }
+    return lost.length > 0;
+  }
+
+  /** Send the open alerts about aborted runs. They stay stored until the webhook accepts them. */
+  private async sendAbortAlerts(accountId: string): Promise<void> {
+    const ruleIds = (await this.ctx.storage.get<string[]>(ABORT_ALERTS_KEY)) ?? [];
+    if (ruleIds.length === 0) return;
+    const owner = await accountOwner(this.env.DB, accountId);
+    const open = owner
+      ? (await sendAbortAlert(this.env, { ...owner, accountId }, ruleIds)).open
+      : [];
+    const settled = new Set(ruleIds.filter((id) => !open.includes(id)));
+    await this.updateQueue<string>(ABORT_ALERTS_KEY, (queue) =>
+      queue.filter((id) => !settled.has(id)),
+    );
+  }
+
+  /**
+   * Send the open alerts about comparisons. Only the tick calls this: a comparison ends in an alarm
+   * that has used its subrequests for reads, and a failed post waits for the next tick. An alert
+   * that a repeat lock holds back costs no read until the lock ends. Never throws: the report must
+   * not stop a tick.
+   */
+  private async sendCompareAlerts(accountId: string): Promise<void> {
+    try {
+      const alerts = (await this.ctx.storage.get<CompareAlert[]>(COMPARE_ALERTS_KEY)) ?? [];
+      const now = Date.now();
+      if (!alerts.some((alert) => (alert.notBefore ?? 0) <= now)) return;
+      const owner = await accountOwner(this.env.DB, accountId);
+      const open = owner
+        ? (await sendCompareAlert(this.env, { ...owner, accountId }, alerts, now)).open
+        : [];
+      const handled = new Set(alerts.map(compareRunKey));
+      const kept = new Map(open.map((alert) => [compareRunKey(alert), alert]));
+      // A comparison can end during the post. Its newer alert stays as it is.
+      await this.updateQueue<CompareAlert>(COMPARE_ALERTS_KEY, (queue) =>
+        queue.flatMap((alert) => {
+          const key = compareRunKey(alert);
+          if (!handled.has(key)) return [alert];
+          const stays = kept.get(key);
+          return stays ? [stays] : [];
+        }),
+      );
+    } catch (error) {
+      console.error("Sending a comparison alert failed", ...errorLogFields(error));
+    }
   }
 
   private async runRuleOnce(ruleId: string, options: RunOptions): Promise<RunResult> {
@@ -1189,13 +1761,22 @@ export class AccountSync extends DurableObject<Env> {
       return await this.executeRule(ruleId, options);
     } catch (error) {
       // Record failed real runs whether the alarm or a user started them; previews stay silent.
-      if (!options.dryRun) await this.auditFailure(ruleId, this.accountIdOrNull() ?? "", error);
+      if (!options.dryRun) {
+        const closed = await this.auditFailure(
+          ruleId,
+          this.accountIdOrNull() ?? "",
+          error,
+          options.progress?.runId,
+        );
+        if (options.progress) options.progress.closed = closed;
+      }
       throw error;
     }
   }
 
   private async executeRule(ruleId: string, options: RunOptions): Promise<RunResult> {
     const startedAt = Date.now();
+    const readsBefore = this.providerReads;
     const rule = await loadRule(this.env.DB, ruleId);
     if (!rule) throw new Error(`Rule ${ruleId} not found`);
     if (rule.target.accountId !== this.accountId()) {
@@ -1207,6 +1788,7 @@ export class AccountSync extends DurableObject<Env> {
     // The rule was queued before its source account needed reconnecting. Its read would only
     // fail; it runs again in the full cycle after the reconnect. No audit entry.
     if (options.fromAlarm && rule.source.needsReconnect) {
+      if (options.progress) options.progress.closed = true;
       return {
         ruleId,
         dryRun: false,
@@ -1231,16 +1813,7 @@ export class AccountSync extends DurableObject<Env> {
     const origin = ruleOptions.showOrigin && !capApplies ? originLine(rule) : null;
     // The link needs one more field per occurrence, and detail level "title" or more.
     const withLink = origin !== null && ruleOptions.linkOrigin && effective.level !== "busy";
-    const sourceEvents =
-      rule.source.accountId === this.accountId()
-        ? await this.readSourceEvents(rule.source.remoteCalendarId, read ?? window, withBody, {
-            withLink,
-          })
-        : await this.readOtherSource(rule.source.accountId, rule.source.remoteCalendarId, {
-            window: read ?? window,
-            withBody,
-            withLink,
-          });
+    const sourceEvents = await this.readRuleSource(rule, read ?? window, withBody, withLink);
 
     const target = await this.client();
     const ruleTag = await ruleTagFor(rule.id);
@@ -1265,7 +1838,15 @@ export class AccountSync extends DurableObject<Env> {
       { scope: rule.userId, claimed },
       origin,
     );
-    const plan = planSync(desired, existing, { sync: window, target: targetRead, read });
+    // A run reads the edge only for a block at the edge without a wanted event; see `planSync`.
+    // That is not rare. With a source at UTC or east of it, the main read no longer returns
+    // yesterday's all-day event after midnight UTC, even if the event exists. The same holds for
+    // a timed event that ends at midnight UTC. Then every run of that UTC day reads the edge:
+    // about 144 reads per rule, less what the source cache answers.
+    const readsEdge = blocksAtEdge(desired, existing, window).length > 0;
+    const edge = readsEdge ? await this.readEdge(rule, window) : undefined;
+    const edgeReadsFailed = readsEdge && !edge ? 1 : 0;
+    const plan = planSync(desired, existing, { sync: window, target: targetRead, read, edge });
 
     let throttled = 0;
     const statuses: Record<string, number> = {};
@@ -1273,16 +1854,19 @@ export class AccountSync extends DurableObject<Env> {
     // One audit event per run, written once the outcome is known. Counts only, no event content.
     const audit = async (result: RunResult) => {
       const detail: SyncRunDetail = {
+        ...(options.progress ? { runId: options.progress.runId } : {}),
         dryRun: result.dryRun,
         ...plan.stats,
+        duplicates: countDuplicates(plan, desired),
         applied: result.applied,
         failed: result.failed,
         remaining: result.remaining,
         throttled,
         statuses: formatStatuses(statuses),
+        edgeReadsFailed,
         durationMs: Date.now() - startedAt,
       };
-      await recordAudit(this.env.DB, {
+      const written = await recordAuditChecked(this.env.DB, {
         orgId: rule.orgId,
         userId: rule.userId,
         accountId: rule.target.accountId,
@@ -1290,6 +1874,7 @@ export class AccountSync extends DurableObject<Env> {
         kind: "sync_run",
         detail: { ...detail },
       });
+      if (options.progress) options.progress.closed = written;
       return result;
     };
 
@@ -1304,12 +1889,38 @@ export class AccountSync extends DurableObject<Env> {
       });
     }
 
+    const writesAllDay = plan.actions.some(
+      (action) => action.kind !== "delete" && action.block.allDay,
+    );
+    const lookup = writesAllDay
+      ? await this.allDayZone(target, rule.target.email, this.providerReads - readsBefore)
+      : {};
     const batches = chunk(plan.actions, target.batchLimit);
     let applied = 0;
     let failed = 0;
-    let retryAfterMs: number | undefined;
-    for (const batch of batches.slice(0, MAX_BATCHES_PER_RUN)) {
-      const result = await target.applyBatch(rule.target.remoteCalendarId, ruleTag, batch);
+    let retryAfterMs = lookup.waitMs;
+    let allDayZone = lookup.zone;
+    // A throttled lookup stops the writes: further calls would only extend the penalty.
+    const allowed = retryAfterMs === undefined ? batchBudget(this.providerReads - readsBefore) : 0;
+    for (const batch of batches.slice(0, allowed)) {
+      const result = await target.applyBatch(
+        rule.target.remoteCalendarId,
+        ruleTag,
+        batch,
+        allDayZone,
+      );
+      // Graph can refuse a zone name, and then each all-day write fails. So a 400 for an all-day
+      // write means UTC for the day, also if it had another cause, unless another all-day write of
+      // the batch shows that Graph takes the zone. A 400 for a timed block or a delete says nothing
+      // about the zone.
+      if (allDayZone && result.allDayRefused && !result.allDayAccepted) {
+        console.error(
+          "Graph refused all-day writes in the mailbox zone, so UTC applies for the day",
+          ...Object.keys(result.statuses),
+        );
+        await this.storeMailboxZone(null);
+        allDayZone = undefined;
+      }
       if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
       applied += batch.length - result.failed - result.throttled;
       failed += result.failed;
@@ -1331,7 +1942,7 @@ export class AccountSync extends DurableObject<Env> {
       if (!options.fromAlarm) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
       await this.setSyncAlarm(Date.now() + (retryAfterMs ?? this.delays().nextRun));
     }
-    return audit({
+    const result = await audit({
       ruleId,
       dryRun: false,
       stats: plan.stats,
@@ -1340,6 +1951,96 @@ export class AccountSync extends DurableObject<Env> {
       remaining,
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     });
+    if (failed === 0 && remaining === 0) await this.noteRuleOk(ruleId, startedAt);
+    return result;
+  }
+
+  /**
+   * The zone for the all-day blocks of a run, at most one answer per day. A mailbox without a
+   * usable zone means UTC for the day. A failed lookup says nothing about the mailbox, so the known
+   * zone stays for `MAILBOX_ZONE_RETRY_MS`, or UTC if no zone is known. In both cases the run goes
+   * on. A throttled lookup gives no answer, so it returns the wait and stores nothing. One batch of
+   * a step always runs, and a lookup can take two requests. So a step with fewer than three
+   * requests left makes no lookup: its blocks use the known zone, or UTC.
+   */
+  private async allDayZone(
+    target: CalendarClient,
+    address: string,
+    reads: number,
+  ): Promise<{ zone?: string; waitMs?: number }> {
+    if (!target.mailboxZone) return {};
+    const stored = await this.ctx.storage.get<MailboxZone>(MAILBOX_ZONE_KEY);
+    const valid = stored?.failed ? MAILBOX_ZONE_RETRY_MS : MAILBOX_ZONE_MS;
+    const known = stored?.zone ? { zone: stored.zone } : {};
+    if (stored && Date.now() - stored.at < valid) return known;
+    if (reads > MAX_PROVIDER_REQUESTS - 3) return known;
+    let zone: string | null;
+    try {
+      zone = await target.mailboxZone(address);
+    } catch (error) {
+      const waitMs = throttleDelayMs(error);
+      if (waitMs !== null) return { waitMs };
+      console.error("Reading the mailbox zone failed", ...errorLogFields(error));
+      await this.storeMailboxZone(stored?.zone ?? null, true);
+      return known;
+    }
+    await this.storeMailboxZone(zone);
+    return zone ? { zone } : {};
+  }
+
+  private async storeMailboxZone(zone: string | null, failed = false): Promise<void> {
+    await this.ctx.storage.put<MailboxZone>(MAILBOX_ZONE_KEY, {
+      zone,
+      at: Date.now(),
+      ...(failed ? { failed } : {}),
+    });
+  }
+
+  /** Comparisons wait for this. A failure must not fail the run: they then time out. */
+  private async noteRuleOk(ruleId: string, startedAt: number): Promise<void> {
+    try {
+      await this.ctx.storage.put(`${RULE_OK_PREFIX}${ruleId}`, startedAt);
+    } catch (error) {
+      console.error("Noting a successful run failed", ...errorLogFields(error));
+    }
+  }
+
+  /** The source events of a rule, from this account or from the instance of the source account. */
+  private readRuleSource(
+    rule: RuleContext,
+    window: { start: Date; end: Date },
+    withBody: boolean,
+    withLink: boolean,
+  ): Promise<SourceEvent[]> {
+    const { accountId, remoteCalendarId } = rule.source;
+    return accountId === this.accountId()
+      ? this.readSourceEvents(remoteCalendarId, window, withBody, { withLink })
+      : this.readOtherSource(accountId, remoteCalendarId, { window, withBody, withLink });
+  }
+
+  /**
+   * The edge read of a run, or undefined if it failed: without it the plan deletes nothing at the
+   * edge. The next run reads again. If the read fails for the rest of the UTC day, the block no
+   * longer ends at the start of the window, and it stays for good. So the audit of the run counts
+   * a failed read. A throttled read stops the run, as the main read does, so that the rule waits
+   * for `Retry-After`. The read needs identity only, so it asks for no description and no link.
+   */
+  private async readEdge(
+    rule: RuleContext,
+    sync: { start: Date; end: Date },
+  ): Promise<EdgeRead | undefined> {
+    const window = edgeReadWindow(sync);
+    try {
+      const events = await this.readRuleSource(rule, window, false, false);
+      const markers = await Promise.all(
+        events.map((event) => markerFor(rule.id, event.occurrenceKey)),
+      );
+      return { window, markers: new Set(markers) };
+    } catch (error) {
+      if (throttleDelayMs(error) !== null) throw error;
+      console.error("The edge read of a rule failed", ...errorLogFields(error));
+      return undefined;
+    }
   }
 
   /** Source events from another account's instance. Throws SourceThrottledError if it throttles. */
@@ -1352,6 +2053,8 @@ export class AccountSync extends DurableObject<Env> {
       withLink,
     }: { window: { start: Date; end: Date }; withBody: boolean; withLink: boolean },
   ): Promise<SourceEvent[]> {
+    // One subrequest here; the other instance reads the pages on its own budget.
+    this.providerReads++;
     const read = await accountSync(this.env, accountId).readSourceForRule(
       remoteCalendarId,
       window,
@@ -1367,13 +2070,16 @@ export class AccountSync extends DurableObject<Env> {
   /**
    * Delete the blocks one rule wrote into a calendar of this account, before the rule or an account
    * goes away. With `beyond`, delete only the blocks that start beyond that window end. Returns how
-   * many are left if the limit per invocation was reached.
+   * many are left if the limit per invocation was reached. If a batch fails after others worked,
+   * this also returns how many are left: the run made progress, so it is no failed attempt. A
+   * failed edge read does not stop the deletes, but the result reports it.
    */
   async removeRuleBlocks(
     ruleId: string,
     remoteCalendarId: string,
     beyond?: Date,
   ): Promise<RemovalResult> {
+    const readsBefore = this.providerReads;
     const target = await this.client();
     const ruleTag = await ruleTagFor(ruleId);
     const cleanup = cleanupWindow();
@@ -1381,6 +2087,15 @@ export class AccountSync extends DurableObject<Env> {
     const blocks = (await target.existingBlocks(remoteCalendarId, window, [ruleTag])).filter(
       (block) => !beyond || startsBeyond(block, beyond),
     );
+    let edgeReadFailed = false;
+    if (!beyond) {
+      // Blocks from before today stay as a record, except those that end at the start of the
+      // window. Whether the read above returns those depends on the target's time zone.
+      const edge = await this.blocksAtRemovalEdge(target, remoteCalendarId, ruleTag, cleanup);
+      edgeReadFailed = edge === undefined;
+      const found = new Set(blocks.map((block) => block.targetId));
+      blocks.push(...(edge ?? []).filter((block) => !found.has(block.targetId)));
+    }
     const actions = blocks.map((block) => ({
       kind: "delete" as const,
       targetId: block.targetId,
@@ -1388,8 +2103,17 @@ export class AccountSync extends DurableObject<Env> {
     }));
     let removed = 0;
     let retryAfterMs: number | undefined;
-    for (const batch of chunk(actions, target.batchLimit).slice(0, MAX_BATCHES_PER_RUN)) {
-      const result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
+    const batches = chunk(actions, target.batchLimit);
+    for (const batch of batches.slice(0, batchBudget(this.providerReads - readsBefore))) {
+      let result: BatchResult;
+      try {
+        result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
+      } catch (error) {
+        if (removed === 0) throw error;
+        console.error("Removal batch failed", ruleId, ...errorLogFields(error));
+        retryAfterMs = throttleDelayMs(error) ?? undefined;
+        break;
+      }
       if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
       removed += batch.length - result.failed - result.throttled;
       if (result.throttled > 0) {
@@ -1399,8 +2123,32 @@ export class AccountSync extends DurableObject<Env> {
       }
     }
     const remaining = actions.length - removed;
-    if (retryAfterMs === undefined) return { removed, remaining, throttled: false };
-    return { removed, remaining, throttled: true, retryAfterMs };
+    if (retryAfterMs === undefined) return { removed, remaining, throttled: false, edgeReadFailed };
+    return { removed, remaining, throttled: true, retryAfterMs, edgeReadFailed };
+  }
+
+  /**
+   * The blocks of a rule that end at the start of a removal's window, or undefined if the read
+   * failed: the attempt then goes on without them, and the job tries again. Every attempt reads the
+   * edge of its own UTC day, so a retry after midnight does not find such a block any more; the
+   * block then stays as a record of a past day. A throttled read stops the attempt, as the main
+   * read does: the job waits for `Retry-After` and uses up no attempt.
+   */
+  private async blocksAtRemovalEdge(
+    target: CalendarClient,
+    remoteCalendarId: string,
+    ruleTag: string,
+    cleanup: { start: Date; end: Date },
+  ): Promise<ExistingBlock[] | undefined> {
+    try {
+      const window = edgeReadWindow(cleanup);
+      const blocks = await target.existingBlocks(remoteCalendarId, window, [ruleTag]);
+      return blocks.filter((block) => endsAtStart(block, cleanup));
+    } catch (error) {
+      if (throttleDelayMs(error) !== null) throw error;
+      console.error("The edge read of a removal failed", ...errorLogFields(error));
+      return undefined;
+    }
   }
 
   /**
@@ -1419,25 +2167,37 @@ export class AccountSync extends DurableObject<Env> {
   /**
    * Queue the removals of several rules in one call and one storage update, so that a save with
    * many rules makes one Durable Object call per account. Same rules as `queueRemoval`; a job
-   * that is queued already, or repeated in `rules`, is not added twice.
+   * that is queued already, or repeated in `rules`, is not added twice. With `offboarding`, a job
+   * reports its result to that owner, also a job that was queued already. A job that was queued
+   * already counts this call, see `Removal.requeued`.
    */
   async queueRemovals(
     rules: { ruleId: string; remoteCalendarId: string }[],
-    { trim = false }: { trim?: boolean } = {},
+    { trim = false, offboarding }: { trim?: boolean; offboarding?: OffboardingOwner } = {},
   ): Promise<void> {
     if (rules.length === 0) return;
+    const progress = offboarding ? { offboarding: { ...offboarding, removed: 0 } } : {};
     const jobs: Removal[] = rules.map(({ ruleId, remoteCalendarId }) => ({
       ruleId,
       remoteCalendarId,
       attempts: 0,
       ...(trim ? { trim: true as const } : {}),
+      ...progress,
     }));
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) => {
-      const next = [...queue];
+      const next = queue.map((queued) =>
+        jobs.some((job) => sameRemoval(queued, job))
+          ? {
+              ...queued,
+              ...(queued.offboarding ? {} : progress),
+              ...(queued.trim ? {} : { requeued: (queued.requeued ?? 0) + 1 }),
+            }
+          : queued,
+      );
       for (const job of jobs) {
         if (!next.some((queued) => sameRemoval(queued, job))) next.push(job);
       }
-      return next.length === queue.length ? queue : next;
+      return next;
     });
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
@@ -1447,13 +2207,124 @@ export class AccountSync extends DurableObject<Env> {
   /**
    * The account is going: its alarms stop the watches, remove the queued blocks, and then forget
    * the tokens. The removals need the tokens, so the account cannot go at once. This call only
-   * writes storage, so that the request never waits for a provider.
+   * writes storage, so that the request never waits for a provider. If the request fails, it calls
+   * `cancelRetire()`; a reconnect ends the retirement too. The caller makes the `generation`: it
+   * must be able to cancel also if the answer of this call got lost. A caller of a version without
+   * generations passes none, and this call then makes one that no cancel names.
    */
-  async retire(): Promise<void> {
-    await this.ctx.storage.put(RETIRING_KEY, true);
+  async retire(generation: string = crypto.randomUUID()): Promise<void> {
+    await this.ctx.storage.put(RETIRING_KEY, generation);
+    await this.ctx.storage.delete(RETIREMENT_CHECK_KEY);
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
+  }
+
+  /**
+   * Undo `retire()` of a request that failed, also one whose `retire()` never arrived: calling this
+   * twice changes nothing. It ends only the retirement of this `generation`, so that a late call
+   * leaves the retirement of a newer request alone. Once the tokens or the row went, there is
+   * nothing to undo. If this call fails, the retirement goes on, and `finishRetirement()` flags
+   * the account. A caller of a version without generations passes none, and this call then does
+   * nothing: it cannot tell which request it belongs to.
+   */
+  async cancelRetire(generation?: string): Promise<void> {
+    const accountId = this.accountIdOrNull();
+    if (!accountId || generation === undefined) return;
+    const row = await this.env.DB.prepare("SELECT 1 AS found FROM accounts WHERE id = ?")
+      .bind(accountId)
+      .first<{ found: number }>();
+    if (row) await this.endRetirement(generation);
+  }
+
+  /**
+   * End a retirement, if any: with `generation`, only the retirement of that request. Queued
+   * removals stay. The next alarm decides about each job: a rule that writes again keeps its
+   * blocks. The alarms may have stopped the watches, and a full cycle sets them again. That alarm
+   * also reads the row, see `checkEndedRetirement()`.
+   */
+  private async endRetirement(generation?: string): Promise<void> {
+    const ended = await this.ctx.storage.transaction(async (txn) => {
+      const stored = await txn.get(RETIRING_KEY);
+      const checking = await txn.get(RETIREMENT_CHECK_KEY);
+      if (stored === undefined && checking === undefined) return false;
+      if (generation !== undefined && stored !== generation) return false;
+      await txn.delete([RETIRING_KEY, WATCHES_TRIED_KEY]);
+      await txn.put<RetirementCheck>(RETIREMENT_CHECK_KEY, {
+        id: crypto.randomUUID(),
+        endedAt: Date.now(),
+      });
+      return true;
+    });
+    if (ended) await this.requestSync();
+  }
+
+  /**
+   * Read the row of an account whose retirement ended. If the row is gone, a delete landed after
+   * the end, no cron reaches this instance any more, and the retirement resumes. If the row is
+   * there, the check ends only if the read started `RETIREMENT_RETRY_MS` after the end: an earlier
+   * read can come before a delete that is under way. Until then `alarm()` keeps an alarm. If D1
+   * fails, this throws, and `alarm()` keeps the check.
+   */
+  private async checkEndedRetirement(accountId: string): Promise<void> {
+    const check = await this.ctx.storage.get<RetirementCheck>(RETIREMENT_CHECK_KEY);
+    if (check === undefined) return;
+    const late = Date.now() - check.endedAt >= RETIREMENT_RETRY_MS;
+    const row = await this.env.DB.prepare("SELECT 1 AS found FROM accounts WHERE id = ?")
+      .bind(accountId)
+      .first<{ found: number }>();
+    await this.ctx.storage.transaction(async (txn) => {
+      const stored = await txn.get<RetirementCheck>(RETIREMENT_CHECK_KEY);
+      if (stored?.id !== check.id || (row && !late)) return;
+      await txn.delete(RETIREMENT_CHECK_KEY);
+      if (!row) await txn.put(RETIRING_KEY, true);
+    });
+  }
+
+  /**
+   * Forget the tokens of a retiring account. Its row normally left with the request. If the row
+   * stayed, the flag shows the account to the user, and other accounts skip its rules. The flag
+   * comes first, so that no failure leaves a row without tokens and without the flag. If D1 fails,
+   * this throws, and `alarm()` sets the next alarm. A retirement that ended during this call keeps
+   * its tokens, and a tick clears the flag through a probe. A removal that was queued during this
+   * call needs the tokens: its alarm runs first, and the next alarm comes back here.
+   */
+  private async finishRetirement(accountId: string): Promise<void> {
+    await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
+      .bind(accountId)
+      .run();
+    await this.stopWatches();
+    const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
+    if (queue.length === 0 && (await this.retiring())) await this.wipe();
+  }
+
+  /**
+   * Write the result of ended offboarding jobs into the audit log, in one D1 call. It runs before
+   * the jobs leave the queue, so that the result is there before the account forgets its tokens.
+   * If D1 fails, the log loses the result and the job still ends: it cannot hold the account.
+   */
+  private async reportCleanup(jobs: Removal[], result: CleanupResult): Promise<void> {
+    const accountId = this.accountIdOrNull() ?? this.ctx.id.name ?? null;
+    const statements = jobs.flatMap(({ ruleId, offboarding }) => {
+      if (!offboarding) return [];
+      const { orgId, userId, removed, left } = offboarding;
+      const detail = { result, removed, ...(left ? { left } : {}) };
+      const event: AuditEvent = {
+        orgId,
+        userId,
+        accountId,
+        ruleId,
+        kind: "cleanup_finished",
+        detail,
+      };
+      return [auditStatement(this.env.DB, event)];
+    });
+    if (statements.length === 0) return;
+    try {
+      await this.env.DB.batch(statements);
+    } catch (error) {
+      console.error("Writing a cleanup result failed", ...errorLogFields(error));
+    }
   }
 
   /** True if the removal's rule writes into its calendar again. If D1 fails, the removal goes on. */
@@ -1473,7 +2344,7 @@ export class AccountSync extends DurableObject<Env> {
    */
   private async trimRuleBlocks(job: Removal): Promise<RemovalResult & { end?: Date }> {
     const end = await this.trimEnd(job);
-    if (!end) return { removed: 0, remaining: 0, throttled: false };
+    if (!end) return { removed: 0, remaining: 0, throttled: false, edgeReadFailed: false };
     return { ...(await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId, end)), end };
   }
 
@@ -1494,39 +2365,55 @@ export class AccountSync extends DurableObject<Env> {
     const ownAlarm = (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === REMOVAL_ALARM;
     const job = dueRemoval(queue, Date.now()) ?? (ownAlarm ? nextRemoval(queue) : undefined);
     if (!job) return this.retiring();
-    // A retry can come hours later. If the rule runs again by then, for example after a group
-    // direction went back to busy with the same rule ID, its blocks are wanted again. The first
-    // attempt skips this check: it runs right after the request that queued it, which may still
-    // be changing the rule. A retiring account skips it too: its rules may still be enabled if
-    // the request stopped before it deleted them, and its blocks must go. A trim's rule writes on;
-    // the trim reads its window at every attempt.
+    // A later attempt can come hours later. If the rule runs again by then, for example after a
+    // group direction went back to busy with the same rule ID, its blocks are wanted again. Only
+    // the first attempt skips this check: it runs right after the request that queued it, which
+    // may still be changing the rule. An offboarding stops its rules before it queues the job, so
+    // there a rule that runs means a failed request, and the check holds from the first attempt.
+    // A retiring account skips it: its rules may still be enabled until the request deletes them,
+    // and its blocks must go. A trim's rule writes on; the trim reads its window at every attempt.
     if (
       !job.trim &&
-      job.attempts > 0 &&
+      (job.offboarding !== undefined || job.started === true || job.attempts > 0) &&
       !(await this.retiring()) &&
       (await this.ruleWritesAgain(job))
     ) {
-      await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) =>
-        current.filter((queued) => !sameRemoval(queued, job)),
-      );
+      // The D1 read let other requests in. A request that queued the job again may have stopped
+      // the rule after that read, so the next alarm reads the rule again.
+      let dropped = false;
+      await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
+        const stored = current.find((queued) => sameRemoval(queued, job));
+        dropped = stored?.requeued === job.requeued;
+        return dropped ? current.filter((queued) => queued !== stored) : current;
+      });
       // An earlier attempt may have deleted blocks the rule wants again.
-      await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
+      if (dropped) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
       await this.setSyncAlarm(Date.now() + this.delays().nextRun);
       return true;
     }
     let outcome: "done" | "continue" | "throttled" | "failed" = "done";
     let delayMs = this.delays().nextRun;
-    let giveUp = false;
+    let refused = false;
+    let removed = 0;
+    let left: number | undefined = job.offboarding?.left;
+    let edgeReadFailed = false;
     try {
       const result: RemovalResult & { end?: Date } = job.trim
         ? await this.trimRuleBlocks(job)
         : await this.removeRuleBlocks(job.ruleId, job.remoteCalendarId);
+      removed = result.removed;
+      left = result.remaining;
+      edgeReadFailed = result.edgeReadFailed;
       if (result.throttled) {
         outcome = "continue";
         delayMs = result.retryAfterMs ?? delayMs;
       } else if (result.remaining > 0) {
         // A run without progress failed, for example with 403 on every block.
         outcome = result.removed > 0 ? "continue" : "failed";
+      } else if (result.edgeReadFailed) {
+        // A block at the edge may still be there, and no run reads that far back. This attempt
+        // counts even if it removed the last blocks, so that a lasting failure ends the job.
+        outcome = "failed";
       } else if (result.end && ((await this.trimEnd(job)) ?? result.end) < result.end) {
         // The window went down again during the trim. That lowering found this job queued, so
         // the job goes on instead of ending.
@@ -1540,17 +2427,18 @@ export class AccountSync extends DurableObject<Env> {
         delayMs = throttleDelay;
       } else {
         outcome = "failed";
-        // Refused tokens wait for a reconnect, but a retiring account has no row to reconnect.
-        giveUp =
-          error instanceof TokenError && RECONNECT_CODES.has(error.code) && (await this.retiring());
+        refused = error instanceof TokenError && RECONNECT_CODES.has(error.code);
       }
     }
+    const progress = removed > 0;
+    // An offboarding can take over the job while the provider calls run; see `queueRemovals`.
+    const stored = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY))?.find((queued) =>
+      sameRemoval(queued, job),
+    );
+    const offboarding = job.offboarding ?? stored?.offboarding;
     // Throttling is no failed attempt: the job waits for `Retry-After` instead.
-    const attempts = giveUp
-      ? MAX_REMOVAL_ATTEMPTS
-      : outcome === "failed"
-        ? job.attempts + 1
-        : job.attempts;
+    const attempts =
+      outcome === "failed" ? job.attempts + 1 : progress && !edgeReadFailed ? 0 : job.attempts;
     const wait = REMOVAL_BACKOFF_MS[attempts - 1];
     const waits = outcome === "failed" && wait !== undefined;
     const next: Removal = {
@@ -1558,12 +2446,27 @@ export class AccountSync extends DurableObject<Env> {
       remoteCalendarId: job.remoteCalendarId,
       attempts,
       ...(waits ? { notBefore: Date.now() + wait } : {}),
-      ...(job.trim ? { trim: true as const } : {}),
+      ...(job.trim ? { trim: true as const } : { started: true as const }),
+      ...(offboarding
+        ? {
+            offboarding: {
+              orgId: offboarding.orgId,
+              userId: offboarding.userId,
+              removed: offboarding.removed + removed,
+              ...(left === undefined ? {} : { left }),
+            },
+          }
+        : {}),
     };
     const ended = outcome === "done" || (outcome === "failed" && attempts >= MAX_REMOVAL_ATTEMPTS);
-    // The removed blocks may have hidden blocks of other rules. The mark keeps the full cycle owed
-    // even if the next removal fails and only sets its own alarm.
-    if (ended) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
+    if (ended) {
+      const result = outcome === "done" ? "removed" : refused ? "token_refused" : "incomplete";
+      await this.reportCleanup([next], result);
+    }
+    // The removed blocks may have hidden blocks of other rules. Every step that removed blocks sets
+    // the mark, so that the full cycle stays owed if a later step of this job waits, or if the next
+    // removal fails and only sets its own alarm.
+    if (ended || progress) await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
     // Removals queued during the provider calls are in the stored queue, not in `queue`.
     await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) => {
       const others = current.filter((queued) => !sameRemoval(queued, job));
@@ -1590,35 +2493,62 @@ export class AccountSync extends DurableObject<Env> {
    * they wait too. If another account throttled the read of a rule's source, only that rule waits.
    */
   override async alarm(): Promise<void> {
-    await this.runAlarm();
+    let failed = false;
+    try {
+      await this.runAlarm();
+    } catch (error) {
+      // The retries of the platform end after a few attempts, and a retiring account may have no
+      // row, so no cron reaches it. Its next alarm comes from here. Other alarms retry as before.
+      if (!(await this.retirementOpen())) throw error;
+      console.error("A step of a retirement failed", ...errorLogFields(error));
+      failed = true;
+    }
     // While paused, the alarm runs neither removals nor the retry of a sync request, so an alarm
     // for them would fire again and again. They wait in storage until new tokens start an alarm.
-    if (await this.pause()) return;
-    // After the last rule or check no alarm is left; a waiting removal or retry still needs one.
-    await this.keepRemovalAlarm();
-    await this.keepRetryAlarm();
+    // A retiring account does not wait for new tokens: its removals use up their attempts. New
+    // tokens end the retirement, see `storeTokens()`.
+    if (!(await this.pause()) || (await this.retiring())) {
+      // After the last rule or check no alarm is left; a waiting removal or retry still needs one.
+      await this.keepCompareAlarm();
+      await this.keepRemovalAlarm();
+      await this.keepRetryAlarm();
+    }
+    const pending = await this.ctx.storage.getAlarm();
+    const retryAt = Date.now() + RETIREMENT_RETRY_MS;
+    if (pending === null) {
+      if (await this.retirementOpen()) await this.setSyncAlarm(retryAt);
+    } else if (failed && pending < retryAt) {
+      // The alarms above can be due at once, and every run would fail until D1 answers. The mark of
+      // the alarm stays, because the work it waits for stays.
+      await this.ctx.storage.setAlarm(retryAt);
+    }
   }
 
   private async runAlarm(): Promise<void> {
     const accountId = this.accountIdOrNull();
     if (!accountId) {
       // Without tokens no removal can run, for example after `forget()` or a new jurisdiction.
-      if ((await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) !== undefined) {
+      const removals = await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY);
+      if (removals !== undefined) {
         console.error(
           "Dropping queued removals: no tokens",
           this.ctx.id.name ?? this.ctx.id.toString(),
         );
+        await this.reportCleanup(removals, "no_tokens");
         await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
       }
       return;
     }
+    await this.checkEndedRetirement(accountId);
+    await this.reportAbortedRuns(accountId);
     // Every provider call would fail. The work waits for new tokens, which start a full cycle;
-    // queued removals stay. A retiring account has no row to reconnect, and its refused tokens can
-    // neither remove blocks nor stop watches, so it goes now. Its watches end on their own.
+    // queued removals stay. A retiring account does not wait for them: its removals use up their
+    // attempts, a refusal can end by itself, and then the account goes. A watch that cannot be
+    // stopped with a refused token ends on its own.
     const pause = await this.pause();
-    if (pause) {
-      if (await this.retiring()) await this.forget();
-      else await this.whilePaused(accountId, pause);
+    if (pause && !(await this.retiring())) {
+      await this.failOpenCompares({ reason: "paused", code: pause.code });
+      await this.whilePaused(accountId, pause);
       return;
     }
     // A retiring account stops its watches in an alarm of their own, so that `retire()` never
@@ -1637,12 +2567,30 @@ export class AccountSync extends DurableObject<Env> {
     // Change feeds come first, then due removals, one per alarm; the rules follow once none is due.
     if (await this.runChangeCheck(accountId)) return;
     if (await this.runRemoval()) return;
-    if (await this.ctx.storage.get<boolean>(RETIRING_KEY)) {
-      await this.forget();
+    if (await this.retiring()) {
+      await this.finishRetirement(accountId);
+      return;
+    }
+    // This alarm must not go on to a full cycle. If sync work came up meanwhile, that goes first.
+    if (
+      (await this.ctx.storage.get(FEED_ONLY_ALARM_KEY)) === COMPARE_ALARM &&
+      !(await this.hasSyncWork(true))
+    ) {
+      // The mark stays during the step. If the step dies, the retry of this alarm must read the
+      // slice again, not start a full cycle. A tick may set the next alarm during the step.
+      await this.runCompareStep();
+      if ((await this.ctx.storage.getAlarm()) === null) {
+        await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
+      }
       return;
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
+      // A step of its own, before the cycle, so that the rules keep the budget of their alarms.
+      if (await this.feedOwnershipDue()) {
+        await this.setSyncAlarm(Date.now() + (await this.checkFeedOwnership(accountId)));
+        return;
+      }
       // This cycle covers every request so far. Cleared before the rule list is read: a request
       // during the read, for example for a new rule, marks again and gets one more cycle.
       await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
@@ -1691,7 +2639,7 @@ export class AccountSync extends DurableObject<Env> {
         changedBlocks = update > 0 || deleted > 0 || (waited && create > 0);
         delayMs = result.retryAfterMs ?? this.delays().nextRun;
       } catch (error) {
-        // One broken rule must not stop the others; runRule has recorded the failure.
+        // One broken rule must not stop the others; the run has recorded the failure.
         console.error("Rule run failed", ruleId, ...errorLogFields(error));
         // A throttled read is retried after the wait instead of in the next cron cycle.
         const throttleDelay = throttleDelayMs(error);
@@ -1833,6 +2781,309 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
+   * Start a comparison of every calendar that this account's rules write into, and with `full` of
+   * every writable calendar without a rule. It only stores the state; alarms read the slices. A
+   * calendar with an open comparison keeps it, except that a full comparison replaces a daily one:
+   * a daily comparison can wait a day for its confirmation, and a full one covers its window.
+   */
+  async startCompares(mode: "full" | "near" = "full"): Promise<CompareStart> {
+    const counts: CompareStart = { started: 0, open: 0, failed: 0 };
+    const accountId = this.accountIdOrNull();
+    if (!accountId || (await this.retiring())) return counts;
+    for (const calendar of await targetCalendars(this.env.DB, accountId)) {
+      const context = await this.compareContext(calendar.calendarId);
+      if (context.rules.length === 0) continue;
+      counts[await this.startCompare(calendar, context, mode)]++;
+    }
+    if (mode === "full") {
+      for (const calendar of await leftoverCalendars(this.env, accountId)) {
+        const context = await this.compareContext(calendar.calendarId);
+        counts[await this.startCompare(calendar, context, "leftover")]++;
+      }
+    }
+    await this.keepCompareAlarm();
+    return counts;
+  }
+
+  /** What a comparison of a calendar reads the rules for. */
+  private async compareContext(calendarId: string): Promise<CompareContext> {
+    const rules = await rulesIntoCalendar(this.env, calendarId);
+    const others = await rulesThroughOtherRows(this.env, calendarId);
+    const inputs = rules.map(compareRule);
+    return { rules, inputs, others, hash: await ruleSetHash(inputs, others) };
+  }
+
+  private async startCompare(
+    calendar: { calendarId: string; remoteCalendarId: string },
+    context: CompareContext,
+    mode: CompareMode,
+  ): Promise<keyof CompareStart> {
+    const key = `${COMPARE_PREFIX}${calendar.calendarId}`;
+    const current = await this.ctx.storage.get<CompareState>(key);
+    if (current?.mode === "near" && mode === "full" && !current.report) {
+      await this.failCompare(current, { reason: "superseded" });
+    }
+    if (await this.ctx.storage.get(key)) return "open";
+    const state = newCompare({ ...calendar, mode, ruleHash: context.hash, now: Date.now() });
+    const horizon = scanHorizon(context.inputs, state.startedAt, mode);
+    const stop =
+      horizon.start >= horizon.end
+        ? ({ reason: "empty_horizon" } as const)
+        : await this.compareStop(state, context);
+    if (stop) {
+      await this.failCompare(state, stop);
+      return "failed";
+    }
+    return (await this.openCompare(key, state)) ? "started" : "open";
+  }
+
+  /** Store a new comparison, unless a request stored one meanwhile. */
+  private openCompare(key: string, state: CompareState): Promise<boolean> {
+    return this.ctx.storage.transaction(async (txn) => {
+      if (await txn.get(key)) return false;
+      await txn.put(key, state);
+      return true;
+    });
+  }
+
+  private async openCompares(): Promise<CompareState[]> {
+    return [...(await this.ctx.storage.list<CompareState>({ prefix: COMPARE_PREFIX })).values()];
+  }
+
+  /**
+   * Why a calendar cannot be compared now, or null. A queued removal is about to change the
+   * calendar, and a paused account cannot be read to the end.
+   */
+  private async compareStop(
+    state: CompareState,
+    { rules, hash }: CompareContext,
+  ): Promise<CompareFailure | null> {
+    if (hash !== state.ruleHash) return { reason: "config_changed" };
+    const pause = await this.pause();
+    if (pause) return { reason: "paused", code: pause.code };
+    if (rules.some((rule) => rule.source.needsReconnect || rule.target.needsReconnect)) {
+      return { reason: "paused" };
+    }
+    const removals = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
+    return removals.some((job) => job.remoteCalendarId === state.remoteCalendarId)
+      ? { reason: "removal_queue" }
+      : null;
+  }
+
+  /**
+   * End a comparison without a result. Such a run never counts as a comparison. A comparison whose
+   * result already waits for D1 keeps that result.
+   */
+  private async failCompare(state: CompareState, failure: CompareFailure): Promise<void> {
+    await this.closeCompare(
+      state,
+      state.report ?? { kind: "compare_failed", detail: failureDetail(state, failure) },
+    );
+  }
+
+  /**
+   * Write the audit row of a comparison, and forget the comparison only if D1 took the row. If not,
+   * the row waits in storage, and the next tick writes it without a new read of any calendar.
+   */
+  private async closeCompare(state: CompareState, report: CompareReport): Promise<void> {
+    const key = `${COMPARE_PREFIX}${state.calendarId}`;
+    const detail = { ...report.detail };
+    // Stored before the row: once the row exists, the comparison is gone, and a call that dies
+    // between the two would lose the alert. A result that waits for D1 comes back here in every
+    // tick, so only the first close counts it, and a lost lock cannot post it again.
+    if (!state.report && report.kind === "compare_run") {
+      await this.updateQueue<CompareAlert>(COMPARE_ALERTS_KEY, (queue) =>
+        compareAlertsAfter(queue, report.detail),
+      );
+    }
+    if (await this.auditAccountChecked(this.accountId(), report.kind, detail)) {
+      await this.ctx.storage.delete(key);
+    } else {
+      await this.ctx.storage.put(key, { ...state, phase: "reporting", report });
+    }
+  }
+
+  private async failOpenCompares(failure: CompareFailure): Promise<void> {
+    for (const state of await this.openCompares()) await this.failCompare(state, failure);
+  }
+
+  /** The tick's part of comparisons. Never throws: it must not stop the tick. */
+  private async compareTick(): Promise<void> {
+    try {
+      for (const state of await this.openCompares()) await this.settleCompare(state);
+      const now = Date.now();
+      const last = await this.ctx.storage.get<number>(NEAR_COMPARE_KEY);
+      // The first tick only starts the wait, so that an update compares nothing at once.
+      if (last === undefined) await this.ctx.storage.put(NEAR_COMPARE_KEY, now);
+      else if (now - last >= NEAR_COMPARE_EVERY_MS) {
+        await this.ctx.storage.put(NEAR_COMPARE_KEY, now);
+        await this.startCompares("near");
+      }
+      await this.keepCompareAlarm();
+    } catch (error) {
+      console.error("The tick of a comparison failed", ...errorLogFields(error));
+    }
+  }
+
+  /**
+   * End an open comparison that took too long, or start its second scan. That scan is due once
+   * every rule of the calendar had a successful run that began after the first scan ended.
+   */
+  private async settleCompare(state: CompareState): Promise<void> {
+    if (state.report) {
+      await this.closeCompare(state, state.report);
+      return;
+    }
+    if (Date.now() - (state.first?.at ?? state.startedAt) >= COMPARE_TIMEOUT_MS) {
+      await this.failCompare(state, { reason: "timeout" });
+      return;
+    }
+    if (state.phase !== "confirming" || !state.first) return;
+    const context = await this.compareContext(state.calendarId);
+    const stop = await this.compareStop(state, context);
+    if (stop) {
+      await this.failCompare(state, stop);
+      return;
+    }
+    for (const rule of context.rules) {
+      const ranAt = await this.ctx.storage.get<number>(`${RULE_OK_PREFIX}${rule.id}`);
+      if (ranAt === undefined || ranAt < state.first.at) return;
+    }
+    await this.ctx.storage.put(`${COMPARE_PREFIX}${state.calendarId}`, startConfirmScan(state));
+  }
+
+  /** Read and compare one slice of the first open scan. */
+  private async runCompareStep(): Promise<void> {
+    const state = (await this.openCompares()).find((open) => open.phase === "scanning");
+    if (!state) return;
+    try {
+      await this.compareNextSlice(state);
+    } catch (error) {
+      console.error("A comparison failed", ...errorLogFields(error));
+      if (await this.stillOpen(state)) await this.failCompare(state, compareFailure(error));
+    }
+  }
+
+  /**
+   * True if `state` is still the open comparison of its calendar. A pause, a removal or a full
+   * comparison can end it during the reads of a step.
+   */
+  private async stillOpen(state: CompareState): Promise<boolean> {
+    const key = `${COMPARE_PREFIX}${state.calendarId}`;
+    const current = await this.ctx.storage.get<CompareState>(key);
+    return (
+      current !== undefined &&
+      current.mode === state.mode &&
+      current.startedAt === state.startedAt &&
+      !current.report
+    );
+  }
+
+  private async compareNextSlice(state: CompareState): Promise<void> {
+    const key = `${COMPARE_PREFIX}${state.calendarId}`;
+    const context = await this.compareContext(state.calendarId);
+    const { rules, inputs, others } = context;
+    const stop = await this.compareStop(state, context);
+    if (stop) {
+      await this.failCompare(state, stop);
+      return;
+    }
+    // The step before ended without a word, for example at the CPU limit.
+    if (state.attempt === state.sliceStart) {
+      await this.shrinkSlice(state);
+      return;
+    }
+    const horizon = scanHorizon(inputs, state.startedAt, state.mode);
+    const slice = sliceAfter(state, horizon);
+    await this.ctx.storage.put(key, { ...state, attempt: slice.start });
+    let read: Awaited<ReturnType<AccountSync["readCompareSlice"]>>;
+    try {
+      read = await this.readCompareSlice(state, rules, slice);
+    } catch (error) {
+      if (!isSubrequestLimit(error)) throw error;
+      if (await this.stillOpen(state)) await this.shrinkSlice(state);
+      return;
+    }
+    if (!(await this.stillOpen(state))) return;
+    if (read.reads > MAX_SLICE_READS || read.items > MAX_SLICE_ITEMS) {
+      await this.shrinkSlice(state);
+      return;
+    }
+    const next = addSlice(
+      state,
+      slice.end,
+      await compareSlice({
+        rules: inputs,
+        events: read.events,
+        blocks: read.blocks,
+        slice,
+        startedAt: state.startedAt,
+        others,
+      }),
+    );
+    if (next.sliceStart < horizon.end) {
+      await this.ctx.storage.put(key, next);
+      return;
+    }
+    const done = finishScan(next, Date.now());
+    if ("state" in done) {
+      await this.ctx.storage.put(key, done.state);
+      return;
+    }
+    await this.closeCompare(next, { kind: "compare_run", detail: done.detail });
+  }
+
+  private async shrinkSlice(state: CompareState): Promise<void> {
+    const smaller = halveSlice(state);
+    if (smaller) await this.ctx.storage.put(`${COMPARE_PREFIX}${state.calendarId}`, smaller);
+    else await this.failCompare(state, { reason: "slice_too_large" });
+  }
+
+  /**
+   * The blocks of a slice and the events of all sources of a calendar. Reads run one after the
+   * other, and all of them respect a provider penalty as feed reads do: a comparison never extends
+   * one. Any read that fails ends the comparison, so that a gap never counts as "no deviation".
+   */
+  private async readCompareSlice(
+    state: CompareState,
+    rules: RuleContext[],
+    slice: SliceWindow,
+  ): Promise<{
+    blocks: ExistingBlock[];
+    events: Map<string, SourceEvent[]>;
+    reads: number;
+    items: number;
+  }> {
+    const readsBefore = this.providerReads;
+    const left = await this.penaltyLeft();
+    if (left > 0) throw new PenaltyActive(left);
+    const target = await this.client({ respectPenalty: true });
+    const blocks = await target.allBlocks(state.remoteCalendarId, blockReadWindow(slice));
+    const window = sourceReadWindow(slice);
+    const ownAccount = this.accountId();
+    const events = new Map<string, SourceEvent[]>();
+    for (const rule of rules) {
+      const { source } = compareRule(rule);
+      if (events.has(source)) continue;
+      const { accountId, remoteCalendarId } = rule.source;
+      if (accountId !== ownAccount) this.providerReads++;
+      const read =
+        accountId === ownAccount
+          ? await this.readFeedEvents(remoteCalendarId, window)
+          : await accountSync(this.env, accountId).readFeedEvents(remoteCalendarId, window);
+      if (read.kind === "throttled") throw new CompareStopped({ reason: "throttled" });
+      if (read.kind === "unavailable") throw new CompareStopped({ reason: "source_unavailable" });
+      events.set(source, read.events);
+    }
+    return {
+      blocks,
+      events,
+      reads: this.providerReads - readsBefore,
+      items: sliceItems(blocks.length, rules.map(compareRule), events),
+    };
+  }
+
+  /**
    * Keep one watch per calendar that a rule reads or writes: create missing ones, renew those that
    * expire within a day, and stop those no rule needs. Without PUBLIC_URL all watches stop, and only
    * the cron syncs. A failure leaves the cron as the fallback for that calendar.
@@ -1961,9 +3212,10 @@ export class AccountSync extends DurableObject<Env> {
     if (stored.tokens.accessExpiresAt - REFRESH_MARGIN_MS > Date.now()) {
       return stored.tokens.accessToken;
     }
-    // A refused refresh token stays refused; do not ask the token endpoint again.
+    // A refused refresh token stays refused; do not ask the token endpoint again. A retiring account
+    // asks at every attempt of its removals: the refusal can end before its tokens go.
     const pause = await this.pause();
-    if (pause) throw new TokenError(pause.code);
+    if (pause && !(await this.retiring())) throw new TokenError(pause.code);
     // Requests interleave while a refresh waits on the network; refresh only once.
     this.refreshing ??= this.refresh(
       stored.accountId,
@@ -1991,7 +3243,7 @@ export class AccountSync extends DurableObject<Env> {
     const provider =
       this.env.DEV_FAKE_CALENDARS === "1" && token === "fake"
         ? new FakeCalendar(this.ctx.storage.sql, this.providerOrDefault(), this.env)
-        : calendarClient(this.providerOrDefault(), token);
+        : calendarClient(this.providerOrDefault(), token, () => this.providerReads++);
     return oneCallAtATime(provider, (call) => {
       const result = this.providerQueue.then(async () => {
         // Checked again here: a feed read queued behind a throttled call must not run after it.
@@ -2054,21 +3306,30 @@ export class AccountSync extends DurableObject<Env> {
     return response.access_token;
   }
 
-  /** Record that a rule run threw. Looks up the owner itself, because the run may not have got far. */
-  private async auditFailure(ruleId: string, accountId: string, error: unknown): Promise<void> {
+  /**
+   * Record that a rule run threw. Looks up the owner itself, because the run may not have got far.
+   * Returns true if the run needs no abort report: the event is written, or no rule can carry one.
+   */
+  private async auditFailure(
+    ruleId: string,
+    accountId: string,
+    error: unknown,
+    runId?: string,
+  ): Promise<boolean> {
     try {
       const rule = await loadRule(this.env.DB, ruleId);
-      if (!rule) return;
-      await recordAudit(this.env.DB, {
+      if (!rule) return true;
+      return await recordAuditChecked(this.env.DB, {
         orgId: rule.orgId,
         userId: rule.userId,
         accountId,
         ruleId,
         kind: "sync_failed",
-        detail: { code: errorCode(error) },
+        detail: { ...(runId ? { runId } : {}), code: errorCode(error) },
       });
     } catch (lookupError) {
       console.error("Audit lookup failed", ruleId, ...errorLogFields(lookupError));
+      return false;
     }
   }
 

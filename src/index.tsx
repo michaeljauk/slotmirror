@@ -3,17 +3,27 @@ import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import * as z from "zod/mini";
+import {
+  alertsConfigured,
+  checkSilentRules,
+  sendTestAlert,
+  silenceCheckCost,
+  TEST_ALERT_OUTCOMES,
+} from "./alerts";
+import { accountsToTick, CRON_FIXED_SUBREQUESTS, MAX_CRON_SUBREQUESTS } from "./cron";
 import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
   errorCode,
   errorLogFields,
+  latestCompares,
   latestRuleOutcomes,
   orgActivity,
   purgeAuditEvents,
   userActivity,
 } from "./audit";
 import { setupStatus, signInProviders } from "./config";
+import { operatorNotice } from "./operator-notice";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
@@ -52,6 +62,12 @@ import { feedResponse, listFeeds } from "./feeds";
 import { userCalendars } from "./calendars";
 
 export { AccountSync } from "./account-sync";
+
+/** A count from a query string, or 0 if it is none. */
+function countParam(value: string | undefined): number {
+  const count = Number.parseInt(value ?? "", 10);
+  return Number.isSafeInteger(count) && count > 0 ? count : 0;
+}
 
 const app = new Hono<AppEnv>();
 
@@ -148,6 +164,7 @@ app.get("/privacy", (c) =>
     <PrivacyPage
       operator={c.env.ORG_NAME?.trim() || "the operator"}
       contact={c.env.PRIVACY_CONTACT?.trim() ?? ""}
+      notice={operatorNotice(c.env)}
     />,
   ),
 );
@@ -203,6 +220,7 @@ async function renderHome(
       user={user}
       accounts={results}
       providers={providers}
+      operatorNotice={operatorNotice(c.env)}
       statuses={accountStatuses(outcomes)}
       editor={editor}
       feeds={userFeeds}
@@ -456,12 +474,25 @@ app.get("/admin", async (c) => {
     .bind(user.orgId)
     .all<AdminUserRow>();
   const activity = await orgActivity(c.env.DB, user.orgId);
+  const compares = await latestCompares(c.env.DB, user.orgId);
   return render(
     c,
     <AdminPage
       user={user}
       users={results}
       activity={activity}
+      compares={compares}
+      compareStart={
+        c.req.query("compare") === "requested"
+          ? {
+              started: countParam(c.req.query("started")),
+              open: countParam(c.req.query("open")),
+              failed: countParam(c.req.query("failed")),
+            }
+          : null
+      }
+      alertsConfigured={alertsConfigured(c.env)}
+      testAlert={TEST_ALERT_OUTCOMES.find((outcome) => outcome === c.req.query("alert")) ?? null}
       caps={detailCapsFromEnv(c.env)}
       org={{
         domains: policyFromEnv(c.env).allowedDomains,
@@ -469,6 +500,44 @@ app.get("/admin", async (c) => {
       }}
     />,
   );
+});
+
+// Start a comparison of every calendar of the org that a rule writes into, and of the writable
+// calendars without a rule. It costs one call per account, as the cron does; alarms read the
+// calendars. The redirect names what happened, because a calendar can stay open or refuse.
+app.post("/admin/compare", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const { results } = await c.env.DB.prepare(
+    `SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.org_id = ?`,
+  )
+    .bind(user.orgId)
+    .all<{ id: string }>();
+  const total = { started: 0, open: 0, failed: 0 };
+  for (const { id } of results) {
+    // One failing account must not stop the others.
+    try {
+      const { started, open, failed } = await accountSync(c.env, id).startCompares("full");
+      total.started += started;
+      total.open += open;
+      total.failed += failed;
+    } catch (error) {
+      console.error("Starting a comparison failed", id, errorCode(error));
+      total.failed++;
+    }
+  }
+  const { started, open, failed } = total;
+  return c.redirect(`/admin?compare=requested&started=${started}&open=${open}&failed=${failed}`);
+});
+
+// Post a test alert. The crossSiteGuard above covers this route, and D1 limits it to one per minute.
+app.post("/admin/test-alert", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const outcome = await sendTestAlert(c.env, { orgId: user.orgId, userId: user.id });
+  return c.redirect(`/admin?alert=${outcome}`);
 });
 
 // An unexpected error gets a page in the user's language, or a short text for the editor
@@ -486,9 +555,25 @@ app.onError((error, c) => {
   );
 });
 
-async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-  const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();
-  for (const { id } of results) {
+async function scheduled(controller: ScheduledController, env: Env): Promise<void> {
+  // Before the ticks: it must still run if they use up the subrequests of this invocation.
+  const checkCost = silenceCheckCost(env, controller.scheduledTime);
+  if (checkCost > 0) {
+    try {
+      await checkSilentRules(env, controller.scheduledTime);
+    } catch (error) {
+      console.error("Silence check failed", errorCode(error));
+    }
+  }
+  const { results } = await env.DB.prepare("SELECT id FROM accounts ORDER BY id").all<{
+    id: string;
+  }>();
+  const tickLimit = MAX_CRON_SUBREQUESTS - CRON_FIXED_SUBREQUESTS - checkCost;
+  if (results.length > tickLimit) {
+    console.error("Cron ticks rotate at the subrequest limit", tickLimit, results.length);
+  }
+  const ids = results.map(({ id }) => id);
+  for (const id of accountsToTick(ids, controller.scheduledTime, tickLimit)) {
     // One failing account must not stop the ticks of the others.
     try {
       await accountSync(env, id).tick();

@@ -9,6 +9,7 @@ interface WorkerSettings {
   ALLOWED_TENANT_IDS?: string;
   ADMIN_EMAILS?: string;
   PRIVACY_CONTACT?: string;
+  OPERATOR_NOTICE?: string;
   SIGN_IN_PROVIDERS?: string;
   /** Public https address of the deployment. Without it, only the cron syncs. */
   PUBLIC_URL?: string;

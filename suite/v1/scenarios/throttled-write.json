@@ -1,0 +1,34 @@
+{
+  "id": "throttled-write",
+  "title": "A throttled target write waits for Retry-After, then the block appears once",
+  "covers": "throttling with Retry-After",
+  "expectedText": "The target answers a write with 429 and Retry-After 180. For the next 170 seconds the tool makes no call to the target. Within two minutes after that the target is busy, with one block.",
+  "requires": ["faults", "provider-calls", "clock"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "control",
+      "action": "throttle-writes",
+      "calendar": "target",
+      "retryAfterSeconds": 180
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    { "do": "wait-for-fault" },
+    { "do": "expect-no-calls", "calendar": "target", "seconds": 170 },
+    { "do": "expect", "window": ["week@00:00Z", "week+7d@00:00Z"], "busy": [] },
+    {
+      "do": "sync",
+      "timeoutSeconds": 120,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "id": "event-deleted",
+  "title": "A deleted event frees its time and leaves other events alone",
+  "covers": "deleted event",
+  "expectedText": "After the delete the target is free on Tuesday and busy on Thursday 09:00 to 09:30 UTC.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "goes",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "stays",
+      "event": { "start": "week+3d@09:00Z", "end": "week+3d@09:30Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@10:00Z", "week+1d@11:00Z"],
+          ["week+3d@09:00Z", "week+3d@09:30Z"]
+        ]
+      }
+    },
+    { "do": "write", "change": "delete", "key": "goes" },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+3d@09:00Z", "week+3d@09:30Z"]]
+      }
+    }
+  ]
+}

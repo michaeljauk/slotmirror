@@ -1,12 +1,20 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
 import { refreshUserCalendars } from "../src/calendars";
-import { feedResponse, hashFeedToken, tokenMatches } from "../src/feeds";
+import {
+  FEED_LEASE_MS,
+  FEED_PARALLEL_READ_MS,
+  feedResponse,
+  hashFeedToken,
+  MAX_FEED_EVENTS,
+  tokenMatches,
+} from "../src/feeds";
 import { deleteUser, removeAccounts, setUserActive } from "../src/offboarding";
+import { addFakeEvent } from "../src/providers/fake-calendar";
 import fixture from "./fixtures/graph/calendar-view.json";
-import { BASE, signIn } from "./helpers";
+import { BASE, noFakeNetwork, signIn } from "./helpers";
 
 const REMOTE = "remote-feed";
 
@@ -55,23 +63,34 @@ function fakeGraph(respond?: (url: string) => Response | undefined) {
 }
 
 /** A signed-in user of its own with one account and one calendar, with tokens. */
-async function setup(prefix: string, email = `${prefix}@org.example`) {
+async function setup(
+  prefix: string,
+  email = `${prefix}@org.example`,
+  provider: "microsoft" | "google" = "microsoft",
+) {
   const { user, cookie } = await signIn(email);
   const accountId = `${prefix}-acc`;
   const calendarId = `${prefix}-cal`;
   await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
-    ).bind(accountId, user.id, `${prefix}@example.com`),
+    env.DB.prepare("INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, ?, ?)").bind(
+      accountId,
+      user.id,
+      provider,
+      `${prefix}@example.com`,
+    ),
     env.DB.prepare(
       "INSERT INTO calendars (id, account_id, remote_id, name, is_default, data_owned) VALUES (?, ?, ?, 'Work', 1, 1)",
     ).bind(calendarId, accountId, REMOTE),
   ]);
-  await env.ACCOUNT_SYNC.getByName(accountId).storeTokens(accountId, {
-    refreshToken: "r",
-    accessToken: "a",
-    accessExpiresAt: Date.now() + 3_600_000,
-  });
+  await env.ACCOUNT_SYNC.getByName(accountId).storeTokens(
+    accountId,
+    {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    },
+    provider,
+  );
   return { user, cookie, accountId, calendarId };
 }
 
@@ -141,6 +160,10 @@ async function clearSourceCache(accountId: string) {
     (instance as unknown as { sourceCache: Map<string, unknown> }).sourceCache.clear();
   });
 }
+
+beforeEach(() => {
+  noFakeNetwork();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -845,5 +868,894 @@ describe("feed calendar removal", () => {
       .bind(user.id)
       .first<{ detail: string }>();
     expect(JSON.parse(audit?.detail ?? "{}")).toMatchObject({ feedId, by: "calendar_removed" });
+  });
+});
+
+/** Fetch a feed through `feedResponse` at a time the test chooses. */
+function fetchAt(url: string, now: Date, target: Env = env) {
+  const { feedId, token } = parts(url);
+  return feedResponse(target, feedId, `${token}.ics`, BASE, now);
+}
+
+/** Store a failed read, as `feedResponse` does. */
+async function setErrorUntil(feedId: string, until: number, calendarId: string | null = null) {
+  await env.DB.prepare("UPDATE feeds SET error_until = ?, error_calendar_id = ? WHERE id = ?")
+    .bind(until, calendarId, feedId)
+    .run();
+}
+
+/** Store the render lease of a fetch that still reads. */
+async function setLease(feedId: string, until: number) {
+  await env.DB.prepare("UPDATE feeds SET lease_until = ? WHERE id = ?").bind(until, feedId).run();
+}
+
+describe("feed render lease", () => {
+  /** An env whose D1 fails the write of the rendered copy, as if the invocation ended before it. */
+  function dyingRender(): Env {
+    const db = new Proxy(env.DB, {
+      get(target, key) {
+        if (key !== "prepare") return Reflect.get(target, key, target) as unknown;
+        return (sql: string) => {
+          if (sql.includes("SET last_body")) throw new Error("render stopped");
+          return target.prepare(sql);
+        };
+      },
+    });
+    return { ...env, DB: db };
+  }
+
+  /** An env whose fetch runs `before` directly before the write that `sql` names: a slow fetch. */
+  function slowWrite(sql: string, before: () => Promise<unknown>): Env {
+    const db = new Proxy(env.DB, {
+      get(target, key) {
+        if (key !== "prepare") return Reflect.get(target, key, target) as unknown;
+        return (query: string) => {
+          const statement = target.prepare(query);
+          if (!query.includes(sql)) return statement;
+          return {
+            bind: (...values: unknown[]) => ({
+              run: async () => {
+                await before();
+                return statement.bind(...values).run();
+              },
+            }),
+          };
+        };
+      },
+    });
+    return { ...env, DB: db };
+  }
+
+  /** A fetch after the end of a lease from `now`, for which the provider no longer finds the calendar. */
+  async function loseCalendarAfterLease(url: string, accountId: string, now: number) {
+    fakeGraph(() => new Response("gone", { status: 404 }));
+    await clearSourceCache(accountId);
+    expect((await fetchAt(url, new Date(now + FEED_LEASE_MS + 1000))).status).toBe(503);
+  }
+
+  it("holds the lease during the reads and frees it after a stored render", async () => {
+    let during: Record<string, unknown> | null = null;
+    const { cookie, calendarId } = await setup("lease-held");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    const now = new Date();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      during = await feedRow(feedId);
+      return Response.json({ value: [] });
+    });
+    const response = await fetchAt(url, now);
+    expect(response.status).toBe(200);
+    expect(during).toMatchObject({ lease_until: now.getTime() + FEED_LEASE_MS, error_until: null });
+    expect((await feedRow(feedId))?.lease_until).toBeNull();
+  });
+
+  it("stores no render that outlived its lease after a calendar was lost", async () => {
+    fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-outlived");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(feedId);
+    noCacheApi();
+    const before = await feedRow(feedId);
+    const now = Date.now();
+    const slow = slowWrite("SET last_body", () => loseCalendarAfterLease(url, accountId, now));
+
+    expect((await fetchAt(url, new Date(now), slow)).status).toBe(503);
+    const after = await feedRow(feedId);
+    expect(after).toMatchObject({
+      error_calendar_id: calendarId,
+      last_rendered_at: before?.last_rendered_at,
+    });
+    expect(after?.error_until).toBeGreaterThan(now + FEED_LEASE_MS);
+    expect((await fetchAt(url, new Date(now + 2 * FEED_LEASE_MS))).status).toBe(503);
+  });
+
+  it("stores no render while a later fetch holds the lease", async () => {
+    fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-taken");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(feedId);
+    noCacheApi();
+    const before = await feedRow(feedId);
+    const now = Date.now();
+    const later = now + 2 * FEED_LEASE_MS;
+    const slow = slowWrite("SET last_body", () => setLease(feedId, later));
+
+    expect((await fetchAt(url, new Date(now), slow)).status).toBe(503);
+    expect(await feedRow(feedId)).toMatchObject({
+      lease_until: later,
+      last_rendered_at: before?.last_rendered_at,
+    });
+  });
+
+  it("stores nothing from a parallel fetch without the lease", async () => {
+    fakeGraph();
+    const { cookie, calendarId } = await setup("lease-none");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    const lease = Date.now() + FEED_LEASE_MS;
+    await setLease(feedId, lease);
+
+    expect((await exports.default.fetch(url)).status).toBe(200);
+    expect(await feedRow(feedId)).toMatchObject({ lease_until: lease, last_body: null });
+  });
+
+  it("keeps a name that another fetch stored during a failed read", async () => {
+    fakeGraph(() => new Response("boom", { status: 500 }));
+    const { cookie, calendarId, accountId } = await setup("lease-failed-late");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    noCacheApi();
+    const now = Date.now();
+    const slow = slowWrite("SET error_until", () => loseCalendarAfterLease(url, accountId, now));
+
+    expect((await fetchAt(url, new Date(now), slow)).status).toBe(503);
+    expect((await feedRow(feedId))?.error_calendar_id).toBe(calendarId);
+  });
+
+  it("makes no read for the rest of the lease after a render stopped", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-dead");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const now = Date.now();
+    await expect(fetchAt(url, new Date(now), dyingRender())).rejects.toThrow("render stopped");
+    expect(reads).toHaveLength(1);
+    await clearSourceCache(accountId);
+
+    const during = await fetchAt(url, new Date(now + FEED_PARALLEL_READ_MS + 1000));
+    expect(during.status).toBe(503);
+    expect(Number(during.headers.get("retry-after"))).toBeLessThanOrEqual(60);
+    expect(reads).toHaveLength(1);
+
+    const after = await fetchAt(url, new Date(now + FEED_LEASE_MS + 1));
+    expect(after.status).toBe(200);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("serves the last copy while another fetch reads, and reads once", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-copy");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const first = await (await exports.default.fetch(url)).text();
+    expect(reads).toHaveLength(1);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(parts(url).feedId);
+    noCacheApi();
+    await setLease(parts(url).feedId, Date.now() + FEED_LEASE_MS);
+    const response = await exports.default.fetch(url);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(first);
+    expect(reads).toHaveLength(1);
+  });
+
+  it("gives parallel fetches of a healthy feed no error", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-parallel");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(parts(url).feedId);
+    noCacheApi();
+    const responses = await Promise.all(
+      Array.from({ length: 4 }, () => exports.default.fetch(url)),
+    );
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200]);
+    expect(reads).toHaveLength(2);
+  });
+
+  it("reads as before for a parallel fetch of a feed without a copy", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId } = await setup("lease-first");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const responses = await Promise.all([
+      exports.default.fetch(url),
+      exports.default.fetch(url),
+      exports.default.fetch(url),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+    expect(reads.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("still answers a failed read with 503 for 14 minutes, with a copy too", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-failure");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(parts(url).feedId);
+    noCacheApi();
+    const now = Date.now();
+    await setErrorUntil(parts(url).feedId, now + 15 * 60 * 1000);
+    expect((await fetchAt(url, new Date(now))).status).toBe(503);
+    expect((await fetchAt(url, new Date(now + 14 * 60 * 1000))).status).toBe(503);
+    expect(reads).toHaveLength(1);
+  });
+
+  it("answers 503 until the end of a failure that names no calendar", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-last-minute");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(parts(url).feedId);
+    noCacheApi();
+    await setErrorUntil(parts(url).feedId, Date.now() + 30_000);
+    const response = await exports.default.fetch(url);
+    expect(response.status).toBe(503);
+    expect(Number(response.headers.get("retry-after"))).toBeLessThanOrEqual(30);
+    expect(reads).toHaveLength(1);
+  });
+
+  it("answers 503 while a fetch reads again after a named failure", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-after-named");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(feedId);
+    noCacheApi();
+    const now = Date.now();
+    await setErrorUntil(feedId, now - 1, calendarId);
+    // The render stops, so its lease stays, as for a fetch that still reads.
+    await expect(fetchAt(url, new Date(now), dyingRender())).rejects.toThrow("render stopped");
+    expect(reads).toHaveLength(2);
+    expect((await feedRow(feedId))?.error_calendar_id).toBe(calendarId);
+    const parallel = await fetchAt(url, new Date(now + 1000));
+    expect(parallel.status).toBe(503);
+    expect(Number(parallel.headers.get("retry-after"))).toBeLessThanOrEqual(60);
+    expect(reads).toHaveLength(2);
+
+    // Without the lease, the next fetch reads, and a good read ends the failure.
+    await clearSourceCache(accountId);
+    const after = await fetchAt(url, new Date(now + FEED_LEASE_MS + 1));
+    expect(after.status).toBe(200);
+    expect(reads).toHaveLength(3);
+    expect(await feedRow(feedId)).toMatchObject({ error_calendar_id: null, lease_until: null });
+  });
+
+  it("gives a parallel fetch no blocks of a lost calendar while it is read again", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-lost");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    await exports.default.fetch(url);
+    expect(reads).toHaveLength(1);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(feedId);
+    noCacheApi();
+    fakeGraph(() => new Response("gone", { status: 404 }));
+    const now = Date.now();
+    expect((await fetchAt(url, new Date(now))).status).toBe(503);
+    expect((await feedRow(feedId))?.error_calendar_id).toBe(calendarId);
+
+    // The failure has run out. One fetch takes the lease, and another arrives during its read.
+    const expired = now + 15 * 60 * 1000 + 1;
+    let parallel: Response | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      parallel ??= await fetchAt(url, new Date(expired + 1000));
+      return new Response("gone", { status: 404 });
+    });
+    await clearSourceCache(accountId);
+    expect((await fetchAt(url, new Date(expired))).status).toBe(503);
+    expect(parallel?.status).toBe(503);
+    expect(await feedRow(feedId)).toMatchObject({
+      error_calendar_id: calendarId,
+      lease_until: null,
+    });
+  });
+
+  it("keeps the name and serves no copy if the read after a named failure is throttled", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-throttled");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(feedId);
+    noCacheApi();
+    await setErrorUntil(feedId, Date.now() - 1, calendarId);
+    await throttle(accountId, 60_000);
+    const response = await exports.default.fetch(url);
+    expect(response.status).toBe(503);
+    expect(reads).toHaveLength(1);
+    expect((await feedRow(feedId))?.error_calendar_id).toBe(calendarId);
+  });
+
+  it("reads again instead of answering from a copy from before a named failure", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-young-copy");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    await exports.default.fetch(url);
+    expect(reads).toHaveLength(1);
+
+    // Both the young copy in D1 and the Cache API would answer without a read.
+    await clearSourceCache(accountId);
+    await setErrorUntil(feedId, Date.now() - 1, calendarId);
+    expect((await exports.default.fetch(url)).status).toBe(200);
+    expect(reads).toHaveLength(2);
+
+    await clearSourceCache(accountId);
+    await ageStoredCopy(feedId);
+    await setErrorUntil(feedId, Date.now() - 1, calendarId);
+    expect((await exports.default.fetch(url)).status).toBe(200);
+    expect(reads).toHaveLength(3);
+  });
+
+  it("keeps the named calendar through a later failure that names none", async () => {
+    const reads = fakeGraph(() => new Response("boom", { status: 500 }));
+    const { cookie, calendarId } = await setup("lease-keep-name");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    noCacheApi();
+    await setErrorUntil(parts(url).feedId, Date.now() - 1, calendarId);
+    expect((await exports.default.fetch(url)).status).toBe(503);
+    expect(reads).toHaveLength(1);
+    expect((await feedRow(parts(url).feedId))?.error_calendar_id).toBe(calendarId);
+  });
+
+  it("never serves a copy while a named calendar has failed", async () => {
+    const reads = fakeGraph();
+    const { cookie, calendarId, accountId } = await setup("lease-named");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    await exports.default.fetch(url);
+    await clearSourceCache(accountId);
+    await ageStoredCopy(parts(url).feedId);
+    noCacheApi();
+    await setErrorUntil(parts(url).feedId, Date.now() + 1000, calendarId);
+    expect((await exports.default.fetch(url)).status).toBe(503);
+    expect(reads).toHaveLength(1);
+  });
+});
+
+describe("feed read limit", () => {
+  const HOUR = 3_600_000;
+
+  /** An account on the simulated provider, with `count` hourly events in the calendar "main". */
+  async function fakeAccount(prefix: string, count: number) {
+    const { user, cookie } = await signIn(`${prefix}@org.example`);
+    const accountId = `${prefix}-acc`;
+    const calendarId = `${prefix}-cal`;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
+      ).bind(accountId, user.id, `${prefix}@example.com`),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, is_default, data_owned) VALUES (?, ?, 'main', 'Work', 1, 1)",
+      ).bind(calendarId, accountId),
+    ]);
+    const stub = env.ACCOUNT_SYNC.getByName(accountId);
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "fake",
+      accessExpiresAt: Date.now() + HOUR,
+    });
+    const from = Date.now() - (Date.now() % HOUR) + 24 * HOUR;
+    await runInDurableObject(stub, (_instance, state) => {
+      for (let index = 0; index < count; index++) {
+        addFakeEvent(state.storage.sql, {
+          id: `event-${index}`,
+          start: new Date(from + index * HOUR).toISOString(),
+          end: new Date(from + index * HOUR + HOUR / 2).toISOString(),
+        });
+      }
+    });
+    return { cookie, accountId, calendarId, stub, from };
+  }
+
+  it("limits the events of a calendar before they leave its account", async () => {
+    const { stub, from } = await fakeAccount("limit-read", MAX_FEED_EVENTS + 5);
+    const window = { start: new Date(from - HOUR), end: new Date(from + 2000 * HOUR) };
+    const read = await stub.readFeedEvents("main", window, {
+      includeAllDay: false,
+      today: new Date(from),
+    });
+    if (read.kind !== "events") throw new Error(read.kind);
+    expect(read.events).toHaveLength(MAX_FEED_EVENTS);
+    expect(read.cutAt).toBe(new Date(from + MAX_FEED_EVENTS * HOUR).toISOString());
+  });
+
+  it("gives a comparison every event", async () => {
+    const { stub, from } = await fakeAccount("limit-compare", MAX_FEED_EVENTS + 5);
+    const window = { start: new Date(from - HOUR), end: new Date(from + 2000 * HOUR) };
+    const read = await stub.readFeedEvents("main", window);
+    if (read.kind !== "events") throw new Error(read.kind);
+    expect(read.events).toHaveLength(MAX_FEED_EVENTS + 5);
+  });
+
+  it("names the place of the cut on the feed", async () => {
+    const { cookie, calendarId, from } = await fakeAccount("limit-feed", MAX_FEED_EVENTS + 5);
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId], "60"));
+    const response = await exports.default.fetch(url);
+    expect(response.status).toBe(200);
+    const blocks = (await response.text()).match(/BEGIN:VEVENT/g) ?? [];
+    expect(blocks).toHaveLength(MAX_FEED_EVENTS);
+    expect((await feedRow(parts(url).feedId))?.cut_at).toBe(
+      new Date(from + MAX_FEED_EVENTS * HOUR).toISOString(),
+    );
+  });
+});
+
+describe("feed calendar ownership", () => {
+  const CHECK_KEY = "feedOwnershipCheckAt";
+  const DAY = 24 * 3_600_000;
+  const HOUR = 3_600_000;
+
+  interface Listed {
+    id: string;
+    isDefaultCalendar?: boolean;
+    owner?: string;
+  }
+
+  function graphEntry(calendar: Listed) {
+    return {
+      id: calendar.id,
+      name: "Work",
+      canEdit: true,
+      isDefaultCalendar: calendar.isDefaultCalendar ?? false,
+      owner: { address: calendar.owner ?? "me@example.com" },
+    };
+  }
+
+  /** Fake Graph: `/me`, the calendar list and calendarView. Counts the list reads. */
+  function fakeList(list: (url: string) => Listed[] | Response) {
+    const lists: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/calendarView")) return Response.json({ value: [] });
+      if (url.includes("/me/calendars")) {
+        lists.push(url);
+        const answer = list(url);
+        if (answer instanceof Response) return answer;
+        return Response.json({ value: answer.map(graphEntry) });
+      }
+      if (url.includes("/me")) {
+        return Response.json({ mail: "me@example.com", userPrincipalName: "me@example.com" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    return lists;
+  }
+
+  /** Let the daily check fall due and start the alarm that runs it. */
+  async function checkDue(accountId: string) {
+    const stub = env.ACCOUNT_SYNC.getByName(accountId);
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put(CHECK_KEY, Date.now() - 1);
+    });
+    await stub.requestSync();
+    return stub;
+  }
+
+  function nextCheck(accountId: string) {
+    return runInDurableObject(env.ACCOUNT_SYNC.getByName(accountId), (_instance, state) =>
+      state.storage.get<number>(CHECK_KEY),
+    );
+  }
+
+  async function dataOwned(calendarId: string) {
+    const row = await env.DB.prepare("SELECT data_owned AS owned FROM calendars WHERE id = ?")
+      .bind(calendarId)
+      .first<{ owned: number }>();
+    return row?.owned;
+  }
+
+  /** The main calendar of the account, listed as `fakeList` lists it. */
+  const main: Listed = { id: "main-remote", isDefaultCalendar: true };
+
+  it("ends the feed once the list names another owner", async () => {
+    const lists = fakeList(() => [main, { id: REMOTE, owner: "colleague@example.com" }]);
+    const { cookie, calendarId, accountId } = await setup("own-change");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    expect((await exports.default.fetch(url)).status).toBe(200);
+
+    const before = Date.now();
+    const stub = await checkDue(accountId);
+    await runDurableObjectAlarm(stub);
+
+    expect(lists).toHaveLength(1);
+    expect(await dataOwned(calendarId)).toBe(0);
+    expect(await nextCheck(accountId)).toBeGreaterThanOrEqual(before + HOUR);
+    expect(await nextCheck(accountId)).toBeLessThan(before + 2 * HOUR);
+    // The stored copy is young, and it still does not answer.
+    expect((await exports.default.fetch(url)).status).toBe(503);
+    expect((await feedRow(parts(url).feedId))?.error_calendar_id).toBe(calendarId);
+  });
+
+  it("takes an alarm of its own, and the full cycle follows in the next one", async () => {
+    const lists = fakeList(() => [main, { id: REMOTE }]);
+    const { cookie, calendarId, accountId } = await setup("own-step");
+    await createFeed(cookie, [calendarId]);
+    const stub = await checkDue(accountId);
+    await runDurableObjectAlarm(stub);
+    const state = () =>
+      runInDurableObject(stub, async (_instance, storage) => ({
+        again: await storage.storage.get("fullCycleRequested"),
+        cycle: await storage.storage.get("fullCycleAt"),
+        alarm: await storage.storage.getAlarm(),
+      }));
+    const after = await state();
+    expect(lists).toHaveLength(1);
+    expect(after.again).toBe(true);
+    expect(after.cycle).toBeUndefined();
+    expect(after.alarm).not.toBeNull();
+
+    await runDurableObjectAlarm(stub);
+    expect((await state()).cycle).toBeDefined();
+    expect(lists).toHaveLength(1);
+  });
+
+  it("gives a calendar back to its feed once the list names the account again", async () => {
+    fakeList(() => [main, { id: REMOTE }]);
+    const { cookie, calendarId, accountId } = await setup("own-back");
+    await createFeed(cookie, [calendarId]);
+    await env.DB.prepare("UPDATE calendars SET data_owned = 0 WHERE id = ?").bind(calendarId).run();
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+  });
+
+  it("changes nothing if the list cannot be read, and tries again with a later cycle", async () => {
+    const lists = fakeList(() => new Response("broken", { status: 500 }));
+    const { cookie, calendarId, accountId } = await setup("own-fail");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    expect((await exports.default.fetch(url)).status).toBe(200);
+    const before = Date.now();
+    const stub = await checkDue(accountId);
+    await runDurableObjectAlarm(stub);
+
+    expect(lists.length).toBeGreaterThan(0);
+    expect(await dataOwned(calendarId)).toBe(1);
+    expect(await nextCheck(accountId)).toBeGreaterThanOrEqual(before + HOUR);
+    expect(await nextCheck(accountId)).toBeLessThan(before + DAY);
+    expect((await exports.default.fetch(url)).status).toBe(200);
+    // The cycle goes on: the next alarm does not list again.
+    const count = lists.length;
+    await runDurableObjectAlarm(stub);
+    expect(lists).toHaveLength(count);
+  });
+
+  it("waits for Retry-After if the list is throttled", async () => {
+    fakeList(
+      () =>
+        new Response(JSON.stringify({ error: { code: "ApplicationThrottled" } }), {
+          status: 429,
+          headers: { "retry-after": "120" },
+        }),
+    );
+    const { cookie, calendarId, accountId } = await setup("own-throttled");
+    await createFeed(cookie, [calendarId]);
+    const before = Date.now();
+    const stub = await checkDue(accountId);
+    await runDurableObjectAlarm(stub);
+    expect(await dataOwned(calendarId)).toBe(1);
+    const alarm = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+    // The tests' SYNC_NEXT_RUN_MS is 10 minutes, so this alarm follows the provider's wait.
+    expect(alarm).toBeGreaterThanOrEqual(before + 120_000);
+    expect(alarm).toBeLessThan(before + 300_000);
+  });
+
+  it("makes no provider call during a provider penalty", async () => {
+    const lists = fakeList(() => [main, { id: REMOTE, owner: "colleague@example.com" }]);
+    const { cookie, calendarId, accountId } = await setup("own-penalty");
+    await createFeed(cookie, [calendarId]);
+    await throttle(accountId, 60_000);
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(lists).toHaveLength(0);
+    expect(await dataOwned(calendarId)).toBe(1);
+  });
+
+  it("stops a feed whose calendar the list does not name, until the list names it", async () => {
+    let listed: Listed[] = [main];
+    fakeList(() => listed);
+    const { cookie, calendarId, accountId } = await setup("own-absent");
+    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+    const { feedId } = parts(url);
+    expect((await exports.default.fetch(url)).status).toBe(200);
+
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(0);
+    expect(await nextCheck(accountId)).toBeLessThanOrEqual(Date.now() + HOUR);
+    expect((await exports.default.fetch(url)).status).toBe(503);
+    expect((await feedRow(feedId))?.error_calendar_id).toBe(calendarId);
+    const html = await (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
+    expect(html).toContain("“Work” cannot be read any more");
+
+    listed = [main, { id: REMOTE }];
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+    noCacheApi();
+    const later = await fetchAt(url, new Date(Date.now() + 16 * 60 * 1000));
+    expect(later.status).toBe(200);
+    expect((await feedRow(feedId))?.error_calendar_id).toBeNull();
+  });
+
+  it("checks again after an hour if a check lost a calendar, then after a day", async () => {
+    let listed: Listed[] = [main];
+    fakeList(() => listed);
+    const { cookie, calendarId, accountId } = await setup("own-short-list");
+    await createFeed(cookie, [calendarId]);
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(0);
+    expect(await nextCheck(accountId)).toBeLessThanOrEqual(Date.now() + HOUR);
+
+    // The second short list loses nothing new, so a daily check is enough.
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(0);
+    expect(await nextCheck(accountId)).toBeGreaterThan(Date.now() + DAY - HOUR);
+
+    // A calendar that returns is no loss either.
+    listed = [main, { id: REMOTE }];
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+    expect(await nextCheck(accountId)).toBeGreaterThan(Date.now() + DAY - HOUR);
+  });
+
+  it("does not lose the owners in a refresh whose list has no owned main calendar", async () => {
+    fakeList(() => [
+      { ...main, owner: "colleague@example.com" },
+      { id: REMOTE, owner: "colleague@example.com" },
+      { id: "remote-new" },
+    ]);
+    const { user, calendarId, accountId } = await setup("own-refresh");
+    await refreshUserCalendars(env, user.id);
+    expect(await dataOwned(calendarId)).toBe(1);
+    const added = await env.DB.prepare(
+      "SELECT data_owned AS owned FROM calendars WHERE account_id = ? AND remote_id = 'remote-new'",
+    )
+      .bind(accountId)
+      .first<{ owned: number }>();
+    expect(added?.owned).toBe(0);
+  });
+
+  it("takes a new calendar's owner from its entry if the first page lacks the main", async () => {
+    fakeList(() => [
+      { id: REMOTE, owner: "colleague@example.com" },
+      { id: "remote-own" },
+      { id: "remote-shared", owner: "colleague@example.com" },
+    ]);
+    const { user, calendarId, accountId } = await setup("own-no-main");
+    await refreshUserCalendars(env, user.id);
+    expect(await dataOwned(calendarId)).toBe(1);
+    const { results } = await env.DB.prepare(
+      "SELECT remote_id AS id, data_owned AS owned FROM calendars WHERE account_id = ? AND id != ? ORDER BY remote_id",
+    )
+      .bind(accountId, calendarId)
+      .all<{ id: string; owned: number }>();
+    expect(results).toEqual([
+      { id: "remote-own", owned: 1 },
+      { id: "remote-shared", owned: 0 },
+    ]);
+  });
+
+  it("stores the owners of a refresh whose list has the owned main calendar", async () => {
+    fakeList(() => [main, { id: REMOTE, owner: "colleague@example.com" }]);
+    const { user, calendarId } = await setup("own-refresh-main");
+    await refreshUserCalendars(env, user.id);
+    expect(await dataOwned(calendarId)).toBe(0);
+  });
+
+  it("reads every page of the list before it calls a calendar missing", async () => {
+    const lists = fakeList((url) =>
+      url.includes("page=2")
+        ? Response.json({ value: [graphEntry({ id: REMOTE })] })
+        : Response.json({
+            value: [graphEntry(main)],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendars?page=2",
+          }),
+    );
+    const { cookie, calendarId, accountId } = await setup("own-pages");
+    await createFeed(cookie, [calendarId]);
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(lists).toHaveLength(2);
+    expect(await dataOwned(calendarId)).toBe(1);
+  });
+
+  it("changes nothing if a later page of the list fails", async () => {
+    fakeList((url) =>
+      url.includes("page=2")
+        ? new Response("broken", { status: 500 })
+        : Response.json({
+            value: [graphEntry(main)],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendars?page=2",
+          }),
+    );
+    const { cookie, calendarId, accountId } = await setup("own-page-fail");
+    await createFeed(cookie, [calendarId]);
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+    expect(await nextCheck(accountId)).toBeLessThan(Date.now() + DAY - HOUR);
+  });
+
+  it("leaves the list for the calendar choice at its first page", async () => {
+    const lists = fakeList(() =>
+      Response.json({
+        value: [graphEntry(main)],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendars?page=2",
+      }),
+    );
+    const { accountId } = await setup("own-choice");
+    await env.ACCOUNT_SYNC.getByName(accountId).listCalendars();
+    expect(lists).toHaveLength(1);
+  });
+
+  it("does not trust a list whose main calendar has another owner", async () => {
+    fakeList(() => [
+      { ...main, owner: "colleague@example.com" },
+      { id: REMOTE, owner: "colleague@example.com" },
+    ]);
+    const { cookie, calendarId, accountId } = await setup("own-other-main");
+    await createFeed(cookie, [calendarId]);
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+    expect(await nextCheck(accountId)).toBeLessThan(Date.now() + DAY - HOUR);
+  });
+
+  describe("on Google", () => {
+    interface GoogleEntry {
+      id: string;
+      primary?: boolean;
+      dataOwner?: string;
+      hidden?: boolean;
+    }
+
+    /**
+     * Fake Google: as the API, the list leaves hidden entries out without `showHidden=true`, and
+     * gives `pageSize` entries per page. Returns the addresses of the list reads.
+     */
+    function fakeGoogle(entries: GoogleEntry[], pageSize = entries.length) {
+      const lists: string[] = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!url.includes("/calendarList")) return Response.json({ items: [] });
+        lists.push(url);
+        const shown = entries.filter((entry) => !entry.hidden || url.includes("showHidden=true"));
+        const start = Number(new URL(url).searchParams.get("pageToken") ?? 0);
+        const end = start + pageSize;
+        return Response.json({
+          items: shown
+            .slice(start, end)
+            .map((entry) => ({ summary: "Work", accessRole: "owner", ...entry })),
+          ...(end < shown.length ? { nextPageToken: String(end) } : {}),
+        });
+      });
+      return lists;
+    }
+
+    const primary: GoogleEntry = { id: "me@example.com", primary: true };
+
+    it("reads the data owner of a hidden calendar", async () => {
+      const lists = fakeGoogle([
+        primary,
+        { id: REMOTE, dataOwner: "colleague@example.com", hidden: true },
+      ]);
+      const { cookie, calendarId, accountId } = await setup("own-g-other", undefined, "google");
+      const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
+      expect((await exports.default.fetch(url)).status).toBe(200);
+      await runDurableObjectAlarm(await checkDue(accountId));
+      // Without `showHidden` the calendar is missing from the list, which also ends the feed.
+      expect(lists).toHaveLength(1);
+      expect(lists[0]).toContain("showHidden=true");
+      expect(await dataOwned(calendarId)).toBe(0);
+      expect((await exports.default.fetch(url)).status).toBe(503);
+    });
+
+    it("reads every page of a complete list before it calls a calendar missing", async () => {
+      const lists = fakeGoogle(
+        [
+          primary,
+          { id: "other@example.com" },
+          { id: REMOTE, dataOwner: "me@example.com", hidden: true },
+        ],
+        1,
+      );
+      const { cookie, calendarId, accountId } = await setup("own-g-pages", undefined, "google");
+      await createFeed(cookie, [calendarId]);
+      await runDurableObjectAlarm(await checkDue(accountId));
+      expect(lists).toHaveLength(3);
+      for (const list of lists) expect(list).toContain("showHidden=true");
+      expect(await dataOwned(calendarId)).toBe(1);
+    });
+
+    it("keeps a hidden calendar whose data owner is the account", async () => {
+      fakeGoogle([primary, { id: REMOTE, dataOwner: "ME@example.com", hidden: true }]);
+      const { cookie, calendarId, accountId } = await setup("own-g-mine", undefined, "google");
+      await createFeed(cookie, [calendarId]);
+      await runDurableObjectAlarm(await checkDue(accountId));
+      expect(await dataOwned(calendarId)).toBe(1);
+    });
+
+    it("takes a secondary calendar without a data owner as not owned", async () => {
+      fakeGoogle([primary, { id: REMOTE }]);
+      const { cookie, calendarId, accountId } = await setup("own-g-none", undefined, "google");
+      await createFeed(cookie, [calendarId]);
+      await runDurableObjectAlarm(await checkDue(accountId));
+      expect(await dataOwned(calendarId)).toBe(0);
+    });
+
+    it("does not trust a list without the primary calendar", async () => {
+      fakeGoogle([{ id: REMOTE, dataOwner: "colleague@example.com" }]);
+      const { cookie, calendarId, accountId } = await setup("own-g-partial", undefined, "google");
+      await createFeed(cookie, [calendarId]);
+      await runDurableObjectAlarm(await checkDue(accountId));
+      expect(await dataOwned(calendarId)).toBe(1);
+    });
+  });
+
+  it("does not trust a list without the main calendar", async () => {
+    fakeList(() => [{ id: REMOTE, owner: "colleague@example.com" }]);
+    const { cookie, calendarId, accountId } = await setup("own-partial");
+    await createFeed(cookie, [calendarId]);
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+    expect(await nextCheck(accountId)).toBeLessThan(Date.now() + DAY - HOUR);
+  });
+
+  it("asks the provider nothing for an account without feeds", async () => {
+    const lists = fakeList(() => [main]);
+    const { accountId } = await setup("own-none");
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(lists).toHaveLength(0);
+    expect(await nextCheck(accountId)).toBeGreaterThan(Date.now() + HOUR);
+  });
+
+  it("starts the first wait without a check", async () => {
+    const lists = fakeList(() => [main]);
+    const { cookie, calendarId, accountId } = await setup("own-first");
+    await createFeed(cookie, [calendarId]);
+    const stub = env.ACCOUNT_SYNC.getByName(accountId);
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(lists).toHaveLength(0);
+    expect(await nextCheck(accountId)).toBeGreaterThan(Date.now() + HOUR);
+  });
+
+  it("runs through the provider queue on the simulated provider", async () => {
+    const { user, cookie } = await signIn("own-fake@org.example");
+    const accountId = "own-fake-acc";
+    const calendarId = "own-fake-cal";
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', 'f@example.com')",
+      ).bind(accountId, user.id),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, is_default, data_owned) VALUES (?, ?, 'main', 'Work', 1, 1)",
+      ).bind(calendarId, accountId),
+    ]);
+    const stub = env.ACCOUNT_SYNC.getByName(accountId);
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "fake",
+      accessExpiresAt: Date.now() + HOUR,
+    });
+    await createFeed(cookie, [calendarId]);
+    await env.DB.prepare("UPDATE calendars SET data_owned = 0 WHERE id = ?").bind(calendarId).run();
+    await runDurableObjectAlarm(await checkDue(accountId));
+    expect(await dataOwned(calendarId)).toBe(1);
+    expect((await stub.fakeStats()).calls.listCalendars).toBe(1);
   });
 });

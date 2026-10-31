@@ -1,0 +1,31 @@
+{
+  "id": "privacy-location",
+  "title": "The location of an event never reaches the target at the default detail level",
+  "covers": "data that must not reach the target",
+  "expectedText": "A block exists, and none of its fields holds the location of the event. This scenario checks data only, not times.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": {
+        "start": "week+1d@10:00Z",
+        "end": "week+1d@11:00Z",
+        "title": "Meeting",
+        "location": "SUITE-CONTENT-LOCATION-7Q2",
+        "description": "Notes",
+        "attendees": ["person@example.invalid"]
+      }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "minEntries": 1,
+        "forbidden": ["SUITE-CONTENT-LOCATION-7Q2"]
+      }
+    }
+  ]
+}

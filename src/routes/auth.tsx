@@ -7,10 +7,20 @@ import { PROVIDER_LABEL, signInProviders, type Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
 import { MessagePage } from "../pages/message";
+import { OAuthErrorPage } from "../pages/oauth-error";
+import {
+  classifyExchangeError,
+  classifyProviderError,
+  newReference,
+  TROUBLESHOOTING_URL,
+  type ProviderErrorInfo,
+} from "../oauth-errors";
+import { CONNECT_SCOPES, TokenError } from "../providers/microsoft";
 import { clientCredentials, oauthClient } from "../providers/oauth-clients";
 import type { Identity, TokenResponse } from "../providers/oauth-token";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "../session";
 import { render } from "../render";
+import { APP_NAME } from "../brand";
 import { refreshUserCalendars } from "../calendars";
 import { admitSignIn, CONSUMER_TENANT_ID } from "../users";
 import { accountSync } from "../durable";
@@ -18,6 +28,12 @@ import { accountSync } from "../durable";
 export const auth = new Hono<AppEnv>();
 
 const PROVIDERS: readonly Provider[] = ["microsoft", "google"];
+
+/**
+ * Marks the return from the admin consent link. The value is fixed, because the administrator's
+ * browser usually holds no flow cookie. It proves nothing: that return only shows a page.
+ */
+const ADMIN_CONSENT_STATE = "admin-consent";
 
 function parseProvider(value: string): Provider | null {
   return (PROVIDERS as readonly string[]).includes(value) ? (value as Provider) : null;
@@ -29,11 +45,96 @@ function redirectUri(c: Context<AppEnv>, provider: Provider): string {
 
 function message(
   c: Context<AppEnv>,
-  status: 400 | 403 | 409 | 501 | 502,
+  status: 200 | 400 | 403 | 409 | 501 | 502,
   title: string,
   text: string,
 ) {
   return render(c, <MessagePage title={title} message={text} />, status);
+}
+
+/**
+ * A provider error as a page with a code and a reference, never the provider's text. The log
+ * holds the same reference and code, so an operator can find the failure.
+ */
+function oauthErrorPage(
+  c: Context<AppEnv>,
+  provider: Provider,
+  purpose: OAuthPurpose,
+  info: ProviderErrorInfo,
+  status: 400 | 502,
+  loggedReference?: string,
+) {
+  const { t } = i18nFromContext(c);
+  const label = PROVIDER_LABEL[provider];
+  const reference = loggedReference ?? newReference();
+  if (!loggedReference) {
+    console.error(
+      "oauth error",
+      provider,
+      purpose,
+      `code=${info.code ?? "none"}`,
+      `ref=${reference}`,
+    );
+  }
+  const helpHref = `${TROUBLESHOOTING_URL}${info.anchor ? `#${info.anchor}` : ""}`;
+  const retryHref = `/auth/${provider}/${purpose === "sign-in" ? "login" : "connect"}`;
+  const base = { code: info.code, reference, helpHref, retryHref };
+  if (info.kind === "consent") {
+    const clientId = clientCredentials(c.env, provider).clientId;
+    // The link asks for `.default`, which approves the permissions of the app, not of this flow.
+    const permissions = CONNECT_SCOPES.join(", ");
+    const link =
+      "https://login.microsoftonline.com/organizations/v2.0/adminconsent?" +
+      new URLSearchParams({
+        client_id: clientId,
+        scope: "https://graph.microsoft.com/.default",
+        redirect_uri: redirectUri(c, "microsoft"),
+        state: ADMIN_CONSENT_STATE,
+      }).toString();
+    return render(
+      c,
+      <OAuthErrorPage
+        {...base}
+        title={t.oauthError.consentTitle(label)}
+        lead={t.oauthError.consentLead(label)}
+        steps={
+          provider === "microsoft" ? t.oauthError.consentSteps : t.oauthError.googleConsentSteps
+        }
+        request={
+          provider === "microsoft" && clientId
+            ? {
+                title: t.oauthError.requestTitle,
+                text: t.oauthError.adminRequest({
+                  appName: APP_NAME,
+                  clientId,
+                  permissions,
+                  link,
+                }),
+              }
+            : undefined
+        }
+      />,
+      status,
+    );
+  }
+  if (info.kind === "tenant") {
+    return render(
+      c,
+      <OAuthErrorPage {...base} title={t.oauthError.tenantTitle} lead={t.oauthError.tenantLead} />,
+      status,
+    );
+  }
+  return render(
+    c,
+    <OAuthErrorPage
+      {...base}
+      title={status === 400 ? t.messages.providerRefused(label) : t.messages.signInFailed}
+      lead={
+        status === 400 ? t.messages.providerRefusedText(label) : t.messages.exchangeFailed(label)
+      }
+    />,
+    status,
+  );
 }
 
 async function startFlow(
@@ -123,6 +224,26 @@ auth.get("/:provider/callback", async (c) => {
   const { t } = i18nFromContext(c);
   const label = PROVIDER_LABEL[provider];
 
+  // The return from the admin consent link has no flow to resume. Anyone can write this URL, so
+  // nothing here trusts its parameters: no sign-in, no cookie, no write, and no `tenant` shown.
+  if (
+    provider === "microsoft" &&
+    !c.req.query("code") &&
+    (c.req.query("admin_consent") !== undefined || c.req.query("state") === ADMIN_CONSENT_STATE)
+  ) {
+    const consentError = c.req.query("error");
+    if (consentError) {
+      return oauthErrorPage(
+        c,
+        provider,
+        "sign-in",
+        classifyProviderError(consentError, c.req.query("error_description")),
+        400,
+      );
+    }
+    return message(c, 200, t.oauthError.adminConsentTitle, t.oauthError.adminConsentText);
+  }
+
   const stored = await checkOAuthState(
     getCookie(c, OAUTH_COOKIE),
     provider,
@@ -136,8 +257,13 @@ auth.get("/:provider/callback", async (c) => {
 
   const providerError = c.req.query("error");
   if (providerError) {
-    const description = c.req.query("error_description") ?? providerError;
-    return message(c, 400, t.messages.providerRefused(label), description);
+    return oauthErrorPage(
+      c,
+      provider,
+      stored.purpose,
+      classifyProviderError(providerError, c.req.query("error_description")),
+      400,
+    );
   }
   const code = c.req.query("code");
   if (!code) return message(c, 400, t.messages.signInFailed, t.messages.noCode(label));
@@ -154,8 +280,18 @@ auth.get("/:provider/callback", async (c) => {
     });
     identity = client.identity(tokens);
   } catch (error) {
-    console.error(`${provider} token exchange failed`, ...errorLogFields(error));
-    return message(c, 502, t.messages.signInFailed, t.messages.exchangeFailed(label));
+    const reference = newReference();
+    const info =
+      error instanceof TokenError
+        ? classifyExchangeError(error.code, error.aadsts)
+        : classifyExchangeError(undefined, undefined);
+    console.error(
+      `${provider} token exchange failed`,
+      `code=${info.code ?? "none"}`,
+      `ref=${reference}`,
+      ...errorLogFields(error),
+    );
+    return oauthErrorPage(c, provider, stored.purpose, info, 502, reference);
   }
 
   if (stored.purpose === "sign-in") {

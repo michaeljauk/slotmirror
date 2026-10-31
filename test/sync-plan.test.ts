@@ -7,7 +7,7 @@ import {
   LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
 } from "../src/sync/graph-events";
-import { claimsFrom, desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
+import { claimsFrom, countDuplicates, desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
 import fixture from "./fixtures/graph/calendar-view.json";
 
@@ -23,7 +23,12 @@ function sourceEvents(raw: unknown[] = fixture.value): SourceEvent[] {
 
 /** Pretend the target already holds exactly these blocks. */
 function asExisting(blocks: DesiredBlock[]): ExistingBlock[] {
-  return blocks.map((block, index) => ({ ...block, ruleTag: "tag", targetId: `target-${index}` }));
+  return blocks.map((block, index) => ({
+    ...block,
+    ruleTag: "tag",
+    targetId: `target-${index}`,
+    status: "blocked",
+  }));
 }
 
 function bySubject(subject: string) {
@@ -100,10 +105,10 @@ describe("fromGraphEvent", () => {
 });
 
 describe("desiredBlocks", () => {
-  it("skips all-day and free events by default and keeps tentative ones", async () => {
+  it("skips free events by default and keeps all-day and tentative ones", async () => {
     const blocks = await desiredBlocks(RULE, sourceEvents(), options());
-    expect(blocks).toHaveLength(15);
-    expect(blocks.some((block) => block.allDay)).toBe(false);
+    expect(blocks).toHaveLength(16);
+    expect(blocks.filter((block) => block.allDay)).toHaveLength(1);
     expect(blocks.some((block) => block.showAs === "free")).toBe(false);
     expect(blocks.some((block) => block.showAs === "tentative")).toBe(true);
   });
@@ -183,21 +188,21 @@ describe("hashes", () => {
 describe("planSync", () => {
   it("creates every block on the first run", async () => {
     const plan = planSync(await desiredBlocks(RULE, sourceEvents(), options()), []);
-    expect(plan.stats).toEqual({ create: 15, update: 0, delete: 0, unchanged: 0 });
+    expect(plan.stats).toEqual({ create: 16, update: 0, delete: 0, unchanged: 0 });
   });
 
   it("does nothing when the target already matches", async () => {
     const desired = await desiredBlocks(RULE, sourceEvents(), options());
     const plan = planSync(desired, asExisting(desired));
     expect(plan.actions).toEqual([]);
-    expect(plan.stats.unchanged).toBe(15);
+    expect(plan.stats.unchanged).toBe(16);
   });
 
   it("moves the block of a moved occurrence instead of deleting and recreating it", async () => {
     const before = await desiredBlocks(RULE, sourceEvents(beforeMove()), options());
     const after = await desiredBlocks(RULE, sourceEvents(), options());
     const plan = planSync(after, asExisting(before));
-    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 14 });
+    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 15 });
     const [action] = plan.actions;
     expect(action?.kind === "update" && action.block.start).toBe("2026-11-17T10:00:00.000Z");
   });
@@ -206,7 +211,7 @@ describe("planSync", () => {
     const before = await desiredBlocks(RULE, sourceEvents(beforeCancel()), options());
     const after = await desiredBlocks(RULE, sourceEvents(), options());
     const plan = planSync(after, asExisting(before));
-    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 15 });
+    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 16 });
   });
 
   it("ignores a renamed occurrence at level busy and updates it at level title", async () => {
@@ -229,9 +234,26 @@ describe("planSync", () => {
     const desired = await desiredBlocks(RULE, sourceEvents(), options());
     const [first] = desired;
     if (!first) throw new Error("no block");
-    const existing = [...asExisting(desired), { ...first, ruleTag: "tag", targetId: "duplicate" }];
+    const existing = [
+      ...asExisting(desired),
+      { ...first, ruleTag: "tag", targetId: "duplicate", status: "blocked" as const },
+    ];
     const plan = planSync(desired, existing);
     expect(plan.actions).toEqual([{ kind: "delete", targetId: "duplicate", marker: first.marker }]);
+    expect(countDuplicates(plan, desired)).toBe(1);
+  });
+
+  it("does not count copies of a block without a wanted event as duplicates", async () => {
+    const desired = await desiredBlocks(RULE, sourceEvents(), options());
+    const [first] = desired;
+    if (!first) throw new Error("no block");
+    const copies = [
+      { ...first, ruleTag: "tag", targetId: "a", status: "blocked" as const },
+      { ...first, ruleTag: "tag", targetId: "b", status: "blocked" as const },
+    ];
+    const plan = planSync([], copies);
+    expect(plan.stats.delete).toBe(2);
+    expect(countDuplicates(plan, [])).toBe(0);
   });
 
   it("leaves out events whose block a rule with precedence already wrote", async () => {
@@ -413,7 +435,7 @@ describe("buffer", () => {
     const overrides = { bufferBefore: 20, bufferAfter: 10 };
     const first = await desiredBlocks(RULE, sourceEvents(), options(overrides));
     const created = planSync(first, []);
-    expect(created.stats.create).toBe(15);
+    expect(created.stats.create).toBe(16);
     // The target returns the times in its own notation; the plan compares instants.
     const stored = asExisting(first).map((block) => ({
       ...block,
@@ -423,7 +445,7 @@ describe("buffer", () => {
     const second = await desiredBlocks(RULE, sourceEvents(), options(overrides));
     expect(planSync(second, stored)).toEqual({
       actions: [],
-      stats: { create: 0, update: 0, delete: 0, unchanged: 15 },
+      stats: { create: 0, update: 0, delete: 0, unchanged: 16 },
     });
   });
 

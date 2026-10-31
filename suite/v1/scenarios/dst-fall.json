@@ -1,0 +1,45 @@
+{
+  "id": "dst-fall",
+  "title": "Daylight saving end: a series keeps its wall-clock time, a night event gains an hour",
+  "covers": "daylight saving change",
+  "expectedText": "09:00 Vienna is 07:00 UTC before the change and 08:00 UTC after it. The night event from 00:30 to 04:00 Vienna runs from 22:30 UTC to 03:00 UTC.",
+  "localLimit": "The simulation expands the series and applies the zone rules itself. Only a live run says something about a real calendar.",
+  "anchorZone": "Europe/Vienna",
+  "calendars": { "source": { "timeZone": "Europe/Vienna" }, "target": { "timeZone": "UTC" } },
+  "rule": { "daysAhead": 365 },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "weekly",
+      "event": {
+        "start": "dst-fall-5d@09:00",
+        "end": "dst-fall-5d@10:00",
+        "timeZone": "Europe/Vienna",
+        "repeat": { "every": "week", "count": 2 }
+      }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "night",
+      "event": {
+        "start": "dst-fall@00:30",
+        "end": "dst-fall@04:00",
+        "timeZone": "Europe/Vienna"
+      }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["dst-fall-7d@00:00Z", "dst-fall+7d@00:00Z"],
+        "busy": [
+          ["dst-fall-5d@07:00Z", "dst-fall-5d@08:00Z"],
+          ["dst-fall-1d@22:30Z", "dst-fall@03:00Z"],
+          ["dst-fall+2d@08:00Z", "dst-fall+2d@09:00Z"]
+        ],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

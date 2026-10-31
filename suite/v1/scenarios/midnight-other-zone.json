@@ -1,0 +1,44 @@
+{
+  "id": "midnight-other-zone",
+  "title": "Events around midnight in the source zone keep their instants in a distant target zone",
+  "covers": "midnight in another time zone",
+  "expectedText": "23:30 to 00:30 Tokyo is 14:30 to 15:30 UTC, and 00:00 to 01:00 Tokyo on Thursday is 15:00 to 16:00 UTC on Wednesday. Nothing else is busy.",
+  "localLimit": "The simulation resolves the zones of the events itself. Only a live run says something about a real calendar.",
+  "calendars": {
+    "source": { "timeZone": "Asia/Tokyo" },
+    "target": { "timeZone": "Pacific/Honolulu" }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "across-midnight",
+      "event": {
+        "start": "week+1d@23:30",
+        "end": "week+2d@00:30",
+        "timeZone": "Asia/Tokyo"
+      }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "at-midnight",
+      "event": {
+        "start": "week+3d@00:00",
+        "end": "week+3d@01:00",
+        "timeZone": "Asia/Tokyo"
+      }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@14:30Z", "week+1d@15:30Z"],
+          ["week+2d@15:00Z", "week+2d@16:00Z"]
+        ],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

@@ -8,7 +8,7 @@ import { runErrorText } from "../src/routes/rules";
 import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
 import { inPrecedenceOrder, ruleTagFor } from "../src/sync/plan";
 import fixture from "./fixtures/graph/calendar-view.json";
-import { BASE, signIn } from "./helpers";
+import { BASE, shortProviderTimeouts as shortTimeouts, signIn, stopClock } from "./helpers";
 
 const SOURCE_CAL = "remote-source";
 const TARGET_CAL = "remote-target";
@@ -178,17 +178,9 @@ function atFixtureTime(): void {
   vi.setSystemTime(new Date("2026-10-22T00:00:00Z"));
 }
 
-/**
- * Stop the clock of the test and the Durable Object one hour ahead of real time. A wait then ends
- * only when the test moves the clock, and alarm times stay exact on a slow machine. The runtime
- * fires alarms in real time, so the hour also keeps them from firing by themselves.
- */
-function stopClock(): void {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(Date.now() + 3_600_000);
-}
-
 describe("AccountSync.runRule", () => {
+  beforeEach(atFixtureTime);
+
   it("plans without writing in a dry run", async () => {
     const { stub, ruleId } = await setupRule("acc-dry");
     await stub.storeTokens("acc-dry", {
@@ -199,7 +191,7 @@ describe("AccountSync.runRule", () => {
     const calls = fakeGraph();
 
     const result = await stub.runRule(ruleId, { dryRun: true });
-    expect(result).toMatchObject({ dryRun: true, applied: 0, stats: { create: 15, delete: 0 } });
+    expect(result).toMatchObject({ dryRun: true, applied: 0, stats: { create: 16, delete: 0 } });
     expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(false);
   });
 
@@ -213,12 +205,12 @@ describe("AccountSync.runRule", () => {
     const calls = fakeGraph();
 
     const result = await stub.runRule(ruleId);
-    expect(result).toMatchObject({ applied: 15, failed: 0, remaining: 0 });
+    expect(result).toMatchObject({ applied: 16, failed: 0, remaining: 0 });
 
     const batch = calls.find((call) => call.url.endsWith("/$batch"));
     const requests = (JSON.parse(batch?.init?.body as string) as { requests: { body: unknown }[] })
       .requests;
-    expect(requests).toHaveLength(15);
+    expect(requests).toHaveLength(16);
     for (const request of requests) {
       const body = request.body as {
         subject: string;
@@ -261,12 +253,11 @@ describe("AccountSync.runRule", () => {
     ]);
 
     const result = await stub.runRule(ruleId, { dryRun: true });
-    expect(result.stats).toMatchObject({ create: 15, delete: 0 });
+    expect(result.stats).toMatchObject({ create: 16, delete: 0 });
     expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(false);
   });
 
   it("writes one block where two rules into one calendar would write equal ones", async () => {
-    atFixtureTime();
     const { stub, ruleId } = await setupRule("acc-dedupe");
     await stub.storeTokens("acc-dedupe", {
       refreshToken: "r",
@@ -290,12 +281,12 @@ describe("AccountSync.runRule", () => {
 
     // Before the rule with precedence has written, the other rule writes its own blocks.
     let calls = fakeGraph();
-    expect(await stub.runRule(second)).toMatchObject({ applied: 15 });
+    expect(await stub.runRule(second)).toMatchObject({ applied: 16 });
     const copies = writtenBlocks(calls, "copy");
     vi.restoreAllMocks();
 
     calls = fakeGraph(copies);
-    expect(await stub.runRule(first)).toMatchObject({ applied: 15 });
+    expect(await stub.runRule(first)).toMatchObject({ applied: 16 });
     const kept = writtenBlocks(calls, "kept");
     vi.restoreAllMocks();
 
@@ -303,13 +294,13 @@ describe("AccountSync.runRule", () => {
     fakeGraph([...kept, ...copies]);
     expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({
       create: 0,
-      delete: 15,
+      delete: 16,
     });
     expect((await stub.runRule(first, { dryRun: true })).stats).toMatchObject({
       create: 0,
       update: 0,
       delete: 0,
-      unchanged: 15,
+      unchanged: 16,
     });
   });
 
@@ -321,7 +312,7 @@ describe("AccountSync.runRule", () => {
       accessExpiresAt: Date.now() + 3_600_000,
     });
     const calls = fakeGraph();
-    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 15, failed: 0 });
+    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 16, failed: 0 });
     const written = writtenBlocks(calls, "buffered") as {
       start: { dateTime: string };
       end: { dateTime: string };
@@ -353,7 +344,7 @@ describe("AccountSync.runRule", () => {
       create: 0,
       update: 0,
       delete: 0,
-      unchanged: 15,
+      unchanged: 16,
     });
   });
 
@@ -390,14 +381,15 @@ describe("AccountSync.runRule", () => {
     await setOptions(second, { bufferBefore: 15 });
 
     const calls = fakeGraph();
-    expect(await stub.runRule(first)).toMatchObject({ applied: 15 });
+    expect(await stub.runRule(first)).toMatchObject({ applied: 16 });
     const kept = writtenBlocks(calls, "kept");
     vi.restoreAllMocks();
 
     // The blocks with precedence cover the narrower ones: the meeting is not written twice.
     fakeGraph(kept);
     expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({ create: 0 });
-    // A wider buffer is not covered; that rule writes its own blocks, so its buffer stays.
+    // A wider buffer is not covered; that rule writes its own blocks, so its buffer stays. The
+    // all-day block has no buffer, so the block with precedence still covers it.
     await setOptions(second, { bufferBefore: 45 });
     expect((await stub.runRule(second, { dryRun: true })).stats).toMatchObject({ create: 15 });
   });
@@ -459,6 +451,7 @@ async function auditOf(ruleId: string, kind?: string) {
 
 describe("AccountSync audit events", () => {
   it("writes one sync_run per run, marks a dry run, and keeps content out", async () => {
+    atFixtureTime();
     const { stub, ruleId } = await setupRule("acc-audit");
     await stub.storeTokens("acc-audit", {
       refreshToken: "r-secret",
@@ -475,15 +468,15 @@ describe("AccountSync audit events", () => {
     expect(events).toHaveLength(2);
     expect(events[0]?.detail).toMatchObject({
       dryRun: true,
-      create: 15,
+      create: 16,
       update: 0,
       delete: 0,
       applied: 0,
     });
     expect(events[1]?.detail).toMatchObject({
       dryRun: false,
-      create: 15,
-      applied: 15,
+      create: 16,
+      applied: 16,
       failed: 0,
       remaining: 0,
     });
@@ -496,6 +489,28 @@ describe("AccountSync audit events", () => {
     for (const event of fixture.value) {
       if (event.subject) expect(serialized).not.toContain(event.subject);
     }
+  });
+
+  it("counts the duplicates of a run in sync_run", async () => {
+    atFixtureTime();
+    const { stub, ruleId } = await setupRule("acc-duplicates");
+    await stub.storeTokens("acc-duplicates", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const first = fakeGraph();
+    await stub.runRule(ruleId);
+    const blocks = writtenBlocks(first, "written");
+    expect((await auditOf(ruleId, "sync_run"))[0]?.detail).toMatchObject({ duplicates: 0 });
+
+    fakeGraph([...blocks, { ...(blocks[0] as object), id: "written-again" }]);
+    await stub.runRule(ruleId);
+
+    expect((await auditOf(ruleId, "sync_run"))[1]?.detail).toMatchObject({
+      delete: 1,
+      duplicates: 1,
+    });
   });
 
   it("records token_refresh_failed and sync_failed when an alarm run throws", async () => {
@@ -518,7 +533,7 @@ describe("AccountSync audit events", () => {
 
     const events = await auditOf(ruleId);
     const failed = events.find((event) => event.kind === "sync_failed");
-    expect(failed?.detail).toEqual({ code: "token_invalid_grant" });
+    expect(failed?.detail).toEqual({ code: "token_invalid_grant", runId: expect.any(String) });
     const refresh = await env.DB.prepare(
       "SELECT detail FROM audit_events WHERE account_id = 'acc-fail' AND kind = 'token_refresh_failed'",
     ).first<{ detail: string }>();
@@ -546,7 +561,7 @@ describe("manual run failures", () => {
     await expectRejection(stub.runRule(ruleId));
     const failed = (await auditOf(ruleId)).filter((event) => event.kind === "sync_failed");
     expect(failed).toHaveLength(1);
-    expect(failed[0]?.detail).toEqual({ code: "token_invalid_grant" });
+    expect(failed[0]?.detail).toEqual({ code: "token_invalid_grant", runId: expect.any(String) });
   });
 });
 
@@ -598,10 +613,10 @@ describe("errors that cross the Durable Object boundary", () => {
   it("keep the codes the UI and the audit log rely on", () => {
     expect(errorCode(new Error("Account has no tokens"))).toBe("Account has no tokens");
     expect(errorCode(new Error("Graph calendar view failed: 403 ErrorAccessDenied"))).toBe(
-      "Graph calendar view failed: 403 ErrorAccessDenied",
+      "graph_403_ErrorAccessDenied",
     );
     expect(errorCode(new Error("Graph $batch failed: 429 ApplicationThrottled"))).toBe(
-      "Graph $batch failed: 429 ApplicationThrottled",
+      "graph_429_ApplicationThrottled",
     );
     expect(errorCode(new Error("D1_ERROR: database is locked"))).toBe(
       "D1_ERROR: database is locked",
@@ -784,9 +799,56 @@ async function stuckBlockGraph(deleteStatus: number, ruleId = "gone-rule") {
   return graph;
 }
 
+/**
+ * Fake Graph with two blocks of a rule in the target calendar. The delete of `gone` works, the
+ * delete of `stuck` answers 500. While `readStatus` is set, reads answer that status.
+ */
+async function partlyStuckGraph(ruleId: string) {
+  const [template] = fixture.value;
+  const tag = await ruleTagFor(ruleId);
+  const graph = { readStatus: 0, tried: [] as string[] };
+  const block = (id: string) => ({
+    ...template,
+    id,
+    singleValueExtendedProperties: [
+      { id: MARKER_PROPERTY_ID, value: `${tag}.${id.padEnd(32, "0")}.${"a".repeat(32)}` },
+    ],
+  });
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
+      if (graph.readStatus !== 0) {
+        return new Response("busy", {
+          status: graph.readStatus,
+          headers: { "Retry-After": "1" },
+        });
+      }
+      const left = graph.tried.includes("/me/events/gone") ? ["stuck"] : ["gone", "stuck"];
+      return Response.json({ value: left.map(block) });
+    }
+    if (url.endsWith("/$batch")) {
+      const { requests } = JSON.parse(init?.body as string) as {
+        requests: { id: string; url: string }[];
+      };
+      graph.tried.push(...requests.map((request) => request.url));
+      return Response.json({
+        responses: requests.map(({ id, url: path }) => ({
+          id,
+          status: path.endsWith("/stuck") ? 500 : 204,
+        })),
+      });
+    }
+    return Response.json({ value: [] });
+  });
+  return graph;
+}
+
 const removalsOf = (stub: DurableObjectStub) =>
   runInDurableObject(stub, (_instance, state) =>
-    state.storage.get<{ ruleId: string; attempts: number; notBefore?: number }[]>("removalQueue"),
+    state.storage.get<
+      { ruleId: string; attempts: number; notBefore?: number; started?: boolean }[]
+    >("removalQueue"),
   );
 
 async function alarmAt(stub: DurableObjectStub): Promise<number | null> {
@@ -958,11 +1020,90 @@ describe("alarm queue", () => {
     expect(lookupFailed()).toBe(false);
   });
 
+  /** A disabled rule whose removal removed one of two blocks and goes on with no failed attempt. */
+  async function removalAfterProgress(accountId: string) {
+    const { stub, ruleId } = await setupRule(accountId);
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const graph = await partlyStuckGraph(ruleId);
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect(graph.tried.sort()).toEqual(["/me/events/gone", "/me/events/stuck"]);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 0, started: true });
+    return { stub, ruleId, graph };
+  }
+
+  it("drops a removal that made progress once its rule runs again", async () => {
+    const { stub, ruleId, graph } = await removalAfterProgress("acc-removal-progress");
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+
+    await runDurableObjectAlarm(stub);
+    // The next step deletes nothing of the active rule, and a full cycle writes the lost block.
+    expect(graph.tried).toHaveLength(2);
+    expect(await removalsOf(stub)).toBeUndefined();
+    const cycleOwed = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.get("fullCycleRequested"),
+    );
+    expect(cycleOwed).toBe(true);
+  });
+
+  it("goes on with a removal that made progress while its rule stays off", async () => {
+    const { stub, ruleId, graph } = await removalAfterProgress("acc-removal-progress-off");
+    await runDurableObjectAlarm(stub);
+    expect(graph.tried).toHaveLength(3);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 1, started: true });
+  });
+
+  it("drops a throttled removal once its rule runs again", async () => {
+    // A throttled attempt keeps its attempts at 0, but its retry can come much later.
+    const { stub, ruleId } = await setupRule("acc-removal-throttled-start");
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+    await stub.storeTokens("acc-removal-throttled-start", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const graph = await partlyStuckGraph(ruleId);
+    graph.readStatus = 429;
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 0, started: true });
+
+    graph.readStatus = 0;
+    await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
+    await runDurableObjectAlarm(stub);
+    expect(graph.tried).toEqual([]);
+    expect(await removalsOf(stub)).toBeUndefined();
+  });
+
+  it("treats a stored removal with attempts and no started mark as started", async () => {
+    // Jobs that were queued before the mark existed.
+    const { stub, ruleId } = await setupRule("acc-removal-stored");
+    await stub.storeTokens("acc-removal-stored", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const graph = await partlyStuckGraph(ruleId);
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("removalQueue", [{ ruleId, remoteCalendarId: TARGET_CAL, attempts: 1 }]),
+    );
+
+    await runDurableObjectAlarm(stub);
+    expect(graph.tried).toEqual([]);
+    expect(await removalsOf(stub)).toBeUndefined();
+  });
+
   it("keeps retrying the removal of a retiring account whose rule is enabled", async () => {
     // The request that retires an account can stop before it deletes the account's rules.
     const { stub, ruleId, deletes, cycleOwed } = await waitingRemoval("acc-removal-retiring-rule");
     await env.DB.prepare("UPDATE rules SET enabled = 1 WHERE id = ?").bind(ruleId).run();
-    await stub.retire();
+    await stub.retire("request");
     await runDurableObjectAlarm(stub);
     expect(deletes()).toBe(2);
     expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
@@ -1122,7 +1263,7 @@ describe("alarm queue", () => {
     const graph = await stuckBlockGraph(500);
 
     await stub.queueRemoval("gone-rule", TARGET_CAL);
-    await stub.retire();
+    await stub.retire("request");
     await runDurableObjectAlarm(stub);
     expect(graph.methods).toEqual(["DELETE"]);
     expect(await alarmKind(stub)).toBe("removal");
@@ -1170,7 +1311,7 @@ describe("alarm queue", () => {
     expect(Math.round(((job?.notBefore ?? 0) - Date.now()) / 60_000)).toBe(1);
   });
 
-  it("gives up the removals of a retiring account at once when its tokens are refused", async () => {
+  it("gives up the removals of a retiring account after the last refused attempt", async () => {
     const stub = await bareAccount("acc-retire-token", 0);
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -1178,7 +1319,12 @@ describe("alarm queue", () => {
     );
 
     await stub.queueRemoval("gone-rule", TARGET_CAL);
-    await stub.retire();
+    await stub.retire("request");
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await runDurableObjectAlarm(stub);
+      expect((await removalsOf(stub))?.[0]?.attempts).toBe(attempt);
+      expect(await stub.hasTokens()).toBe(true);
+    }
     await runDurableObjectAlarm(stub);
     expect(await removalsOf(stub)).toBeUndefined();
     await runDurableObjectAlarm(stub);
@@ -1281,7 +1427,7 @@ describe("alarm queue", () => {
 
     // The request that retires the account never waits for the provider.
     const atRetire = calls.length;
-    await stub.retire();
+    await stub.retire("request");
     expect(calls).toHaveLength(atRetire);
 
     // The next alarm stops the watches, and only that.
@@ -1468,7 +1614,8 @@ describe("alarm queue", () => {
       accessToken: "a",
       accessExpiresAt: Date.now() + 3_600_000,
     });
-    const calls = fakeGraph();
+    // Real time, not the fixture time: the runtime fires an alarm from the real past by itself.
+    const calls = fakeGraph([], { source: fixtureFromTomorrow() });
     await runInDurableObject(stub, async (_instance, state) => {
       await state.storage.put("ruleQueue", [ruleId]);
       await state.storage.put("ruleNotBefore", { [ruleId]: Date.now() - 1 });
@@ -1486,8 +1633,8 @@ describe("alarm queue", () => {
         state.storage.get(["ruleQueue", "ruleNotBefore"]),
       ),
     ).toEqual(new Map());
-    expect((await stub.runRule(ruleId, { dryRun: true })).stats.create).toBe(15);
-    expect((await stub.runRule(ruleId)).applied).toBe(15);
+    expect((await stub.runRule(ruleId, { dryRun: true })).stats.create).toBe(16);
+    expect((await stub.runRule(ruleId)).applied).toBe(16);
   });
 
   it("queues the later rules into the same calendar after a rule moved a block", async () => {
@@ -1601,11 +1748,29 @@ function statefulGraph(sources: Record<string, unknown[] | (() => Response | Pro
 }
 
 /** Fake Graph whose `$batch` throttles every request after the first `accepted` ones. */
+/** The fixture events moved by whole days, so that the first one starts tomorrow. */
+function fixtureFromTomorrow() {
+  const day = 86_400_000;
+  const first = Date.UTC(2026, 9, 22);
+  const shift = Math.floor(Date.now() / day) * day + day - first;
+  const moved = (time: { dateTime: string; timeZone: string }) => ({
+    ...time,
+    dateTime: time.dateTime.replace(/^\d{4}-\d{2}-\d{2}/, (date) =>
+      new Date(Date.parse(date) + shift).toISOString().slice(0, 10),
+    ),
+  });
+  return fixture.value.map((event) => ({
+    ...event,
+    start: moved(event.start),
+    end: moved(event.end),
+  }));
+}
+
 function throttlingGraph(accepted: number, retryAfterSeconds: string) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.includes(`/calendars/${SOURCE_CAL}/calendarView`))
-      return Response.json({ value: fixture.value });
+      return Response.json({ value: fixtureFromTomorrow() });
     if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) return Response.json({ value: [] });
     if (url.endsWith("/$batch")) {
       const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
@@ -1639,9 +1804,9 @@ describe("throttling", () => {
     throttlingGraph(3, "20");
 
     const result = await stub.runRule(ruleId);
-    expect(result).toMatchObject({ applied: 3, failed: 0, remaining: 12, retryAfterMs: 20_000 });
+    expect(result).toMatchObject({ applied: 3, failed: 0, remaining: 13, retryAfterMs: 20_000 });
     const [event] = await auditOf(ruleId, "sync_run");
-    expect(event?.detail).toMatchObject({ failed: 0, throttled: 12, statuses: "429:12" });
+    expect(event?.detail).toMatchObject({ failed: 0, throttled: 13, statuses: "429:13" });
     const wait = await alarmIn(stub);
     expect(wait).toBeGreaterThan(15_000);
     expect(wait).toBeLessThanOrEqual(20_000);
@@ -1663,7 +1828,7 @@ describe("throttling", () => {
     await runDurableObjectAlarm(stub);
 
     const [failure] = await auditOf(ruleId, "sync_failed");
-    expect(failure?.detail).toEqual({ code: "graph_429" });
+    expect(failure?.detail).toEqual({ code: "graph_429", runId: expect.any(String) });
     const queue = await runInDurableObject(stub, (_instance, state) =>
       state.storage.get<string[]>("ruleQueue"),
     );
@@ -1715,7 +1880,7 @@ describe("throttling", () => {
     expect(batches).toBe(1);
     // A throttled run is no failed attempt.
     expect(await removalsOf(stub)).toEqual([
-      { ruleId: "gone-rule", remoteCalendarId: TARGET_CAL, attempts: 0 },
+      { ruleId: "gone-rule", remoteCalendarId: TARGET_CAL, attempts: 0, started: true },
     ]);
     const wait = await alarmIn(stub);
     expect(wait).toBeGreaterThan(55_000);
@@ -2189,6 +2354,7 @@ describe("waiting rules", () => {
 
 describe("mailbox concurrency", () => {
   it("runs one provider call at a time, also when a read arrives during a write run", async () => {
+    atFixtureTime();
     const { stub, ruleId } = await setupRule("acc-serial");
     await stub.storeTokens("acc-serial", {
       refreshToken: "r",
@@ -2219,8 +2385,491 @@ describe("mailbox concurrency", () => {
       stub.readSourceEvents(SOURCE_CAL, window, false),
       stub.readSourceEvents(SOURCE_CAL, window, false),
     ]);
-    expect(run).toMatchObject({ applied: 15, failed: 0 });
+    expect(run).toMatchObject({ applied: 16, failed: 0 });
     expect(maxInFlight).toBe(1);
+  });
+});
+
+describe("provider timeouts", () => {
+  /** Answer the requests that `selects` picks with `reply`. Other requests go to the current mock. */
+  function replyWhen(selects: (url: string) => boolean, reply: () => Promise<Response>): void {
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+    vi.mocked(globalThis.fetch).mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (selects(url)) return reply();
+      return answer?.(input, init) ?? Promise.reject(new Error("no mock"));
+    });
+  }
+
+  /** Never answer the requests that `hangs` selects. */
+  function hangWhen(hangs: (url: string) => boolean): void {
+    replyWhen(hangs, () => new Promise<Response>(() => {}));
+  }
+
+  /** The requests that `lost` selects take effect at the provider, but no answer comes back. */
+  function loseAnswerWhen(lost: (url: string) => boolean): void {
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const response = await (answer?.(input, init) ?? Promise.reject(new Error("no mock")));
+      return lost(url) ? new Promise<Response>(() => {}) : response;
+    });
+  }
+
+  /** Fake Graph whose target calendar holds `count` blocks of a rule. Deletes take effect. */
+  async function blocksGraph(ruleId: string, count: number) {
+    const [template] = fixture.value;
+    const tag = await ruleTagFor(ruleId);
+    const hash = (index: number) => String(index).padStart(32, "0");
+    const target = Array.from({ length: count }, (_, index) => ({
+      ...template,
+      id: `block-${index}`,
+      singleValueExtendedProperties: [
+        { id: MARKER_PROPERTY_ID, value: `${tag}.${hash(index)}.${hash(index)}` },
+      ],
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
+        return Response.json({ value: target });
+      }
+      if (!url.endsWith("/$batch")) return Response.json({ value: [] });
+      const { requests } = JSON.parse(init?.body as string) as {
+        requests: { id: string; url: string }[];
+      };
+      for (const request of requests) {
+        const index = target.findIndex((block) => request.url.endsWith(`/${block.id}`));
+        target.splice(index, 1);
+      }
+      return Response.json({
+        responses: requests.map((request) => ({ id: request.id, status: 204 })),
+      });
+    });
+    return target;
+  }
+
+  /** The IDs of the blocks that the recorded batches delete. */
+  const deletedIds = (calls: { url: string; init?: RequestInit }[]) =>
+    calls
+      .filter((call) => call.url.endsWith("/$batch"))
+      .flatMap(
+        (call) =>
+          (JSON.parse(call.init?.body as string) as { requests: { url: string }[] }).requests,
+      )
+      .map((request) => request.url.split("/").pop());
+
+  /** `count` events, one per hour from now on, in the sync window. */
+  function hourlyEvents(count: number) {
+    const now = Date.now();
+    return Array.from({ length: count }, (_, index) =>
+      graphEvent(
+        `event-${index}`,
+        new Date(now + (index + 1) * 3_600_000),
+        new Date(now + (index + 1) * 3_600_000 + 1_800_000),
+      ),
+    );
+  }
+
+  const validTokens = () => ({
+    refreshToken: "r",
+    accessToken: "a",
+    accessExpiresAt: Date.now() + 3_600_000,
+  });
+
+  const penaltyOf = (stub: DurableObjectStub) =>
+    runInDurableObject(stub, (_instance, state) => state.storage.get<number>("throttledUntil"));
+
+  it("starts the penalty of a throttled answer whose body never ends", async () => {
+    const { stub, ruleId } = await setupRule("acc-timeout-throttled");
+    await stub.storeTokens("acc-timeout-throttled", validTokens());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    fakeGraph();
+    replyWhen(
+      (url) => url.includes(`/calendars/${TARGET_CAL}/calendarView`),
+      async () =>
+        new Response(new ReadableStream({ start: () => {} }), {
+          status: 429,
+          headers: { "Retry-After": "120" },
+        }),
+    );
+
+    const before = Date.now();
+    await expectRejection(stub.runRule(ruleId));
+
+    expect(await penaltyOf(stub)).toBeGreaterThanOrEqual(before + 120_000);
+    expect((await auditOf(ruleId, "sync_failed"))[0]?.detail).toEqual({
+      code: "graph_429",
+      runId: expect.any(String),
+    });
+  });
+
+  it("records the stable code if the source read of another account times out", async () => {
+    const accountId = "acc-timeout-crossed";
+    const sourceId = `${accountId}-source`;
+    const { stub, ruleId } = await setupRule(accountId);
+    const { user } = await signIn("owner@example.com");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
+      ).bind(sourceId, user.id, `${sourceId}@example.com`),
+      env.DB.prepare("UPDATE calendars SET account_id = ? WHERE id = ?").bind(
+        sourceId,
+        `${accountId}-src`,
+      ),
+    ]);
+    await stub.storeTokens(accountId, validTokens());
+    await accountStub(sourceId).storeTokens(sourceId, validTokens());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    fakeGraph();
+    hangWhen((url) => url.includes(`/calendars/${SOURCE_CAL}/calendarView`));
+
+    await expectRejection(stub.runRule(ruleId));
+
+    expect((await auditOf(ruleId, "sync_failed"))[0]?.detail).toEqual({
+      runId: expect.any(String),
+      code: "graph_504_timeout",
+    });
+  });
+
+  it("recovers the watches of a subscribe that timed out after Graph created them", async () => {
+    const accountId = "acc-timeout-watch";
+    const { stub } = await setupRule(accountId);
+    await stub.storeTokens(accountId, validTokens());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    const expirationDateTime = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const graph = new Map<string, { id: string; resource: string; notificationUrl: string }>();
+    let answers = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (init?.method === "POST") {
+        const body = JSON.parse(init.body as string) as {
+          resource: string;
+          notificationUrl: string;
+        };
+        if (graph.has(body.resource)) return new Response(null, { status: 409 });
+        const id = `sub-${crypto.randomUUID()}`;
+        graph.set(body.resource, { ...body, id });
+        if (!answers) return new Promise<Response>(() => {});
+        return Response.json({ id, expirationDateTime }, { status: 201 });
+      }
+      if (init?.method === "DELETE") {
+        for (const [resource, item] of graph) {
+          if (url.endsWith(`/subscriptions/${item.id}`)) graph.delete(resource);
+        }
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({ value: [...graph.values()] });
+    });
+    const state = async () => ({
+      stored: await runInDurableObject(stub, (_instance, storage) =>
+        storage.storage.sql
+          .exec<{ remote_id: string }>("SELECT remote_id FROM subscriptions")
+          .toArray()
+          .map((row) => row.remote_id),
+      ),
+      watched: (
+        await env.DB.prepare("SELECT watched_until AS until FROM calendars WHERE account_id = ?")
+          .bind(accountId)
+          .all<{ until: number | null }>()
+      ).results.map((row) => row.until),
+    });
+
+    await stub.ensureWatches();
+    expect(await state()).toEqual({ stored: [], watched: [null, null] });
+    expect(graph.size).toBe(2);
+
+    answers = true;
+    await stub.ensureWatches();
+    const { stored, watched } = await state();
+    expect(stored.toSorted()).toEqual([...graph.values()].map((item) => item.id).toSorted());
+    expect(stored).toHaveLength(2);
+    expect(watched).toEqual([expect.any(Number), expect.any(Number)]);
+  });
+
+  it("frees the provider queue for the next call", async () => {
+    const { stub } = await setupRule("acc-timeout-queue");
+    await stub.storeTokens("acc-timeout-queue", validTokens());
+    shortTimeouts();
+    fakeGraph();
+    let first = true;
+    hangWhen(() => {
+      const hang = first;
+      first = false;
+      return hang;
+    });
+
+    // Two windows, because equal reads share one call.
+    const start = new Date();
+    const [stuck, next] = await Promise.allSettled([
+      stub.readSourceEvents(SOURCE_CAL, { start, end: new Date(Date.now() + 1000) }, false),
+      stub.readSourceEvents(SOURCE_CAL, { start, end: new Date(Date.now() + 2000) }, false),
+    ]);
+    expect(stuck.status).toBe("rejected");
+    expect(next.status).toBe("fulfilled");
+  });
+
+  it("keeps an account connected if the token endpoint never answers", async () => {
+    const { stub, ruleId } = await setupRule("acc-timeout-token");
+    await stub.storeTokens("acc-timeout-token", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    fakeGraph();
+    hangWhen((url) => url.includes("/oauth2/v2.0/token"));
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+
+    expect((await auditOf(ruleId, "sync_failed"))[0]?.detail).toEqual({
+      code: "token_timeout",
+      runId: expect.any(String),
+    });
+    const refresh = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE account_id = 'acc-timeout-token' AND kind = 'token_refresh_failed'",
+    ).first<{ detail: string }>();
+    expect(JSON.parse(refresh?.detail ?? "{}")).toEqual({ code: "token_timeout" });
+    const account = await env.DB.prepare(
+      "SELECT needs_reconnect AS flag FROM accounts WHERE id = 'acc-timeout-token'",
+    ).first<{ flag: number }>();
+    expect(account?.flag).toBe(0);
+
+    // The refresh ended, so the next run asks the token endpoint again and succeeds.
+    fakeGraph();
+    expect(await stub.runRule(ruleId)).toMatchObject({ failed: 0 });
+  });
+
+  it("records a failed run without content and goes on with the next rule", async () => {
+    const accountId = "acc-timeout-rule";
+    const { stub, ruleId } = await setupRule(accountId);
+    const second = `${accountId}-rule-2`;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Copy')",
+      ).bind(`${accountId}-src2`, accountId, `${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options) SELECT ?, user_id, ?, target_calendar_id, options FROM rules WHERE id = ?",
+      ).bind(second, `${accountId}-src2`, ruleId),
+    ]);
+    await stub.storeTokens(accountId, validTokens());
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    fakeGraph();
+    let first = true;
+    hangWhen((url) => {
+      if (!first || !url.includes(`/calendars/${TARGET_CAL}/calendarView`)) return false;
+      first = false;
+      return true;
+    });
+    const failures = async () => [
+      ...(await auditOf(ruleId, "sync_failed")),
+      ...(await auditOf(second, "sync_failed")),
+    ];
+    const runs = async () => [
+      ...(await auditOf(ruleId, "sync_run")),
+      ...(await auditOf(second, "sync_run")),
+    ];
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+
+    expect((await failures()).map((run) => run.detail)).toEqual([
+      { code: "graph_504_timeout", runId: expect.any(String) },
+    ]);
+    // The rule left the queue, and no penalty holds back the next one.
+    const { queue, penalty } = await runInDurableObject(stub, async (_instance, state) => ({
+      queue: await state.storage.get<string[]>("ruleQueue"),
+      penalty: await state.storage.get("throttledUntil"),
+    }));
+    expect(queue).toHaveLength(1);
+    expect(penalty).toBeUndefined();
+
+    await runDurableObjectAlarm(stub);
+    expect(await failures()).toHaveLength(1);
+    expect(await runs()).toHaveLength(1);
+
+    const logged = JSON.stringify(errors.mock.calls);
+    for (const event of fixture.value) {
+      if (event.subject) expect(logged).not.toContain(event.subject);
+    }
+  });
+
+  it("counts a timed-out removal as a failed attempt with its backoff", async () => {
+    const { stub, ruleId } = await setupRule("acc-timeout-removal");
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+    await stub.storeTokens("acc-timeout-removal", validTokens());
+    await stuckBlockGraph(204, ruleId);
+    shortTimeouts();
+    hangWhen((url) => url.endsWith("/$batch"));
+
+    const before = Date.now();
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+
+    const [removal] = (await removalsOf(stub)) ?? [];
+    expect(removal).toMatchObject({ ruleId, attempts: 1 });
+    expect(removal?.notBefore).toBeGreaterThanOrEqual(before + 60_000);
+  });
+
+  /** A disabled rule with `count` blocks in the target calendar and a queued removal. */
+  async function queuedRemoval(accountId: string, count: number) {
+    const { stub, ruleId } = await setupRule(accountId);
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
+    await stub.storeTokens(accountId, validTokens());
+    const target = await blocksGraph(ruleId, count);
+    shortTimeouts();
+    await stub.queueRemoval(ruleId, TARGET_CAL);
+    return { stub, ruleId, target };
+  }
+
+  it("goes on with a removal if a batch times out after others worked", async () => {
+    const { stub, target } = await queuedRemoval("acc-timeout-progress", 45);
+    let batches = 0;
+    hangWhen((url) => url.endsWith("/$batch") && ++batches === 2);
+
+    await runDurableObjectAlarm(stub);
+
+    expect(target).toHaveLength(25);
+    const [removal] = (await removalsOf(stub)) ?? [];
+    expect(removal).toMatchObject({ attempts: 0 });
+    expect(removal?.notBefore).toBeUndefined();
+
+    await runDurableObjectAlarm(stub);
+    expect(target).toHaveLength(0);
+    expect((await removalsOf(stub)) ?? []).toEqual([]);
+  });
+
+  it("starts the attempts of a removal again after progress", async () => {
+    const { stub, ruleId, target } = await queuedRemoval("acc-timeout-reset", 45);
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("removalQueue", [{ ruleId, remoteCalendarId: TARGET_CAL, attempts: 4 }]),
+    );
+    let batches = 0;
+    hangWhen((url) => url.endsWith("/$batch") && ++batches === 2);
+
+    await runDurableObjectAlarm(stub);
+
+    expect(target).toHaveLength(25);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ attempts: 0 });
+  });
+
+  it("finishes a long removal that times out more often than it may fail", async () => {
+    const { stub, target } = await queuedRemoval("acc-timeout-long", 140);
+    let batches = 0;
+    hangWhen((url) => url.endsWith("/$batch") && ++batches % 2 === 0);
+
+    for (let run = 0; run < 7; run++) await runDurableObjectAlarm(stub);
+
+    expect(batches).toBeGreaterThan(5);
+    expect(target).toHaveLength(0);
+    expect((await removalsOf(stub)) ?? []).toEqual([]);
+  });
+
+  it("waits for Retry-After if a batch is throttled after others worked", async () => {
+    const { stub, target } = await queuedRemoval("acc-timeout-throttled-removal", 45);
+    let batches = 0;
+    replyWhen(
+      (url) => url.endsWith("/$batch") && ++batches === 2,
+      async () => new Response(null, { status: 429, headers: { "Retry-After": "120" } }),
+    );
+
+    const before = Date.now();
+    await runDurableObjectAlarm(stub);
+
+    expect(target).toHaveLength(25);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ attempts: 0 });
+    expect(await penaltyOf(stub)).toBeGreaterThanOrEqual(before + 120_000);
+    expect(await alarmAt(stub)).toBeGreaterThanOrEqual(before + 120_000);
+  });
+
+  it("keeps the blocks of earlier batches if a write batch times out", async () => {
+    const { stub, ruleId } = await setupRule("acc-timeout-write");
+    await stub.storeTokens("acc-timeout-write", validTokens());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    const target: unknown[] = [];
+    const calls = fakeGraph(target, { source: hourlyEvents(25) });
+    let batches = 0;
+    hangWhen((url) => url.endsWith("/$batch") && ++batches === 2);
+
+    await expectRejection(stub.runRule(ruleId));
+
+    expect((await auditOf(ruleId, "sync_failed"))[0]?.detail).toEqual({
+      runId: expect.any(String),
+      code: "graph_504_timeout",
+    });
+    expect(await auditOf(ruleId, "sync_run")).toEqual([]);
+    expect(await penaltyOf(stub)).toBeUndefined();
+
+    // The first batch worked: the next run writes only the rest.
+    target.push(...writtenBlocks(calls, "first"));
+    expect(await stub.runRule(ruleId)).toMatchObject({
+      applied: 5,
+      failed: 0,
+      remaining: 0,
+      stats: { create: 5, unchanged: 20, delete: 0 },
+    });
+  });
+
+  it("writes nothing again if a batch took effect and its answer got lost", async () => {
+    const { stub, ruleId } = await setupRule("acc-timeout-lost");
+    await stub.storeTokens("acc-timeout-lost", validTokens());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    const target: unknown[] = [];
+    const calls = fakeGraph(target, { source: hourlyEvents(3) });
+    let lost = true;
+    loseAnswerWhen((url) => lost && url.endsWith("/$batch"));
+
+    await expectRejection(stub.runRule(ruleId));
+
+    lost = false;
+    target.push(...writtenBlocks(calls, "landed"));
+    calls.length = 0;
+    expect(await stub.runRule(ruleId)).toMatchObject({
+      applied: 0,
+      stats: { create: 0, update: 0, delete: 0, unchanged: 3 },
+    });
+    expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(false);
+  });
+
+  it("removes the copy if the next read did not show a batch that took effect", async () => {
+    const { stub, ruleId } = await setupRule("acc-timeout-copy");
+    await stub.storeTokens("acc-timeout-copy", validTokens());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortTimeouts();
+    const target: { id: string }[] = [];
+    const calls = fakeGraph(target, { source: hourlyEvents(3) });
+    let lost = true;
+    loseAnswerWhen((url) => lost && url.endsWith("/$batch"));
+    await expectRejection(stub.runRule(ruleId));
+    lost = false;
+    const landed = writtenBlocks(calls, "landed") as { id: string }[];
+    calls.length = 0;
+
+    // The read after the timeout does not show the blocks yet, so this run writes them again.
+    expect(await stub.runRule(ruleId)).toMatchObject({ stats: { create: 3 } });
+    target.push(...landed, ...(writtenBlocks(calls, "again") as { id: string }[]));
+    calls.length = 0;
+
+    expect(await stub.runRule(ruleId)).toMatchObject({
+      stats: { create: 0, delete: 3, unchanged: 3 },
+    });
+    const deleted = deletedIds(calls);
+    const kept = target.filter((block) => !deleted.includes(block.id));
+    expect(kept).toHaveLength(3);
+    target.splice(0, target.length, ...kept);
+    calls.length = 0;
+
+    expect(await stub.runRule(ruleId)).toMatchObject({
+      stats: { create: 0, update: 0, delete: 0, unchanged: 3 },
+    });
   });
 });
 
@@ -2426,6 +3075,7 @@ describe("access policy in the background", () => {
     expect(calls.filter((call) => !call.url.includes("/token"))).toEqual([]);
     const [failure] = await auditOf(ruleId, "sync_failed");
     expect(failure?.detail).toEqual({
+      runId: expect.any(String),
       code: "The rule's owner is deactivated or no longer admitted",
     });
   });
@@ -2655,7 +3305,7 @@ describe("accounts that need reconnecting", () => {
     expect(await auditCount("acc-revoked", "token_refresh_failed")).toBe(1);
     const failed = await auditOf(ruleId, "sync_failed");
     expect(failed).toHaveLength(2);
-    expect(failed[1]?.detail).toEqual({ code: "token_invalid_grant" });
+    expect(failed[1]?.detail).toEqual({ code: "token_invalid_grant", runId: expect.any(String) });
   });
 
   it("syncs again with a full cycle once the account is connected again", async () => {
@@ -2674,10 +3324,10 @@ describe("accounts that need reconnecting", () => {
       accessExpiresAt: Date.now() + 3_600_000,
     });
     expect(await pendingAlarm(stub)).not.toBeNull();
-    const calls = fakeGraph();
+    const calls = fakeGraph([], { source: fixtureFromTomorrow() });
     await runDurableObjectAlarm(stub);
     expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(true);
-    expect((await auditOf(ruleId, "sync_run")).at(-1)?.detail).toMatchObject({ applied: 15 });
+    expect((await auditOf(ruleId, "sync_run")).at(-1)?.detail).toMatchObject({ applied: 16 });
   });
 
   it("keeps the account connected if the refused token was replaced during the refresh", async () => {
@@ -2712,7 +3362,7 @@ describe("accounts that need reconnecting", () => {
     expect(await pendingAlarm(stub)).not.toBeNull();
   });
 
-  it("forgets a retiring account at once, since it cannot remove its blocks", async () => {
+  it("asks for a token at every attempt of a refused retiring account", async () => {
     const { stub, ruleId } = await setupRule("acc-revoked-retire");
     await stub.storeTokens("acc-revoked-retire", {
       refreshToken: "r",
@@ -2726,10 +3376,15 @@ describe("accounts that need reconnecting", () => {
     expect(calls.token).toBe(1);
 
     await stub.queueRemoval(ruleId, TARGET_CAL);
-    await stub.retire();
+    await stub.retire("request");
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      expect(await stub.hasTokens()).toBe(true);
+      await runDurableObjectAlarm(stub);
+    }
+    expect(await removalsOf(stub)).toBeUndefined();
     await runDurableObjectAlarm(stub);
     expect(await stub.hasTokens()).toBe(false);
-    expect(calls.token).toBe(1);
+    expect(calls.token).toBe(6);
     expect(calls.other).toBe(0);
   });
 
@@ -2818,6 +3473,30 @@ describe("accounts that need reconnecting", () => {
     expect(await storedPause(setup.stub)).toBeDefined();
     return { ...setup, calls };
   }
+
+  it("lets a removal that waits after a refusal run as soon as new tokens arrive", async () => {
+    const id = "acc-unpause-removal";
+    const { stub } = await setupRule(id);
+    await stub.storeTokens(id, { refreshToken: "r", accessToken: "a", accessExpiresAt: 0 });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    refusingTokenEndpoint();
+    await stub.queueRemoval("gone-rule", TARGET_CAL);
+    await runDurableObjectAlarm(stub);
+    expect(await storedPause(stub)).toBeDefined();
+    const [waiting] = (await removalsOf(stub)) ?? [];
+    expect(waiting).toMatchObject({ ruleId: "gone-rule", attempts: 1 });
+    expect(waiting?.notBefore).toBeGreaterThan(Date.now());
+
+    const fresh = Date.now() + 3_600_000;
+    await stub.storeTokens(id, { refreshToken: "r2", accessToken: "a2", accessExpiresAt: fresh });
+    const [due] = (await removalsOf(stub)) ?? [];
+    expect(due).toMatchObject({ ruleId: "gone-rule", attempts: 1, started: true });
+    expect(due?.notBefore).toBeUndefined();
+
+    fakeGraph();
+    await runDurableObjectAlarm(stub);
+    expect(await removalsOf(stub)).toBeUndefined();
+  });
 
   it("ends up connected if new tokens arrive while the pause is written to D1", async () => {
     const { stub } = await setupRule("acc-race-d1");
@@ -3067,6 +3746,91 @@ describe("accounts that need reconnecting", () => {
     expect((await storedPause(stub))?.alertPending).toBe(false);
   });
 
+  it("keeps the alert of a pause open until the webhook answers 2xx", async () => {
+    const { stub } = await setupRule("acc-alert-retry");
+    await stub.storeTokens("acc-alert-retry", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const statuses = [500, 200];
+    const alerts: number[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === env.ALERT_WEBHOOK_URL) {
+        const status = statuses[alerts.length] ?? 200;
+        alerts.push(status);
+        return new Response("answer", { status });
+      }
+      return Response.json({ error: "invalid_grant" }, { status: 400 });
+    });
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(alerts).toEqual([500]);
+    expect((await storedPause(stub))?.alertPending).toBe(true);
+
+    await stub.tick();
+    expect(alerts).toEqual([500, 200]);
+    expect((await storedPause(stub))?.alertPending).toBe(false);
+
+    await stub.tick();
+    expect(alerts).toEqual([500, 200]);
+  });
+
+  it("keeps the alert of a pause open while the post runs", async () => {
+    const stub = accountStub("acc-alert-inflight");
+    await setupRule("acc-alert-inflight");
+    const during = await runInDurableObject(stub, async (instance, state) => {
+      await state.storage.put("needsReconnect", {
+        code: "invalid_grant",
+        since: 1,
+        flagPending: false,
+        alertPending: true,
+        probeAt: Date.now() + 86_400_000,
+      });
+      let stored: { alertPending?: boolean } | undefined;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        stored = await state.storage.get("needsReconnect");
+        return new Response("ok");
+      });
+      const open = instance as unknown as {
+        finishPause(id: string, since: number): Promise<void>;
+      };
+      await open.finishPause("acc-alert-inflight", 1);
+      return stored;
+    });
+    expect(during?.alertPending).toBe(true);
+    expect((await storedPause(stub))?.alertPending).toBe(false);
+  });
+
+  it("does not keep the alert of a pause open without a webhook", async () => {
+    const stub = accountStub("acc-alert-off");
+    await setupRule("acc-alert-off");
+    await runInDurableObject(stub, async (instance, state) => {
+      await state.storage.put("needsReconnect", {
+        code: "invalid_grant",
+        since: 1,
+        flagPending: false,
+        alertPending: true,
+        probeAt: Date.now() + 86_400_000,
+      });
+      const open = instance as unknown as {
+        env: Env;
+        finishPause(id: string, since: number): Promise<void>;
+      };
+      const url = open.env.ALERT_WEBHOOK_URL;
+      open.env.ALERT_WEBHOOK_URL = "";
+      try {
+        await open.finishPause("acc-alert-off", 1);
+      } finally {
+        open.env.ALERT_WEBHOOK_URL = url;
+      }
+    });
+    expect((await storedPause(stub))?.alertPending).toBe(false);
+  });
+
   it("probes at most once when two ticks overlap", async () => {
     const { stub } = await setupRule("acc-overlap-probe");
     await stub.storeTokens("acc-overlap-probe", {
@@ -3204,7 +3968,7 @@ describe("accounts that need reconnecting", () => {
     expect(left ?? []).toEqual([]);
   });
 
-  it("lets a paused account retire at the first alarm, without a token request", async () => {
+  it("lets a paused account retire after its attempts", async () => {
     const { stub, ruleId, calls } = await pauseByRefusal("acc-paused-retire");
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec(
@@ -3214,12 +3978,19 @@ describe("accounts that need reconnecting", () => {
       );
     });
     await stub.queueRemoval(ruleId, TARGET_CAL);
-    await stub.retire();
+    await stub.retire("request");
+    // One alarm tries to stop the watch, five run the attempts, the last one forgets the account.
+    for (let alarm = 1; alarm <= 6; alarm++) {
+      await runDurableObjectAlarm(stub);
+      expect(await stub.hasTokens()).toBe(true);
+      expect(await pendingAlarm(stub)).not.toBeNull();
+    }
     await runDurableObjectAlarm(stub);
     expect(await stub.hasTokens()).toBe(false);
     expect(await pendingAlarm(stub)).toBeNull();
     expect(await storedPause(stub)).toBeUndefined();
-    expect(calls.token).toBe(1);
+    // The refusal, the watch stop, five attempts, and the watch stop of `forget()`.
+    expect(calls.token).toBe(8);
     expect(calls.other).toBe(0);
   });
 
@@ -3368,6 +4139,182 @@ describe("accounts that need reconnecting", () => {
       state.storage.get<string[]>("ruleQueue"),
     );
     expect(queue ?? []).toEqual([]);
+  });
+
+  it("drops the marker of a run that stops early because its source needs reconnecting", async () => {
+    const { stub, ruleId } = await ruleFromFlaggedSource("flagged-marker");
+    await runInDurableObject(stub, async (instance: AccountSync) => {
+      const self = instance as unknown as { runRuleAfterOthers(id: string): Promise<unknown> };
+      await self.runRuleAfterOthers(ruleId);
+    });
+    expect(await runMarkers(stub)).toEqual([]);
+    await stub.tick();
+    expect(await auditOf(ruleId)).toHaveLength(0);
+  });
+
+  /** Audit rows of one account and kind, oldest first, with the detail parsed. */
+  async function pauseEvents(accountId: string, kind: "account_paused" | "account_resumed") {
+    const { results } = await env.DB.prepare(
+      "SELECT user_id, org_id, detail FROM audit_events WHERE account_id = ? AND kind = ? ORDER BY id",
+    )
+      .bind(accountId, kind)
+      .all<{ user_id: string; org_id: string; detail: string }>();
+    return results.map((row) => ({
+      ...row,
+      detail: JSON.parse(row.detail) as Record<string, unknown>,
+    }));
+  }
+
+  it("records one account_paused per pause and one account_resumed when new tokens end it", async () => {
+    const { stub } = await pauseByRefusal("acc-pause-events");
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    await stub.tick();
+
+    const paused = await pauseEvents("acc-pause-events", "account_paused");
+    expect(paused).toHaveLength(1);
+    expect(paused[0]?.detail).toEqual({ code: "invalid_grant" });
+    expect(paused[0]?.org_id).toBe("default");
+    expect(paused[0]?.user_id).toBeTruthy();
+    expect(await pauseEvents("acc-pause-events", "account_resumed")).toHaveLength(0);
+
+    const tokens = {
+      refreshToken: "r2",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    };
+    await stub.storeTokens("acc-pause-events", tokens);
+    await stub.storeTokens("acc-pause-events", tokens);
+
+    const resumed = await pauseEvents("acc-pause-events", "account_resumed");
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]?.detail).toMatchObject({ code: "invalid_grant" });
+    expect(typeof resumed[0]?.detail.pausedMs).toBe("number");
+  });
+
+  it("records account_resumed when a probe ends the pause", async () => {
+    const { stub } = await pauseByRefusal("acc-pause-probe");
+    await probeDue(stub);
+    vi.restoreAllMocks();
+    fakeGraph();
+    await stub.tick();
+    expect(await storedPause(stub)).toBeUndefined();
+    expect(await pauseEvents("acc-pause-probe", "account_resumed")).toHaveLength(1);
+  });
+
+  it("records account_resumed when a pause ends because D1 has no flag", async () => {
+    const { stub } = await pauseByRefusal("acc-pause-stale");
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 0 WHERE id = 'acc-pause-stale'",
+    ).run();
+    await stub.tick();
+    expect(await storedPause(stub)).toBeUndefined();
+    expect(await pauseEvents("acc-pause-stale", "account_resumed")).toHaveLength(1);
+  });
+
+  it("records the pause of a stale flag once, and its end", async () => {
+    const { stub } = await setupRule("acc-pause-flag");
+    await stub.storeTokens("acc-pause-flag", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    await env.DB.prepare(
+      "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-pause-flag'",
+    ).run();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    refusingTokenEndpoint();
+
+    // Two overlapping starts of one pause, then a tick. The probe fails, so the pause lasts.
+    await runInDurableObject(stub, async (instance: AccountSync) => {
+      const self = instance as unknown as { pauseForStaleFlag(id: string): Promise<unknown> };
+      await Promise.all([
+        self.pauseForStaleFlag("acc-pause-flag"),
+        self.pauseForStaleFlag("acc-pause-flag"),
+      ]);
+    });
+    await stub.tick();
+    expect(await storedPause(stub)).toBeDefined();
+    const paused = await pauseEvents("acc-pause-flag", "account_paused");
+    expect(paused).toHaveLength(1);
+    expect(paused[0]?.detail).toEqual({ code: "needs_reconnect" });
+    expect(await pauseEvents("acc-pause-flag", "account_resumed")).toHaveLength(0);
+
+    await probeDue(stub);
+    vi.restoreAllMocks();
+    fakeGraph();
+    await stub.tick();
+    expect(await pauseEvents("acc-pause-flag", "account_paused")).toHaveLength(1);
+    expect(await pauseEvents("acc-pause-flag", "account_resumed")).toHaveLength(1);
+  });
+
+  it("records one account_resumed if two calls end the same pause at once", async () => {
+    const { stub } = await pauseByRefusal("acc-pause-twice");
+    await runInDurableObject(stub, async (instance: AccountSync) => {
+      const self = instance as unknown as { unpause(): Promise<void> };
+      await Promise.all([self.unpause(), self.unpause()]);
+    });
+    expect(await storedPause(stub)).toBeUndefined();
+    expect(await pauseEvents("acc-pause-twice", "account_resumed")).toHaveLength(1);
+  });
+
+  it("records account_resumed only after the D1 flag is reset", async () => {
+    const { stub } = await pauseByRefusal("acc-pause-order");
+    await env.DB.prepare(
+      `CREATE TRIGGER keep_flag BEFORE UPDATE OF needs_reconnect ON accounts
+       WHEN NEW.needs_reconnect = 0 BEGIN SELECT RAISE(ABORT, 'flag kept'); END`,
+    ).run();
+    try {
+      await expectRejection(
+        stub.storeTokens("acc-pause-order", {
+          refreshToken: "r2",
+          accessToken: "a",
+          accessExpiresAt: Date.now() + 3_600_000,
+        }),
+      );
+    } finally {
+      await env.DB.prepare("DROP TRIGGER keep_flag").run();
+    }
+    expect(await d1Flag("acc-pause-order")).toBe(1);
+    expect(await pauseEvents("acc-pause-order", "account_resumed")).toHaveLength(0);
+  });
+
+  it("records no pause if the refused token was replaced, and no end without a pause", async () => {
+    const { stub } = await setupRule("acc-no-pause");
+    await stub.storeTokens("acc-no-pause", {
+      refreshToken: "old",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const instance = await runInDurableObject(stub, (object: AccountSync) => object);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      await instance.storeTokens("acc-no-pause", {
+        refreshToken: "new",
+        accessToken: "a2",
+        accessExpiresAt: Date.now() + 3_600_000,
+      });
+      return Response.json({ error: "invalid_grant" }, { status: 400 });
+    });
+    await expectRejection(stub.listCalendars());
+    expect(await pauseEvents("acc-no-pause", "account_paused")).toHaveLength(0);
+    expect(await pauseEvents("acc-no-pause", "account_resumed")).toHaveLength(0);
+  });
+
+  it("pauses although the pause event cannot be written", async () => {
+    await refuseAuditWrites("account_paused");
+    const { stub } = await pauseByRefusal("acc-pause-no-audit");
+    expect(await d1Flag("acc-pause-no-audit")).toBe(1);
+    expect(await storedPause(stub)).toBeDefined();
+    expect(await pauseEvents("acc-pause-no-audit", "account_paused")).toHaveLength(0);
+  });
+
+  it("reports an aborted run while the account is paused", async () => {
+    const { stub, ruleId } = await pauseByRefusal("acc-pause-abort");
+    await plantMarker(stub, ruleId);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
   });
 });
 
@@ -3565,6 +4512,7 @@ describe("changes during a cycle", () => {
 
 describe("overlapping runs", () => {
   it("writes each block once when two runs of one rule overlap", async () => {
+    atFixtureTime();
     const { stub, ruleId } = await setupRule("acc-overlap");
     await stub.storeTokens("acc-overlap", {
       refreshToken: "r",
@@ -3621,8 +4569,8 @@ describe("overlapping runs", () => {
       stub.runRule(ruleId, { dryRun: true }),
     ]);
 
-    expect(target).toHaveLength(15);
-    expect(one).toMatchObject({ dryRun: false, applied: 15 });
+    expect(target).toHaveLength(16);
+    expect(one).toMatchObject({ dryRun: false, applied: 16 });
     // The second click reports the writes of the run it joined.
     expect(two).toEqual(one);
     expect(preview).toMatchObject({ dryRun: true, applied: 0 });
@@ -3750,6 +4698,12 @@ describe("rules enabled during a cycle", () => {
 describe("buffers at the edges of the sync window", () => {
   const now = new Date();
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  // The run must see the same UTC day as the fixtures, also if the test crosses midnight.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+  });
+
   /** Minutes from the start of the current UTC day, where the sync window starts. */
   const at = (minutes: number) => new Date(midnight + minutes * 60_000);
 
@@ -3898,6 +4852,659 @@ describe("buffers at the edges of the sync window", () => {
     const params = new URL(read?.url ?? "https://x").searchParams;
     expect(params.get("startDateTime")).toBe(at(0).toISOString());
     expect(params.get("endDateTime")).toBe(at(90 * 1440).toISOString());
+  });
+});
+
+/** The start markers of an instance. */
+async function runMarkers(stub: DurableObjectStub<AccountSync>) {
+  return runInDurableObject(stub, async (_instance, state) => {
+    const markers = await state.storage.list<{ ruleId: string; runId: string; startedAt: number }>({
+      prefix: "runStarted:",
+    });
+    return [...markers.values()];
+  });
+}
+
+/** The marker of a run that died: the instance has no such run in progress. */
+async function plantMarker(
+  stub: DurableObjectStub<AccountSync>,
+  ruleId: string,
+  runId = "lost-run",
+  startedAt = Date.parse("2026-10-30T10:00:00.000Z"),
+): Promise<void> {
+  await runInDurableObject(stub, (_instance, state) =>
+    state.storage.put(`runStarted:${ruleId}:${runId}`, { ruleId, runId, startedAt }),
+  );
+}
+
+const refusedKinds = new Set<string>();
+
+/** D1 refuses audit rows of `kind` until the end of the test. */
+async function refuseAuditWrites(kind: string): Promise<void> {
+  refusedKinds.add(kind);
+  await env.DB.prepare(
+    `CREATE TRIGGER refuse_${kind} BEFORE INSERT ON audit_events WHEN NEW.kind = '${kind}'
+     BEGIN SELECT RAISE(ABORT, 'audit refused'); END`,
+  ).run();
+}
+
+async function allowAuditWrites(kind: string): Promise<void> {
+  refusedKinds.delete(kind);
+  await env.DB.prepare(`DROP TRIGGER IF EXISTS refuse_${kind}`).run();
+}
+
+afterEach(async () => {
+  for (const kind of refusedKinds) await allowAuditWrites(kind);
+});
+
+/** Storage `method` of an instance rejects for run markers until the returned function runs. */
+async function failMarkerStorage(
+  stub: DurableObjectStub<AccountSync>,
+  method: "put" | "delete",
+): Promise<() => void> {
+  let failing = true;
+  await runInDurableObject(stub, (_instance, state) => {
+    const original = state.storage[method].bind(state.storage) as (
+      ...args: unknown[]
+    ) => Promise<unknown>;
+    vi.spyOn(state.storage, method).mockImplementation(((...args: unknown[]) =>
+      failing && String(args[0]).startsWith("runStarted:")
+        ? Promise.reject(new Error("storage down"))
+        : original(...args)) as never);
+  });
+  return () => {
+    failing = false;
+  };
+}
+
+/**
+ * Run `action` while D1 throws for the statements that `broken` selects. Every instance shares
+ * `env`, so the real database goes back afterwards.
+ */
+async function whileD1Fails(
+  stub: DurableObjectStub<AccountSync>,
+  broken: (sql: string) => boolean,
+  action: () => Promise<unknown>,
+): Promise<void> {
+  const setDb = (make: (real: D1Database) => D1Database) =>
+    runInDurableObject(stub, (instance: AccountSync) => {
+      const target = instance as unknown as { env: { DB: D1Database } };
+      target.env.DB = make(target.env.DB);
+    });
+  await setDb(
+    (real) =>
+      new Proxy(real, {
+        get(object, key) {
+          if (key === "__real") return object;
+          if (key !== "prepare") return Reflect.get(object, key) as unknown;
+          return (sql: string) => {
+            if (broken(sql)) throw new Error("D1 down");
+            return object.prepare(sql);
+          };
+        },
+      }),
+  );
+  try {
+    await action();
+  } finally {
+    await setDb((proxy) => (proxy as unknown as { __real: D1Database }).__real);
+  }
+}
+
+describe("run markers", () => {
+  async function connectedRule(accountId: string) {
+    const setup = await setupRule(accountId);
+    await setup.stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    return setup;
+  }
+
+  it("leaves no marker and no abort after a run with a written audit event", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-ok");
+    fakeGraph();
+    await stub.runRule(ruleId);
+    expect(await runMarkers(stub)).toEqual([]);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+  });
+
+  it("keeps the marker of a run in progress and reports nothing for it", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-running");
+    fakeGraph();
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+    let reachedProvider = false;
+    let release = false;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      reachedProvider = true;
+      while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+      return (answer as typeof fetch)(input, init);
+    });
+
+    const run = stub.runRule(ruleId);
+    while (!reachedProvider) await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(await runMarkers(stub)).toMatchObject([{ ruleId }]);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+    expect(await runMarkers(stub)).toHaveLength(1);
+
+    release = true;
+    await run;
+    expect(await runMarkers(stub)).toEqual([]);
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+  });
+
+  it("never touches a marker in a dry run", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-dry");
+    fakeGraph();
+    await stub.runRule(ruleId, { dryRun: true });
+    expect(await runMarkers(stub)).toEqual([]);
+    expect((await auditOf(ruleId, "sync_run"))[0]?.detail).not.toHaveProperty("runId");
+
+    await plantMarker(stub, ruleId);
+    await stub.runRule(ruleId, { dryRun: true });
+    expect(await runMarkers(stub)).toMatchObject([{ runId: "lost-run" }]);
+  });
+
+  it("runs the rule and writes sync_run if the marker cannot be stored", async () => {
+    atFixtureTime();
+    const { stub, ruleId } = await connectedRule("acc-marker-put-run");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await failMarkerStorage(stub, "put");
+    fakeGraph();
+
+    const result = await stub.runRule(ruleId);
+
+    expect(result.applied).toBe(16);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("writes sync_failed for a failing run whose marker cannot be stored", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-put-fail");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await failMarkerStorage(stub, "put");
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("down", { status: 500 }),
+    );
+
+    await expectRejection(stub.runRule(ruleId));
+
+    expect(await auditOf(ruleId, "sync_failed")).toHaveLength(1);
+  });
+
+  it("removes the marker while the run still counts as running", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-order");
+    fakeGraph();
+    let runningAtRemoval: boolean | undefined;
+    await runInDurableObject(stub, (instance: AccountSync, state) => {
+      const self = instance as unknown as { runningRules: Map<string, unknown> };
+      const original = state.storage.delete.bind(state.storage) as (
+        key: string,
+      ) => Promise<boolean>;
+      vi.spyOn(state.storage, "delete").mockImplementation(((key: string) => {
+        if (String(key).startsWith("runStarted:")) {
+          runningAtRemoval = self.runningRules.has(ruleId);
+        }
+        return original(key);
+      }) as never);
+    });
+
+    await stub.runRule(ruleId);
+
+    expect(runningAtRemoval).toBe(true);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("writes no abort if sync_run is written and the marker stays", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-done-run");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const repair = await failMarkerStorage(stub, "delete");
+    fakeGraph();
+
+    await stub.runRule(ruleId);
+    const [marker] = await runMarkers(stub);
+    expect(marker).toBeDefined();
+    expect((await auditOf(ruleId, "sync_run"))[0]?.detail).toMatchObject({ runId: marker?.runId });
+
+    repair();
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("writes no abort if sync_failed is written and the marker stays", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-done-fail");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const repair = await failMarkerStorage(stub, "delete");
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("down", { status: 500 }),
+    );
+
+    await expectRejection(stub.runRule(ruleId));
+    const [marker] = await runMarkers(stub);
+    expect(marker).toBeDefined();
+    expect((await auditOf(ruleId, "sync_failed"))[0]?.detail).toMatchObject({
+      runId: marker?.runId,
+    });
+
+    repair();
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("writes sync_run_aborted once if its marker stays after the event", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-abort-twice");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await plantMarker(stub, ruleId, "lost-run", Date.now());
+    const repair = await failMarkerStorage(stub, "delete");
+
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toHaveLength(1);
+
+    repair();
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("finds an outcome that D1 dates before the clock of the instance", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-skew");
+    await env.DB.prepare(
+      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail)
+       SELECT 'default', user_id, id, ?, 'sync_run', '{"runId":"skewed-run"}'
+       FROM accounts WHERE id = 'acc-marker-skew'`,
+    )
+      .bind(ruleId)
+      .run();
+    await plantMarker(stub, ruleId, "skewed-run", Date.now() + 30_000);
+
+    await stub.tick();
+
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("keeps the marker if the outcome lookup fails, and tries again", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-lookup-fails");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await plantMarker(stub, ruleId, "lost-run", Date.now());
+
+    await whileD1Fails(
+      stub,
+      (sql) => sql.includes("json_extract"),
+      () => stub.tick(),
+    );
+
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+    expect(await runMarkers(stub)).toHaveLength(1);
+
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("keeps the marker if the lookup of a failed run fails, and the next tick reports it", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-rule-lookup");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await whileD1Fails(
+      stub,
+      (sql) => sql.includes("r.user_id AS userId"),
+      () => expectRejection(stub.runRule(ruleId)),
+    );
+
+    expect(await auditOf(ruleId, "sync_failed")).toHaveLength(0);
+    expect(await runMarkers(stub)).toHaveLength(1);
+
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("stops at the first abort event that D1 refuses", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-stop");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await plantMarker(stub, ruleId, "lost-1");
+    await plantMarker(stub, ruleId, "lost-2");
+    await refuseAuditWrites("sync_run_aborted");
+
+    await stub.tick();
+
+    const failures = error.mock.calls.filter(([message]) => message === "Audit write failed");
+    expect(failures).toHaveLength(1);
+    expect(await runMarkers(stub)).toHaveLength(2);
+  });
+
+  it("does not count the marker of a run in progress against the limit of a step", async () => {
+    const { stub } = await connectedRule("acc-marker-limit");
+    await plantMarker(stub, "a-running-rule", "current-run");
+    for (let run = 0; run < 5; run++) await plantMarker(stub, "z-lost-rule", `lost-${run}`);
+    await runInDurableObject(stub, (instance: AccountSync) => {
+      const self = instance as unknown as { runningRules: Map<string, Promise<unknown>> };
+      self.runningRules.set("a-running-rule", new Promise(() => {}));
+    });
+
+    await stub.tick();
+
+    expect(await auditOf("z-lost-rule", "sync_run_aborted")).toHaveLength(5);
+    expect(await auditOf("a-running-rule", "sync_run_aborted")).toHaveLength(0);
+    expect(await runMarkers(stub)).toMatchObject([{ runId: "current-run" }]);
+  });
+
+  it("leaves no marker and no abort after a failed run with a written failure", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-fail");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("down", { status: 500 }),
+    );
+    await expectRejection(stub.runRule(ruleId));
+    expect(await auditOf(ruleId, "sync_failed")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+  });
+
+  it("drops the marker of a run whose rule does not exist", async () => {
+    const { stub } = await connectedRule("acc-marker-no-rule");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectRejection(stub.runRule("rule-that-never-was"));
+    expect(await runMarkers(stub)).toEqual([]);
+    await stub.tick();
+    expect(await auditOf("rule-that-never-was")).toHaveLength(0);
+  });
+
+  it("keeps the marker if the sync_run write fails, and the next tick reports the abort", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-lost-run");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fakeGraph([], { source: fixtureFromTomorrow() });
+    await refuseAuditWrites("sync_run");
+
+    const result = await stub.runRule(ruleId);
+
+    expect(result.applied).toBe(16);
+    expect(await auditOf(ruleId, "sync_run")).toHaveLength(0);
+    const markers = await runMarkers(stub);
+    expect(markers).toMatchObject([{ ruleId }]);
+
+    await allowAuditWrites("sync_run");
+    await stub.tick();
+    await stub.tick();
+
+    const aborted = await auditOf(ruleId, "sync_run_aborted");
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.detail).toEqual({
+      runId: markers[0]?.runId,
+      startedAt: new Date(markers[0]?.startedAt ?? 0).toISOString(),
+    });
+    expect(aborted[0]).toMatchObject({ account_id: "acc-marker-lost-run", org_id: "default" });
+    expect(aborted[0]?.user_id).toBeTruthy();
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("keeps the marker if the sync_failed write fails, and the next tick reports the abort", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-lost-failure");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("down", { status: 500 }),
+    );
+    await refuseAuditWrites("sync_failed");
+
+    await expectRejection(stub.runRule(ruleId));
+
+    expect(await runMarkers(stub)).toHaveLength(1);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("reports an aborted run in the next alarm, before the rule runs again", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-alarm");
+    await plantMarker(stub, ruleId);
+    fakeGraph();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect((await auditOf(ruleId)).map((event) => event.kind)).toEqual([
+      "sync_run_aborted",
+      "sync_run",
+    ]);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  /** An alert webhook with fixed answers; every other request gets a 500. */
+  function alertWebhook(statuses: number[] = []) {
+    const alerts: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url !== env.ALERT_WEBHOOK_URL) return new Response("unexpected", { status: 500 });
+      const status = statuses[alerts.length] ?? 200;
+      alerts.push((JSON.parse(init?.body as string) as { text: string }).text);
+      return new Response("answer", { status });
+    });
+    return alerts;
+  }
+
+  it("alerts from the tick that writes the abort event", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-tick");
+    const alerts = alertWebhook();
+    await plantMarker(stub, ruleId);
+
+    await stub.tick();
+
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain(ruleId);
+    expect(alerts[0]).not.toContain("acc-abort-tick@example.com");
+    expect((await auditOf(ruleId, "alert_sent")).map((event) => event.detail)).toEqual([
+      { code: "run_aborted" },
+    ]);
+  });
+
+  it("alerts from the alarm that writes the abort event, before the rule runs", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-alarm");
+    const calls = fakeGraph();
+    await plantMarker(stub, ruleId);
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    const urls = calls.map((call) => call.url);
+    expect(urls[0]).toBe(env.ALERT_WEBHOOK_URL);
+    expect(urls.filter((url) => url === env.ALERT_WEBHOOK_URL)).toHaveLength(1);
+  });
+
+  it("alerts once for a rule that aborts again within the lock", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-again");
+    const alerts = alertWebhook();
+    await plantMarker(stub, ruleId, "run-1");
+    await stub.tick();
+    await plantMarker(stub, ruleId, "run-2");
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(2);
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("sends no alert for a marker whose run has an outcome", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-settled");
+    const alerts = alertWebhook();
+    const owner = await env.DB.prepare(
+      "SELECT user_id AS id FROM accounts WHERE id = 'acc-abort-settled'",
+    ).first<{ id: string }>();
+    const startedAt = Date.now() - 60_000;
+    await env.DB.prepare(
+      `INSERT INTO audit_events (org_id, user_id, rule_id, kind, detail)
+       VALUES ('default', ?, ?, 'sync_run', '{"runId":"done"}')`,
+    )
+      .bind(owner?.id, ruleId)
+      .run();
+    await plantMarker(stub, ruleId, "done", startedAt);
+    await stub.tick();
+    expect(await runMarkers(stub)).toEqual([]);
+    expect(alerts).toEqual([]);
+  });
+
+  it("retries a failed abort alert from the next tick, and not from every alarm", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-retry");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const alerts = alertWebhook([500, 200]);
+    await plantMarker(stub, ruleId);
+
+    await stub.tick();
+    expect(alerts).toHaveLength(1);
+    expect(await auditOf(ruleId, "alert_sent")).toEqual([]);
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(alerts).toHaveLength(1);
+
+    await stub.tick();
+    expect(alerts).toHaveLength(2);
+    expect(await auditOf(ruleId, "alert_sent")).toHaveLength(1);
+
+    await stub.tick();
+    expect(alerts).toHaveLength(2);
+  });
+
+  it("sends a long abort list in turns, and keeps the rest until it is sent", async () => {
+    const { stub } = await connectedRule("acc-abort-long");
+    const alerts = alertWebhook();
+    const ruleIds = Array.from({ length: 23 }, (_, index) => `long-${index}`);
+    await runInDurableObject(stub, (_instance, state) => state.storage.put("abortAlerts", ruleIds));
+
+    await stub.tick();
+    expect(alerts).toHaveLength(1);
+    expect(
+      await runInDurableObject(stub, (_instance, state) => state.storage.get("abortAlerts")),
+    ).toEqual(ruleIds.slice(20));
+
+    await stub.tick();
+    expect(alerts).toHaveLength(2);
+    expect(alerts[1]).toContain("long-22");
+    expect(alerts[1]).not.toContain("long-19");
+    expect(
+      await runInDurableObject(stub, (_instance, state) => state.storage.get("abortAlerts")),
+    ).toBeUndefined();
+  });
+
+  it("keeps the alert of an abort if the event cannot be written, and sends it once", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-noaudit");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const alerts = alertWebhook();
+    await plantMarker(stub, ruleId);
+    await refuseAuditWrites("sync_run_aborted");
+
+    await stub.tick();
+    await allowAuditWrites("sync_run_aborted");
+    await stub.tick();
+
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("drops the alerts of an account that is gone", async () => {
+    const { stub, ruleId } = await connectedRule("acc-abort-gone");
+    const alerts = alertWebhook();
+    await plantMarker(stub, ruleId);
+    await env.DB.prepare("DELETE FROM accounts WHERE id = 'acc-abort-gone'").run();
+    await stub.tick();
+    expect(alerts).toEqual([]);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("deletes the marker only after the abort event is written", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-retry");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await plantMarker(stub, ruleId);
+    await refuseAuditWrites("sync_run_aborted");
+
+    await stub.tick();
+    expect(await runMarkers(stub)).toHaveLength(1);
+
+    await allowAuditWrites("sync_run_aborted");
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("keeps the tick going and the marker if the owner lookup fails", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-lookup");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await plantMarker(stub, ruleId);
+    let tickWentOn = false;
+
+    await whileD1Fails(
+      stub,
+      (sql) => {
+        tickWentOn ||= sql.includes("SELECT needs_reconnect");
+        return sql.includes("u.org_id AS orgId");
+      },
+      () => stub.tick(),
+    );
+
+    expect(tickWentOn).toBe(true);
+    expect(await runMarkers(stub)).toHaveLength(1);
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(0);
+
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("writes one event if a tick and an alarm report the same marker at once", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-two-reports");
+    await plantMarker(stub, ruleId);
+    const report = () =>
+      runInDurableObject(stub, async (instance: AccountSync) => {
+        const self = instance as unknown as { reportAbortedRuns(id: string): Promise<void> };
+        await Promise.all([
+          self.reportAbortedRuns("acc-marker-two-reports"),
+          self.reportAbortedRuns("acc-marker-two-reports"),
+        ]);
+      });
+
+    await report();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+
+    // The shared report is over, so a later one starts anew.
+    await plantMarker(stub, ruleId, "next-lost-run");
+    await report();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(2);
+  });
+
+  it("does not lose an aborted run to a later run of the same rule", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-later-run");
+    await plantMarker(stub, ruleId);
+    fakeGraph();
+    await stub.runRule(ruleId);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
+  });
+
+  it("reports a bounded number of aborted runs per step", async () => {
+    const { stub, ruleId } = await connectedRule("acc-marker-bound");
+    for (let run = 0; run < 7; run++) await plantMarker(stub, ruleId, `lost-${run}`);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(5);
+    expect(await runMarkers(stub)).toHaveLength(2);
+    await stub.tick();
+    expect(await auditOf(ruleId, "sync_run_aborted")).toHaveLength(7);
+  });
+
+  it("keeps the abort of a deleted rule and drops a marker whose account is gone", async () => {
+    const { stub } = await connectedRule("acc-marker-gone");
+    await plantMarker(stub, "deleted-rule");
+    await stub.tick();
+    expect(await auditOf("deleted-rule", "sync_run_aborted")).toHaveLength(1);
+
+    await plantMarker(stub, "deleted-rule", "second-lost-run");
+    await env.DB.prepare("DELETE FROM accounts WHERE id = 'acc-marker-gone'").run();
+    await stub.tick();
+    expect(await auditOf("deleted-rule", "sync_run_aborted")).toHaveLength(1);
+    expect(await runMarkers(stub)).toEqual([]);
   });
 });
 

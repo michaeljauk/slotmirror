@@ -28,6 +28,7 @@ import {
   type SettingsForm,
 } from "../editor";
 import { CalendarEditorPage, type Notice } from "../pages/calendar-editor";
+import { operatorNotice } from "../operator-notice";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
@@ -59,6 +60,7 @@ async function renderPage(c: Context<AppEnv>, notice?: Notice, status: 200 | 400
       state={await loadEditorState(c.env, user.id)}
       open={(c.req.query("open") ?? "").split(",").filter(Boolean)}
       notice={notice}
+      operatorNotice={operatorNotice(c.env)}
       status={<SyncStatus outcomes={await latestRuleOutcomes(c.env.DB, user.id)} />}
     />
   );
@@ -398,6 +400,7 @@ rules.post("/direction/reset", async (c) => {
 function settingsFrom(form: FormData, defaultTitle: string, prefix = ""): SettingsForm {
   const days = Number(form.get(`${prefix}daysAhead`));
   const shown = Number(form.get(`${prefix}daysAheadShown`));
+  const skipAllDayShown = form.get(`${prefix}skipAllDayShown`);
   const text = (name: string) => {
     const value = form.get(`${prefix}${name}`);
     return typeof value === "string" ? value : "";
@@ -413,6 +416,9 @@ function settingsFrom(form: FormData, defaultTitle: string, prefix = ""): Settin
   return {
     ...([30, 90, 180, 365].includes(days) ? { daysAhead: days } : {}),
     ...(Number.isInteger(shown) && shown >= 1 && shown <= 365 ? { daysAheadShown: shown } : {}),
+    ...(skipAllDayShown === "1" || skipAllDayShown === "0"
+      ? { skipAllDayShown: skipAllDayShown === "1" }
+      : {}),
     skipAllDay: form.has(`${prefix}skipAllDay`),
     skipTentative: form.has(`${prefix}skipTentative`),
     markPrivate: form.has(`${prefix}markPrivate`),

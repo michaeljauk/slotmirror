@@ -3,6 +3,16 @@ export type DetailLevel = "busy" | "title" | "title_location" | "full";
 
 export type ShowAs = "free" | "tentative" | "busy" | "oof" | "workingElsewhere" | "unknown";
 
+/**
+ * What a block does to the calendar. `tentative` and `oof` count as blocked: Google has neither
+ * for a plain event, so a block cannot show them on every provider.
+ */
+export type BlockStatus = "blocked" | "free";
+
+export function blockStatusOf(showAs: ShowAs): BlockStatus {
+  return showAs === "free" ? "free" : "blocked";
+}
+
 /** One occurrence of an event in a source calendar, independent of the provider. */
 export interface SourceEvent {
   /**
@@ -78,6 +88,7 @@ export interface ExistingBlock {
   start: string;
   end: string;
   allDay: boolean;
+  status: BlockStatus;
 }
 
 export type SyncAction =

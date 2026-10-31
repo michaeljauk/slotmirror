@@ -19,7 +19,11 @@ const ruleOptionsFields = z.object({
   blockTitle: z._default(z.string().check(z.trim(), z.minLength(1), z.maxLength(255)), "Busy"),
   /** How many days ahead to mirror. The window moves forward every day. */
   daysAhead: z._default(z.int().check(z.minimum(1), z.maximum(365)), 90),
-  skipAllDay: z._default(z.boolean(), true),
+  /**
+   * Skip all-day events. A stored value always wins, so that a change of this default leaves rules
+   * with the field alone. An all-day event that shows as free stays out through `skipFree`.
+   */
+  skipAllDay: z._default(z.boolean(), false),
   /** Skip events that do not block time (Graph `showAs: free`, Google `transparency: transparent`). */
   skipFree: z._default(z.boolean(), true),
   skipTentative: z._default(z.boolean(), false),

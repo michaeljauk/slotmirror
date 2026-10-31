@@ -1,5 +1,6 @@
-import { AUDIT_RETENTION_DAYS, parseDetail, type ActivityRow } from "../audit";
+import { AUDIT_RETENTION_DAYS, parseDetail, type ActivityRow, type CleanupDetail } from "../audit";
 import { useI18n, type Messages } from "../i18n";
+import { tally, type CompareFailedDetail, type CompareRunDetail } from "../sync/compare";
 import type { CurrentUser } from "../users";
 import { Layout } from "./layout";
 
@@ -9,6 +10,50 @@ function formatStatusList(statuses: string): string {
     .split(",")
     .map((pair) => pair.replace(":", " ×"))
     .join(", ");
+}
+
+/** The outcome of a comparison: counts or the reason of its failure. Hashes stay in the log. */
+export function describeCompare(row: ActivityRow, t: Messages): string {
+  const detail = parseDetail(row.detail) as Partial<CompareRunDetail & CompareFailedDetail>;
+  if (row.kind === "compare_failed") {
+    const reason = detail.reason ? t.activity.compareReasons[detail.reason] : "";
+    return detail.code ? `${reason} (${detail.code})` : reason;
+  }
+  const parts: string[] = [];
+  if (detail.deviations) {
+    parts.push(
+      t.activity.compareFound(
+        detail.missing ?? 0,
+        detail.surplus ?? 0,
+        detail.mismatched ?? 0,
+        detail.duplicates ?? 0,
+      ),
+    );
+  } else if (detail.clean) {
+    parts.push(t.activity.compareClean(detail.expected ?? 0));
+  }
+  if (detail.cleared) {
+    const found = tally(detail.clearedHits?.split(",") ?? []);
+    parts.push(
+      t.activity.compareCleared(
+        detail.cleared,
+        t.activity.compareFound(found.missing, found.surplus, found.mismatched, found.duplicates),
+      ),
+    );
+  }
+  if (detail.unconfirmed) parts.push(t.activity.compareUnconfirmed(detail.unconfirmed));
+  if (detail.hitsCapped) parts.push(t.activity.compareCapped);
+  if (parts.length > 0) return parts.join(", ");
+  return detail.mode === "leftover" ? t.activity.compareNoLeftovers : t.activity.compareNothing;
+}
+
+/** The outcome of an offboarding's removal: what went, what stayed, and why. */
+function describeCleanup(row: ActivityRow, t: Messages): string {
+  const { result, removed, left } = parseDetail(row.detail) as Partial<CleanupDetail>;
+  const parts = [t.activity.cleanupRemoved(removed ?? 0)];
+  if (left) parts.push(t.activity.cleanupLeft(left));
+  if (result && result !== "removed") parts.push(t.activity.cleanupReasons[result]);
+  return parts.join(", ");
 }
 
 /** A short, content-free description of an event: counts and codes from its detail. */
@@ -24,6 +69,16 @@ function describe(row: ActivityRow, t: Messages): string {
     if (detail.statuses) parts.push(t.activity.statuses(formatStatusList(detail.statuses)));
     return parts.join(", ");
   }
+  if (row.kind === "sync_run_aborted") return t.activity.abortedDetail;
+  if (row.kind === "account_paused") return t.activity.pausedDetail(detail.code ?? "");
+  if (row.kind === "account_resumed") return t.activity.resumedDetail;
+  if (row.kind === "alert_sent") {
+    const details: Record<string, string> = t.activity.alertDetails;
+    return details[detail.code ?? ""] ?? detail.code ?? "";
+  }
+  if (row.kind === "compare_run" || row.kind === "compare_failed") return describeCompare(row, t);
+  if (row.kind === "cleanup_finished") return describeCleanup(row, t);
+  if (row.kind === "account_disconnect_failed") return t.activity.disconnectFailedDetail;
   return detail.code ?? "";
 }
 

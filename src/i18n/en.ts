@@ -21,18 +21,25 @@ export const en = {
   },
   signIn: {
     title: "Sign in",
-    lead: "Keep your calendars in sync. Others only see that you are busy.",
+    lead: "Keep your calendars in sync. By default, others only see that you are busy.",
     withProvider: (provider: string) => `Sign in with ${provider}`,
-    fineprint: "Titles, attendees and notes never leave the source calendar.",
+    fineprint:
+      "Attendees are never copied. Titles, locations and notes are copied only if a rule asks for it.",
+    googleNotice: "Google will say that the app is not verified.",
+    googleNoticeSteps: "Choose “Advanced”, then “Go to … (unsafe)”.",
   },
   accounts: {
     title: "Accounts",
     lead: "Calendars that this app reads from and writes to.",
     emptyTitle: "No account connected yet",
     emptyText: "Connect at least two calendars to mirror busy times between them.",
+    googleNotice: "Google will say that the app is not verified.",
+    googleNoticeSteps: "Choose “Advanced”, then “Go to … (unsafe)”.",
     kindGoogle: "Google Calendar",
     kindMicrosoftWork: "Microsoft 365 · work account",
     kindMicrosoftPersonal: "Microsoft 365 · personal account",
+    operatorNoticeTitle: "Who runs this deployment",
+    operatorNoticeLink: "Privacy statement",
     connectedOn: (date: string) => `connected ${date}`,
     notSynced: "Not synced yet",
     inSync: (time: string) => `In sync · ${time}`,
@@ -263,7 +270,8 @@ export const en = {
     mainCalendar: "Main calendar",
     noSource: "No calendar chosen. Turn on at least one.",
     skipAllDayTitle: "Skip all-day events",
-    skipAllDayHint: "Otherwise holidays and days off block whole days.",
+    skipAllDayHint:
+      "Otherwise holidays and days off block whole days, unless they are marked as free.",
     skipTentativeTitle: "Skip tentative events",
     skipTentativeHint: "“Maybe” answers and tentative events do not block.",
     markPrivateTitle: "Mark copies as private",
@@ -287,6 +295,7 @@ export const en = {
     title: "Privacy",
     operator: (name: string, contact: string) =>
       `This deployment of slotmirror is operated by ${name}. Contact: ${contact}.`,
+    noticeTitle: "Notice from the operator",
     operatorUnknown: "The operator of this deployment has not set a contact address.",
     intro:
       "slotmirror mirrors busy times between calendars. It is open-source software that each operator runs in their own Cloudflare account.",
@@ -347,6 +356,30 @@ export const en = {
     capAtMost: (level: string) => `At most “${level}”`,
     capsHow:
       "Change with the Worker variables MAX_DETAIL_TO_EXTERNAL and MAX_DETAIL_FROM_EXTERNAL.",
+    compareTitle: "Comparison",
+    compareLead:
+      "Checks each target calendar against its sources: blocks that are missing, left over, different or doubled.",
+    alertsTitle: "Alerts",
+    alertsLead: "Send a test message to the webhook of this deployment. One per minute.",
+    alertsOff: "This deployment has no alert webhook, so it sends no alerts.",
+    testAlertSend: "Send test alert",
+    testAlertResults: {
+      sent: "The webhook accepted the test alert.",
+      off: "This deployment has no alert webhook. Nothing was sent.",
+      failed: "The webhook did not accept the test alert. The Worker log has the reason.",
+      limited: "A test alert was requested less than a minute ago. Try again in a minute.",
+    },
+    compareStart: "Start comparison",
+    compareCounts: (started: number, open: number, failed: number) =>
+      `${started} started, ${open} still open, ${failed} failed. A calendar stays open until its comparison ends. Results appear here within minutes.`,
+    compareEmpty: "No comparison yet.",
+    compareHorizon:
+      "A comparison leaves out the all-day blocks of today and the last day of each sync window. It counts a finding only if the finding stays after a successful sync run. A comparison of the whole window also reads writable calendars without a rule: every block of slotmirror there is left over.",
+    compareModes: {
+      full: "Whole window",
+      near: "Next 7 days",
+      leftover: "Calendar without a rule",
+    },
   },
   activity: {
     title: "Activity",
@@ -364,6 +397,8 @@ export const en = {
       sign_out: "Signed out",
       account_connected: "Account connected",
       account_disconnected: "Account disconnected",
+      account_disconnect_failed: "Disconnect failed",
+      cleanup_finished: "Block removal finished",
       account_renamed: "Account renamed",
       token_refresh_failed: "Token refresh failed",
       rule_created: "Rule created",
@@ -379,6 +414,13 @@ export const en = {
       user_deleted: "User deleted",
       sync_run: "Sync run",
       sync_failed: "Sync failed",
+      sync_run_aborted: "Sync run aborted",
+      account_paused: "Account paused",
+      account_resumed: "Account resumed",
+      alert_sent: "Alert sent to the operator",
+      alert_test: "Test alert requested",
+      compare_run: "Comparison finished",
+      compare_failed: "Comparison failed",
       feed_created: "Free/busy feed created",
       feed_rotated: "Free/busy feed address renewed",
       feed_deleted: "Free/busy feed deleted",
@@ -390,6 +432,47 @@ export const en = {
     throttledCount: (count: number) => `${count} throttled, retried after the wait`,
     statuses: (list: string) => `HTTP ${list}`,
     remainingCount: (count: number) => `${count} left`,
+    abortedDetail: "Ended without a recorded result",
+    alertDetails: {
+      rule_silent: "A rule had no successful run",
+      run_aborted: "A run ended without a result",
+      check_blind: "The hourly rule check could not look at the rules",
+      compare_deviation: "A comparison confirmed deviations",
+    },
+    disconnectFailedDetail: "The blocks could not be queued for removal. Nothing changed.",
+    cleanupRemoved: (count: number) =>
+      count === 1 ? "1 block removed" : `${count} blocks removed`,
+    cleanupLeft: (count: number) => (count === 1 ? "1 block left" : `${count} blocks left`),
+    cleanupReasons: {
+      incomplete: "the provider kept failing, delete the rest by hand",
+      token_refused: "the provider refused the tokens, delete the rest by hand",
+      no_tokens: "the account has no tokens, delete the rest by hand",
+    },
+    pausedDetail: (code: string) => `Waits for a reconnect (${code})`,
+    resumedDetail: "Syncs again",
+    compareClean: (count: number) =>
+      count === 1 ? "No deviation in 1 block" : `No deviation in ${count} blocks`,
+    compareFound: (missing: number, surplus: number, mismatched: number, duplicates: number) =>
+      `${missing} missing, ${surplus} left over, ${mismatched} different, ${duplicates} doubled`,
+    compareCleared: (count: number, found: string) =>
+      `${count} found, then gone after a sync run (${found})`,
+    compareUnconfirmed: (count: number) => `${count} found once, not confirmed`,
+    compareCapped: "list cut off",
+    compareNothing: "Nothing to compare: no block wanted, none found",
+    compareNoLeftovers: "No block left over",
+    compareReasons: {
+      removal_queue: "Blocks are still being removed from this calendar",
+      token_lost: "An account refused its token",
+      paused: "An account waits for a reconnect",
+      throttled: "The provider throttled the read",
+      config_changed: "A rule changed during the comparison",
+      source_unavailable: "A source calendar cannot be read any more",
+      read_failed: "A calendar could not be read",
+      slice_too_large: "One day holds too many events to compare",
+      empty_horizon: "The sync windows are too short to compare",
+      timeout: "The comparison did not end within a day",
+      superseded: "A comparison of the whole window replaced this one",
+    },
   },
   feeds: {
     title: "Free/busy feed",
@@ -471,6 +554,40 @@ export const en = {
     doneTitle: "Your data is deleted",
     doneText: "The blocks disappear from your calendars within a few minutes.",
   },
+  oauthError: {
+    codeLabel: "Error code",
+    referenceLabel: "Reference",
+    help: "What this code means",
+    tryAgain: "Try again",
+    back: "Back",
+    consentTitle: (provider: string) => `${provider} needs permission first`,
+    consentLead: (provider: string) =>
+      `${provider} did not let slotmirror continue. You may have cancelled, or your organisation may not allow people to approve apps themselves.`,
+    consentSteps:
+      "If you cancelled, try again. If your organisation blocks the approval, send the request below to your IT administrator. After the administrator approves, try again.",
+    googleConsentSteps: "If you cancelled, try again and approve the access that Google asks for.",
+    requestTitle: "Request for your administrator",
+    copy: "Copy",
+    copied: "Copied",
+    adminRequest: (params: {
+      appName: string;
+      clientId: string;
+      permissions: string;
+      link: string;
+    }) =>
+      `Please approve the app "${params.appName}" for our Microsoft 365 organisation.\n\n` +
+      `Application (client) ID: ${params.clientId}\n` +
+      `Permissions (delegated): ${params.permissions}\n` +
+      `Purpose: it reads the busy times of calendars and writes "Busy" blocks into other calendars. Attendees are never copied. Titles, locations and notes are copied only if a rule asks for it.\n\n` +
+      `Approve for the whole organisation: ${params.link}\n` +
+      `You need the Global Administrator, Privileged Role Administrator or Cloud Application Administrator role.`,
+    adminConsentTitle: "Back from Microsoft",
+    adminConsentText:
+      "If you approved the app, people in your organisation can try again now. This page does not confirm the approval and does not sign you in.",
+    tenantTitle: "This account is not in the organisation",
+    tenantLead:
+      "Microsoft says that the account does not exist in the directory that this app signs in to. Sign in with an account of that organisation, or ask the administrator to invite you as a guest.",
+  },
   messages: {
     back: "Back to the start page",
     notAllowed: "Not allowed",
@@ -487,7 +604,9 @@ export const en = {
     signInFailed: "Sign-in failed",
     noCode: (provider: string) => `${provider} returned no authorization code.`,
     exchangeFailed: (provider: string) =>
-      `The token exchange with ${provider} failed. See the Worker logs.`,
+      `The token exchange with ${provider} failed. If you ask for help, quote the code and the reference below.`,
+    providerRefusedText: (provider: string) =>
+      `${provider} sent an error. This page shows only its code, not its text. If you ask for help, quote the code and the reference below.`,
     notAllowedToSignIn: (email: string) => `${email} may not sign in to this deployment.`,
     otherIdentity: (email: string, provider: string) =>
       `In this deployment, ${email} belongs to a different ${provider} account. Sign in with the account you used before, or ask the administrator.`,
@@ -512,8 +631,23 @@ export const en = {
   },
   /** Texts for ALERT_WEBHOOK_URL. They go to the operator, in the first locale. */
   alerts: {
+    test: (url: string) =>
+      `slotmirror: this is a test alert from the admin page. The webhook works.${url ? ` ${url}` : ""}`,
     reconnect: (provider: string, url: string) =>
       `slotmirror: a ${provider} account needs reconnecting. Its calendars do not sync until its user reconnects it. The admin page lists the affected users.${url ? ` ${url}` : ""}`,
+    silentRules: (count: number, hours: number, idle: string, failing: string, url: string) =>
+      `slotmirror: ${count} active sync ${count === 1 ? "rule" : "rules"} had no successful run for ${hours} hours. They should run every hour, and their accounts are connected.${idle ? ` No run: ${idle}.` : ""}${failing ? ` Runs with errors: ${failing}.` : ""} The activity log on the admin page shows each run.${url ? ` ${url}` : ""}`,
+    checkBlind: (reason: string, url: string) =>
+      `slotmirror: the hourly check of the sync rules cannot do its work. ${reason} Until this ends, a rule can stop without an alert.${url ? ` ${url}` : ""}`,
+    blindCauses: {
+      scanLimit: "The audit log holds too many recent rows for one check.",
+      database: "A database read failed.",
+      access: "The access settings admit no owner of an active rule.",
+    },
+    abortedRuns: (count: number, ruleIds: string, url: string) =>
+      `slotmirror: a sync run of ${count} ${count === 1 ? "rule" : "rules"} stopped before its end, for example at a platform limit. The next run can repair this by itself. Rule IDs: ${ruleIds}. The activity log on the admin page shows each run.${url ? ` ${url}` : ""}`,
+    compareDeviations: (count: number, withRules: string, leftover: string, url: string) =>
+      `slotmirror: a comparison confirmed deviations in ${count} ${count === 1 ? "calendar" : "calendars"}.${withRules ? ` These stayed after a successful run: ${withRules}.` : ""}${leftover ? ` Two scans found blocks in calendars without an active rule: ${leftover}.` : ""} The admin page shows each comparison.${url ? ` ${url}` : ""}`,
   },
 };
 

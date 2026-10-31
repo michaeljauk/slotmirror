@@ -7,7 +7,7 @@ describe("parseRuleOptions", () => {
       detailLevel: "busy",
       blockTitle: "Busy",
       daysAhead: 90,
-      skipAllDay: true,
+      skipAllDay: false,
       skipFree: true,
       skipTentative: false,
       skipDeclined: true,

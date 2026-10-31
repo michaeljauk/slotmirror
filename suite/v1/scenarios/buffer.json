@@ -1,0 +1,47 @@
+{
+  "id": "buffer",
+  "title": "A buffer widens timed blocks on both sides and leaves all-day blocks alone",
+  "covers": "buffer",
+  "expectedText": "Buffers are 15 minutes before and 10 minutes after. Tuesday is busy 09:45 to 11:10. Two close events on Wednesday give one busy time from 09:45 to 12:10. Thursday stays one full day.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "rule": { "bufferBeforeMinutes": 15, "bufferAfterMinutes": 10 },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "first-close",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "second-close",
+      "event": { "start": "week+2d@11:05Z", "end": "week+2d@12:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "all-day",
+      "event": { "start": "week+3d", "end": "week+4d" }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 4300,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@09:45Z", "week+1d@11:10Z"],
+          ["week+2d@09:45Z", "week+2d@12:10Z"]
+        ],
+        "busyDates": [["week+3d", "week+4d"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

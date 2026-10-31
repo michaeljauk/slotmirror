@@ -21,7 +21,7 @@ export default defineConfig({
     starlight({
       title: "slotmirror",
       description:
-        "Keep Microsoft 365 and Google calendars in sync as busy blocks. Self-hosted on Cloudflare Workers, free plan.",
+        "Stop getting double-booked across Microsoft 365 and Google calendars. By default only Busy leaves a calendar. Self-hosted on Cloudflare Workers, free plan.",
       logo: {
         light: "../design/logo/lockup-light-bg.svg",
         dark: "../design/logo/lockup-dark-bg.svg",

@@ -9,6 +9,7 @@ import { TokenError } from "./providers/microsoft";
 export type AuditKind =
   | "sign_in"
   | "sign_in_refused"
+  | "sign_in_reset"
   | "sign_out"
   | "account_connected"
   | "account_disconnected"
@@ -112,7 +113,8 @@ const STATIC_MESSAGES = new Set([
   "Google listed no sync token",
   "Google address is not verified",
   "Malformed ID token",
-  "ID token carries no email or preferred_username",
+  "ID token carries no verified email and no preferred_username",
+  "The rule's owner is deactivated or no longer admitted",
   "Google event time has neither date nor dateTime",
 ]);
 

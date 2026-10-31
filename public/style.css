@@ -433,6 +433,12 @@ h2 {
   color: var(--danger);
 }
 
+/* A one-button form next to a link in a table cell. */
+.inline-form {
+  display: inline;
+  margin: 0 12px 0 0;
+}
+
 .button.danger {
   color: var(--danger);
 }

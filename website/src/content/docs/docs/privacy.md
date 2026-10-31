@@ -8,7 +8,7 @@ service between your calendars and your deployment.
 
 ## What is stored
 
-- The email address of each user and, for Microsoft accounts, the tenant ID.
+- The email address of each user and, for Microsoft accounts, the tenant ID and object ID.
 - OAuth tokens for each connected account, encrypted with AES-256-GCM. The key is the secret
   `TOKEN_ENCRYPTION_KEY`.
 - The names of the calendars and the rules.

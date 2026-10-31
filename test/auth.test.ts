@@ -6,7 +6,7 @@ import { identityFromIdToken } from "../src/providers/microsoft";
 import { base64url, SESSION_COOKIE } from "../src/session";
 import { addAccount, BASE, signIn } from "./helpers";
 
-function fakeIdToken(claims: Record<string, string>): string {
+function fakeIdToken(claims: Record<string, unknown>): string {
   const encode = (value: object) => base64url(new TextEncoder().encode(JSON.stringify(value)));
   return `${encode({ alg: "none" })}.${encode(claims)}.signature`;
 }
@@ -90,7 +90,11 @@ describe("Microsoft sign-in", () => {
     mockTokenEndpoint({
       access_token: "access",
       expires_in: 3600,
-      id_token: fakeIdToken({ tid: "t1", oid: "o1", email: "stranger@example.com" }),
+      id_token: fakeIdToken({
+        tid: "t1",
+        oid: "o-stranger",
+        preferred_username: "stranger@example.com",
+      }),
     });
     const response = await exports.default.fetch(
       `${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`,
@@ -248,15 +252,46 @@ describe("Microsoft connect conflicts", () => {
 });
 
 describe("identityFromIdToken", () => {
-  it("prefers the email claim and lowercases it", () => {
-    const identity = identityFromIdToken(
-      fakeIdToken({ tid: "t", oid: "o", email: "A@B.com", preferred_username: "x@y.com" }),
-    );
-    expect(identity).toEqual({ email: "a@b.com", tenantId: "t" });
+  const claims = { tid: "t", oid: "o", email: "A@B.com", preferred_username: "X@y.com" };
+
+  it("counts the email claim as verified only with xms_edov, and lowercases it", () => {
+    expect(identityFromIdToken(fakeIdToken({ ...claims, xms_edov: true }))).toEqual({
+      provider: "microsoft",
+      email: "a@b.com",
+      tenantId: "t",
+      subject: "o",
+      addresses: ["a@b.com", "x@y.com"],
+    });
+    for (const edov of ["true", "1"]) {
+      expect(identityFromIdToken(fakeIdToken({ ...claims, xms_edov: edov }))).toMatchObject({
+        email: "a@b.com",
+      });
+    }
+    // Without the claim, or with false, the email claim does not count as verified.
+    for (const extra of [{}, { xms_edov: false }, { xms_edov: "0" }]) {
+      expect(identityFromIdToken(fakeIdToken({ ...claims, ...extra }))).toEqual({
+        provider: "microsoft",
+        email: "x@y.com",
+        tenantId: "t",
+        subject: "o",
+        addresses: ["x@y.com"],
+        unverifiedEmail: "a@b.com",
+      });
+    }
   });
 
-  it("throws without any address claim", () => {
-    expect(() => identityFromIdToken(fakeIdToken({ tid: "t", oid: "o" }))).toThrow();
+  it("does not throw on an xms_edov of an unexpected type", () => {
+    for (const edov of [1, { value: true }, null, ["true"]]) {
+      expect(identityFromIdToken(fakeIdToken({ ...claims, xms_edov: edov }))).toMatchObject({
+        email: "x@y.com",
+      });
+    }
+  });
+
+  it("throws if only an unverified email claim names the user", () => {
+    expect(() =>
+      identityFromIdToken(fakeIdToken({ tid: "t", oid: "o", email: "a@b.com" })),
+    ).toThrow();
   });
 });
 
@@ -292,7 +327,7 @@ describe("audit events of the auth routes", () => {
     mockTokenEndpoint({
       access_token: "secret-access-token",
       expires_in: 3600,
-      id_token: fakeIdToken({ tid: "t1", oid: "o9", email: "stranger@example.com" }),
+      id_token: fakeIdToken({ tid: "t1", oid: "o9", preferred_username: "stranger@example.com" }),
     });
     await exports.default.fetch(`${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`, {
       headers: { cookie: flow.cookie },
@@ -340,5 +375,316 @@ describe("audit events of the auth routes", () => {
       redirect: "manual",
     });
     expect((await auditRows("sign_out")).some((row) => row.user_id === user.id)).toBe(true);
+  });
+});
+
+/** Run a sign-in whose ID token carries these claims. */
+async function providerSignIn(provider: "microsoft" | "google", claims: Record<string, unknown>) {
+  const flow = await startFlow(`/auth/${provider}/login`);
+  mockTokenEndpoint({ access_token: "access", expires_in: 3600, id_token: fakeIdToken(claims) });
+  const response = await exports.default.fetch(
+    `${BASE}/auth/${provider}/callback?code=abc&state=${flow.state}`,
+    { headers: { cookie: flow.cookie }, redirect: "manual" },
+  );
+  vi.restoreAllMocks();
+  const cookie = /slotmirror_session=[^;]+/.exec(response.headers.get("set-cookie") ?? "")?.[0];
+  const refused = await env.DB.prepare(
+    "SELECT detail FROM audit_events WHERE kind = 'sign_in_refused' ORDER BY id DESC",
+  ).first<{ detail: string }>();
+  return {
+    status: response.status,
+    session: cookie !== undefined,
+    cookie,
+    body: await response.text(),
+    reason:
+      response.status === 403
+        ? (JSON.parse(refused?.detail ?? "{}") as { reason?: string }).reason
+        : undefined,
+  };
+}
+
+const microsoftSignIn = (claims: Record<string, unknown>) => providerSignIn("microsoft", claims);
+const googleSignIn = (email: string, sub: string) =>
+  providerSignIn("google", { sub, email, email_verified: true });
+
+const TENANT_A = "aaaaaaaa-0000-0000-0000-000000000001";
+const TENANT_B = "bbbbbbbb-0000-0000-0000-000000000002";
+const CONSUMER = "9188040d-6c67-4c5b-b112-36a304b66dad";
+
+interface UserRow {
+  id: string;
+  email: string;
+  tenant_id: string | null;
+  ms_tenant_id: string | null;
+  ms_object_id: string | null;
+  google_subject: string | null;
+}
+
+async function userRow(email: string) {
+  return env.DB.prepare(
+    "SELECT id, email, tenant_id, ms_tenant_id, ms_object_id, google_subject FROM users WHERE email = ?",
+  )
+    .bind(email)
+    .first<UserRow>();
+}
+
+/** A user row as it exists from before the binding: signed in with Microsoft, not bound yet. */
+async function legacyUser(email: string, tenantId: string | null): Promise<string> {
+  const { user } = await signIn(email);
+  await env.DB.prepare("UPDATE users SET tenant_id = ? WHERE id = ?").bind(tenantId, user.id).run();
+  return user.id;
+}
+
+/** The user ID a session cookie stands for, read from its payload. */
+function sessionUser(cookie: string | undefined): string | undefined {
+  const body = cookie?.split("=")[1]?.split(".")[0];
+  if (!body) return undefined;
+  const json = new TextDecoder().decode(
+    Uint8Array.from(atob(body.replaceAll("-", "+").replaceAll("_", "/")), (char) =>
+      char.charCodeAt(0),
+    ),
+  );
+  return (JSON.parse(json) as { userId: string }).userId;
+}
+
+describe("Microsoft identity binding", () => {
+  it("binds a user to tenant and object ID at the first sign-in", async () => {
+    const first = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-bound",
+      preferred_username: "bound@org.example",
+    });
+    expect(first.status).toBe(302);
+    expect(await userRow("bound@org.example")).toMatchObject({
+      ms_tenant_id: TENANT_A,
+      ms_object_id: "oid-bound",
+    });
+
+    const again = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-bound",
+      preferred_username: "bound@org.example",
+    });
+    expect(again).toMatchObject({ status: 302, session: true });
+  });
+
+  it("finds a bound user by tenant and object ID, whatever the address says", async () => {
+    await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-move",
+      preferred_username: "move@org.example",
+    });
+    const before = await userRow("move@org.example");
+    const result = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-move",
+      preferred_username: "moved.upn@org.example",
+    });
+    expect(result.status).toBe(302);
+    expect(sessionUser(result.cookie)).toBe(before?.id);
+    // The stored address stays; no second user appears under the new UPN.
+    expect(await userRow("move@org.example")).toMatchObject({ id: before?.id });
+    expect(await userRow("moved.upn@org.example")).toBeNull();
+  });
+
+  it("refuses a sign-in with the same address from another tenant or object", async () => {
+    await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-real",
+      preferred_username: "real@org.example",
+    });
+    const before = await userRow("real@org.example");
+
+    for (const claims of [
+      { tid: TENANT_B, oid: "oid-other", preferred_username: "real@org.example" },
+      { tid: TENANT_A, oid: "oid-other", preferred_username: "real@org.example" },
+      { tid: TENANT_B, oid: "oid-real", preferred_username: "real@org.example" },
+    ]) {
+      const result = await microsoftSignIn(claims);
+      expect(result).toMatchObject({ status: 403, session: false, reason: "identity" });
+    }
+    // The stored tenant stays the real user's.
+    expect(await userRow("real@org.example")).toEqual(before);
+  });
+
+  it("binds an unbound user through the email claim of the tenant that signed them in", async () => {
+    // Mail and UPN differ; the app registration sends no xms_edov.
+    const aliceId = await legacyUser("alice@org.example", TENANT_A);
+    const result = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-alice",
+      email: "alice@org.example",
+      preferred_username: "a.smith@org.example",
+    });
+    expect(result.status).toBe(302);
+    expect(sessionUser(result.cookie)).toBe(aliceId);
+    expect(await userRow("alice@org.example")).toMatchObject({
+      id: aliceId,
+      ms_tenant_id: TENANT_A,
+      ms_object_id: "oid-alice",
+    });
+    expect(await userRow("a.smith@org.example")).toBeNull();
+  });
+
+  it("never gives that user to the same unverified email claim from another tenant", async () => {
+    const bobId = await legacyUser("bob@org.example", TENANT_A);
+    const result = await microsoftSignIn({
+      tid: TENANT_B,
+      oid: "oid-intruder",
+      email: "bob@org.example",
+      preferred_username: "b.intruder@org.example",
+    });
+    expect(sessionUser(result.cookie)).not.toBe(bobId);
+    expect(await userRow("bob@org.example")).toMatchObject({
+      tenant_id: TENANT_A,
+      ms_object_id: null,
+    });
+  });
+
+  it("refuses an unbound admin address from an unverified email claim of another tenant", async () => {
+    await legacyUser("admin@example.com", TENANT_A);
+    const result = await microsoftSignIn({
+      tid: TENANT_B,
+      oid: "oid-mallory",
+      email: "Admin@Example.com",
+      preferred_username: "mallory@evil.example",
+    });
+    // The identity is mallory@evil.example, which the policy does not admit.
+    expect(result).toMatchObject({ status: 403, session: false, reason: "policy" });
+    expect(await userRow("admin@example.com")).toMatchObject({
+      tenant_id: TENANT_A,
+      ms_object_id: null,
+    });
+  });
+
+  it("binds a user from before the binding through preferred_username", async () => {
+    const id = await legacyUser("legacy@org.example", null);
+    const result = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-legacy",
+      preferred_username: "legacy@org.example",
+    });
+    expect(result.status).toBe(302);
+    expect(await userRow("legacy@org.example")).toMatchObject({ id, ms_object_id: "oid-legacy" });
+  });
+
+  it("never binds an existing user to a personal Microsoft account", async () => {
+    await legacyUser("personal@org.example", CONSUMER);
+    for (const claims of [
+      { tid: CONSUMER, oid: "oid-msa", preferred_username: "personal@org.example" },
+      { tid: CONSUMER, oid: "oid-msa", email: "personal@org.example", xms_edov: true },
+      { tid: CONSUMER, oid: "oid-msa", email: "personal@org.example", preferred_username: "x@y.z" },
+    ]) {
+      const result = await microsoftSignIn(claims);
+      expect(result).toMatchObject({ status: 403, session: false });
+    }
+    expect(await userRow("personal@org.example")).toMatchObject({ ms_object_id: null });
+  });
+
+  it("refuses another person's sign-in after SCIM moved a bound user to their address", async () => {
+    await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-carl",
+      preferred_username: "carl@org.example",
+    });
+    const carl = await userRow("carl@org.example");
+    const rename = await exports.default.fetch(`${BASE}/scim/v2/Users/${carl?.id}`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer test-scim-token", "content-type": "application/scim+json" },
+      body: JSON.stringify({
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        Operations: [{ op: "replace", path: "userName", value: "mallory@org.example" }],
+      }),
+    });
+    expect(rename.status).toBe(200);
+
+    const mallory = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-mallory",
+      preferred_username: "mallory@org.example",
+    });
+    expect(mallory).toMatchObject({ status: 403, session: false, reason: "identity" });
+    // A Google account on the new address does not get the row either.
+    const google = await googleSignIn("mallory@org.example", "google-mallory");
+    expect(google).toMatchObject({ status: 403, session: false, reason: "provider" });
+    expect(google.body).toContain("Microsoft");
+    // The renamed person still signs in under the new address.
+    const renamed = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-carl",
+      preferred_username: "mallory@org.example",
+    });
+    expect(renamed).toMatchObject({ status: 302, session: true });
+  });
+});
+
+describe("Google identity binding", () => {
+  it("binds the first Google sign-in and refuses another Google account later", async () => {
+    expect((await googleSignIn("gina@org.example", "sub-gina")).status).toBe(302);
+    expect(await userRow("gina@org.example")).toMatchObject({ google_subject: "sub-gina" });
+    expect(await googleSignIn("gina@org.example", "sub-gina")).toMatchObject({ status: 302 });
+    expect(await googleSignIn("gina@org.example", "sub-other")).toMatchObject({
+      status: 403,
+      session: false,
+      reason: "identity",
+    });
+  });
+
+  it("refuses a Microsoft sign-in for a user bound to Google, naming Google", async () => {
+    await googleSignIn("hank@org.example", "sub-hank");
+    const result = await microsoftSignIn({
+      tid: TENANT_A,
+      oid: "oid-hank",
+      preferred_username: "hank@org.example",
+    });
+    expect(result).toMatchObject({ status: 403, session: false, reason: "provider" });
+    expect(result.body).toContain("Google");
+    expect(await userRow("hank@org.example")).toMatchObject({ ms_object_id: null });
+  });
+
+  it("refuses a Google account for an unbound user of an Entra tenant, naming Microsoft", async () => {
+    await legacyUser("ida@org.example", TENANT_A);
+    const result = await googleSignIn("ida@org.example", "sub-ida");
+    expect(result).toMatchObject({ status: 403, session: false, reason: "provider" });
+    expect(result.body).toContain("Microsoft");
+    expect(await userRow("ida@org.example")).toMatchObject({
+      tenant_id: TENANT_A,
+      google_subject: null,
+    });
+  });
+});
+
+describe("Microsoft reconnect", () => {
+  it("reuses the account row of a mail address when the UPN differs", async () => {
+    const { user, cookie: session } = await signIn("owner@example.com");
+    await env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email, tenant_id, needs_reconnect) VALUES ('acc-mail', ?, 'microsoft', 'jane@org.example', ?, 1)",
+    )
+      .bind(user.id, TENANT_A)
+      .run();
+    const flow = await startFlow("/auth/microsoft/connect", session);
+    mockTokenEndpoint({
+      access_token: "access",
+      refresh_token: "refresh",
+      expires_in: 3600,
+      id_token: fakeIdToken({
+        tid: TENANT_A,
+        oid: "oid-jane",
+        email: "jane@org.example",
+        preferred_username: "j.doe@org.example",
+      }),
+    });
+    const response = await exports.default.fetch(
+      `${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`,
+      { headers: { cookie: `${flow.cookie}; ${session}` }, redirect: "manual" },
+    );
+    expect(response.status).toBe(302);
+    const { results } = await env.DB.prepare(
+      "SELECT id, email, needs_reconnect FROM accounts WHERE user_id = ? AND email IN ('jane@org.example', 'j.doe@org.example')",
+    )
+      .bind(user.id)
+      .all();
+    expect(results).toEqual([{ id: "acc-mail", email: "jane@org.example", needs_reconnect: 0 }]);
+    expect(await env.ACCOUNT_SYNC.getByName("acc-mail").hasTokens()).toBe(true);
   });
 });

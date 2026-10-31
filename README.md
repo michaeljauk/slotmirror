@@ -143,7 +143,7 @@ locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy k
 | --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
 | `ALLOWED_EMAILS`                  | variable | Comma-separated addresses that may sign in. For a personal deployment, your own address.   |
 | `ALLOWED_DOMAINS`                 | variable | Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team.     |
-| `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.             |
+| `ALLOWED_TENANT_IDS`              | variable | Recommended. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.          |
 | `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).      |
 | `ORG_NAME`                        | variable | Optional display name.                                                                     |
 | `TIME_ZONE`                       | variable | IANA time zone for dashboard dates and working hours, e.g. `Europe/Vienna`. Default `UTC`. |
@@ -161,7 +161,14 @@ locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy k
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook that hears when an account needs reconnecting. See below.       |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last 12
-hours; signing in again is one click with the provider.
+hours; signing in again is one click with the provider. Their rules stop at the next sync, and their
+calendars lose their push subscriptions. Blocks already written stay; delete the user on the admin
+page to remove them.
+
+If the settings admit nobody, nobody can sign in and every rule stops. This happens when a deploy
+replaces the variables with the empty ones in `wrangler.jsonc`: `wrangler deploy` sets the
+variables from the config file. Put `ALLOWED_*` and `ADMIN_EMAILS` into your Wrangler config, or
+set `"keep_vars": true` there if you manage the variables in the Cloudflare dashboard.
 
 **Org accounts** are accounts whose Entra tenant is in `ALLOWED_TENANT_IDS` or whose domain is in
 `ALLOWED_DOMAINS`. The detail caps apply between them and every other account, at every run. A
@@ -198,6 +205,27 @@ If the provider keeps failing, the removal tries again after 1 minute, 10 minute
 12 hours. After the fifth failed attempt, or at once if the provider refuses the tokens, the tokens
 are deleted and the remaining blocks stay.
 
+**Resetting a sign-in.** The first sign-in binds a user to that Microsoft or Google account. If
+someone moves to another tenant or account, an admin chooses **Reset sign-in** on the admin page.
+Their sessions end, and the account they used so far can never sign in as them again. For 24
+hours, a sign-in under a verified address of the user binds them to the new account; after that,
+the user needs another reset. A user who signed in with a personal Microsoft account before the
+binding existed needs this reset once: a personal account never binds to an existing user by
+itself. Without an admin session, run:
+
+```sh
+pnpm wrangler d1 execute DB --remote --command "UPDATE users SET refused_subjects = (
+    SELECT json_group_array(value) FROM (
+      SELECT value FROM json_each(COALESCE(users.refused_subjects, '[]'))
+      UNION ALL SELECT 'microsoft:' || users.ms_tenant_id || ':' || users.ms_object_id
+        WHERE users.ms_object_id IS NOT NULL
+      UNION ALL SELECT 'google:' || users.google_subject WHERE users.google_subject IS NOT NULL)),
+  ms_tenant_id = NULL, ms_object_id = NULL, google_subject = NULL, tenant_id = NULL,
+  session_version = session_version + 1,
+  rebind_until = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+24 hours')
+  WHERE email = 'user@example.com'"
+```
+
 For a team on Microsoft 365, Entra can manage users over SCIM 2.0: it creates them before their
 first sign-in, deactivates them when they leave, and deletes them. A deactivated user cannot sign
 in, and any open session ends at the next request. Their rules stop and their blocks are removed;
@@ -213,8 +241,13 @@ To set it up:
    `https://<your deployment>/scim/v2` and the secret token to `SCIM_TOKEN`, and test the
    connection.
 4. Under **Attribute mapping**, keep the users mapping and turn off groups. slotmirror stores
-   `userName` (the sign-in address), `externalId` and `active`, and ignores the rest.
-5. Assign the users or groups who should use slotmirror, then start provisioning.
+   `userName` (the sign-in address), `externalId` and `active`, and ignores the rest. A change of
+   `userName` ends the user's open sessions; the next sign-in uses the new address.
+5. Set `ALLOWED_TENANT_IDS` to your tenant before the first sign-in. If `userName` is the mail
+   address and differs from the user principal name, only then does a sign-in from your tenant
+   find the user that SCIM created. Without it, the user signs in as a new user under the user
+   principal name.
+6. Assign the users or groups who should use slotmirror, then start provisioning.
 
 ## Push notifications
 
@@ -426,6 +459,13 @@ flowchart LR
 - [CONTRIBUTING.md](CONTRIBUTING.md) explains the setup, commit format and pull requests.
 - [AGENTS.md](AGENTS.md) holds the project rules for AI coding agents.
 - Report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
+- Set `ALLOWED_TENANT_IDS` to restrict Microsoft sign-in to your tenants. This is the main
+  protection against other tenants and personal Microsoft accounts that claim your users'
+  addresses.
+- The first sign-in binds a user to that account: the Entra tenant and object ID, or the Google
+  account ID. Later sign-ins must use the same account, and the same provider. A personal
+  Microsoft account never takes over an existing user, and a Google account never takes over a
+  user of an Entra tenant.
 
 ## Support
 

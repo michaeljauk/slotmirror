@@ -23,7 +23,7 @@ secrets and a sign-in provider are present, every page shows a checklist of what
 | --------------------------------- | -------- | --------------------------------------------------------------------------------------------- |
 | `ALLOWED_EMAILS`                  | variable | Comma-separated addresses that may sign in. For a personal deployment, your own address.      |
 | `ALLOWED_DOMAINS`                 | variable | Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team.        |
-| `ALLOWED_TENANT_IDS`              | variable | Optional. Entra tenant IDs. Microsoft sign-ins from other tenants are refused.                |
+| `ALLOWED_TENANT_IDS`              | variable | Recommended. Entra tenant IDs. Microsoft sign-ins from other tenants are refused.             |
 | `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).         |
 | `ORG_NAME`                        | variable | Optional display name.                                                                        |
 | `TIME_ZONE`                       | variable | IANA time zone for dates in the dashboard, e.g. `Europe/Vienna`. Default `UTC`.               |

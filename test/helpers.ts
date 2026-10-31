@@ -1,18 +1,53 @@
 import { env } from "cloudflare:workers";
+import { decideAccess, DEFAULT_ORG_ID, policyFromEnv } from "../src/access";
 import { SESSION_COOKIE, signSession } from "../src/session";
-import { signInUser, type CurrentUser } from "../src/users";
+import type { CurrentUser } from "../src/users";
 
 export const BASE = "https://slotmirror.example.workers.dev";
 
-/** Sign in an address allowed by the test bindings and return the user and its session cookie. */
-export async function signIn(email: string): Promise<{ user: CurrentUser; cookie: string }> {
-  const user = await signInUser(env, { email });
-  if (!user) throw new Error(`${email} is not allowed by the test bindings`);
+/**
+ * Sign in an address allowed by the test bindings and return the user and its session cookie.
+ * The user is created or updated directly, without a provider identity, so that it stays unbound
+ * and any test may later sign it in with Microsoft or Google.
+ */
+export async function signIn(
+  email: string,
+): Promise<{ user: CurrentUser & { sessionVersion: number }; cookie: string }> {
+  const policy = policyFromEnv(env);
+  const decision = decideAccess(policy, { email });
+  if (!decision.allowed) throw new Error(`${email} is not allowed by the test bindings`);
+  const [, result] = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO orgs (id, name, policy) VALUES (?, 'Example', ?)
+       ON CONFLICT (id) DO UPDATE SET policy = excluded.policy`,
+    ).bind(DEFAULT_ORG_ID, JSON.stringify(policy)),
+    env.DB.prepare(
+      `INSERT INTO users (id, org_id, email, role, last_sign_in_at)
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       ON CONFLICT (email) DO UPDATE SET role = excluded.role,
+         last_sign_in_at = excluded.last_sign_in_at
+       WHERE users.active = 1
+       RETURNING id, org_id AS orgId, email, role, session_version AS sessionVersion`,
+    ).bind(crypto.randomUUID(), DEFAULT_ORG_ID, email, decision.role),
+  ]);
+  const user = result?.results[0] as (CurrentUser & { sessionVersion: number }) | undefined;
+  if (!user) throw new Error(`${email} is deactivated`);
   const token = await signSession(
-    { userId: user.id, exp: Math.floor(Date.now() / 1000) + 60 },
+    { userId: user.id, exp: Math.floor(Date.now() / 1000) + 60, version: user.sessionVersion },
     env.SESSION_SECRET,
   );
   return { user, cookie: `${SESSION_COOKIE}=${token}` };
+}
+
+/** A Google identity for `admitSignIn`, as the Google provider reads it from an ID token. */
+export function googleIdentity(email: string, subject = `sub-${email}`) {
+  return {
+    provider: "google" as const,
+    email,
+    tenantId: null,
+    subject,
+    addresses: [email],
+  };
 }
 
 export async function addAccount(userId: string, id: string, email: string): Promise<void> {

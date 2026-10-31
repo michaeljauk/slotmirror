@@ -1,5 +1,6 @@
 import { MAX_BUFFER_MINUTES, parseRuleOptions, type RuleOptions } from "../config";
 import { isLocale, LOCALES, messagesFor } from "../i18n";
+import { OWNER_COLUMNS, ownerAdmission, type OwnerColumns } from "../users";
 
 /** A rule with everything the runner needs, joined from D1. */
 export interface RuleContext {
@@ -8,6 +9,8 @@ export interface RuleContext {
   orgId: string;
   options: RuleOptions;
   enabled: boolean;
+  /** The owner's state: SCIM or an admin can deactivate them, the policy can stop admitting them. */
+  owner: OwnerColumns & { active: boolean };
   source: RuleEnd;
   target: RuleEnd;
 }
@@ -25,12 +28,13 @@ interface RuleEnd {
   needsReconnect: boolean;
 }
 
-interface RuleRow {
+interface RuleRow extends OwnerColumns {
   id: string;
   userId: string;
   orgId: string;
   options: string;
   enabled: number;
+  ownerActive: number;
   sourceAccountId: string;
   sourceProvider: string;
   sourceName: string | null;
@@ -49,6 +53,7 @@ interface RuleRow {
 
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
+         u.active AS ownerActive, ${OWNER_COLUMNS},
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
          sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId, sa.display_name AS sourceName,
          sa.needs_reconnect AS sourceNeedsReconnect,
@@ -57,6 +62,7 @@ const RULE_SELECT = `
          ta.needs_reconnect AS targetNeedsReconnect
   FROM rules r
   JOIN users u ON u.id = r.user_id
+  JOIN orgs o ON o.id = u.org_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
   JOIN accounts sa ON sa.id = sc.account_id
   JOIN calendars tc ON tc.id = r.target_calendar_id
@@ -69,6 +75,13 @@ function toContext(row: RuleRow): RuleContext {
     orgId: row.orgId,
     options: parseRuleOptions(row.options),
     enabled: row.enabled === 1,
+    owner: {
+      active: row.ownerActive === 1,
+      ownerOrgId: row.ownerOrgId,
+      ownerEmail: row.ownerEmail,
+      ownerTenantId: row.ownerTenantId,
+      ownerPolicy: row.ownerPolicy,
+    },
     source: {
       accountId: row.sourceAccountId,
       provider: row.sourceProvider,
@@ -121,59 +134,63 @@ export async function loadRule(db: D1Database, ruleId: string): Promise<RuleCont
 }
 
 /**
- * The rules of `ruleIds` that the alarm may run: they exist, are enabled, and their user is active.
- * A queued rule can be disabled or removed before its turn; the editor then queues the removal of
- * its blocks.
+ * The rules of `ruleIds` that the alarm may run: they exist, are enabled, their user is active, and
+ * the access policy still admits that user. A queued rule can be disabled or removed before its
+ * turn; the editor then queues the removal of its blocks.
  */
-export async function rulesRunningFromAlarm(
-  db: D1Database,
-  ruleIds: string[],
-): Promise<Set<string>> {
-  const { results } = await db
-    .prepare(
-      `SELECT r.id FROM rules r JOIN users u ON u.id = r.user_id
-       WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1 AND u.active = 1`,
-    )
+export async function rulesRunningFromAlarm(env: Env, ruleIds: string[]): Promise<Set<string>> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, ${OWNER_COLUMNS} FROM rules r JOIN users u ON u.id = r.user_id
+     JOIN orgs o ON o.id = u.org_id
+     WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1 AND u.active = 1`,
+  )
     .bind(JSON.stringify(ruleIds))
-    .all<{ id: string }>();
-  return new Set(results.map((row) => row.id));
+    .all<{ id: string } & OwnerColumns>();
+  return new Set(results.filter(ownerAdmission(env)).map((row) => row.id));
 }
 
 /**
  * Enabled rules whose target calendar belongs to the account; they run in its Durable Object.
- * Rules of a deactivated user do not run. Rules from an account that needs reconnecting would
- * only fail, so they wait until it is connected again.
+ * Rules of a deactivated user do not run, and neither do rules of a user the policy no longer
+ * admits. Rules from an account that needs reconnecting would only fail, so they wait until it is
+ * connected again.
  */
-export async function rulesTargetingAccount(db: D1Database, accountId: string): Promise<string[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT r.id FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
-       JOIN calendars sc ON sc.id = r.source_calendar_id
-       JOIN accounts sa ON sa.id = sc.account_id
-       JOIN users u ON u.id = r.user_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
-       ORDER BY r.id`,
-    )
+export async function rulesTargetingAccount(env: Env, accountId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, ${OWNER_COLUMNS} FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN accounts sa ON sa.id = sc.account_id
+     JOIN users u ON u.id = r.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
+     ORDER BY r.id`,
+  )
     .bind(accountId)
-    .all<{ id: string }>();
-  return results.map((row) => row.id);
+    .all<{ id: string } & OwnerColumns>();
+  return results.filter(ownerAdmission(env)).map((row) => row.id);
 }
 
-/** True if the rule is enabled, its user is active, and it writes into this calendar. */
+/** True if the rule's owner is active and the policy still admits them. */
+export function ownerMayRun(env: Env, rule: RuleContext): boolean {
+  return rule.owner.active && ownerAdmission(env)(rule.owner);
+}
+
+/**
+ * True if the rule is enabled, its user is active and admitted by the access policy, and it writes
+ * into this calendar.
+ */
 export async function ruleWritesInto(
-  db: D1Database,
+  env: Env,
   ruleId: string,
   remoteCalendarId: string,
 ): Promise<boolean> {
-  const row = await db
-    .prepare(
-      `SELECT 1 AS found FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
-       JOIN users u ON u.id = r.user_id
-       WHERE r.id = ? AND tc.remote_id = ? AND r.enabled = 1 AND u.active = 1`,
-    )
+  const row = await env.DB.prepare(
+    `SELECT ${OWNER_COLUMNS} FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN users u ON u.id = r.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE r.id = ? AND tc.remote_id = ? AND r.enabled = 1 AND u.active = 1`,
+  )
     .bind(ruleId, remoteCalendarId)
-    .first<{ found: number }>();
-  return row !== null;
+    .first<OwnerColumns>();
+  return row !== null && ownerAdmission(env)(row);
 }
 
 /**

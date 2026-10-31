@@ -83,9 +83,24 @@ export function AdminPage(props: {
                   </td>
                   <td>
                     {row.id === props.user.id ? null : (
-                      <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
-                        {t.admin.deleteUser}
-                      </a>
+                      <>
+                        <form
+                          method="post"
+                          action={`/admin/users/${row.id}/reset-sign-in`}
+                          class="inline-form"
+                        >
+                          <button
+                            type="submit"
+                            class="link-button quiet"
+                            title={t.admin.resetSignInHint}
+                          >
+                            {t.admin.resetSignIn}
+                          </button>
+                        </form>
+                        <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
+                          {t.admin.deleteUser}
+                        </a>
+                      </>
                     )}
                   </td>
                 </tr>

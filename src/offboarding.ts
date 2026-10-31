@@ -105,8 +105,12 @@ export async function setUserActive(
   active: boolean,
   by: Actor,
 ): Promise<void> {
-  const updated = await env.DB.prepare("UPDATE users SET active = ? WHERE id = ? AND active <> ?")
-    .bind(active ? 1 : 0, user.id, active ? 1 : 0)
+  // A deactivation also ends the sessions for good: a reactivation must not revive them.
+  const updated = await env.DB.prepare(
+    `UPDATE users SET active = ?, session_version = session_version + ?
+     WHERE id = ? AND active <> ?`,
+  )
+    .bind(active ? 1 : 0, active ? 0 : 1, user.id, active ? 1 : 0)
     .run();
   if (updated.meta.changes === 0) return;
   const { results: accounts } = await env.DB.prepare("SELECT id FROM accounts WHERE user_id = ?")

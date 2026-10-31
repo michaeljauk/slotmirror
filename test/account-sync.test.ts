@@ -1002,6 +1002,24 @@ describe("alarm queue", () => {
     expect(lookupFailed()).toBe(false);
   });
 
+  it("retries the removal of an enabled rule whose owner the policy no longer admits", async () => {
+    const { stub, ruleId, deletes } = await waitingRemoval("acc-removal-unadmitted");
+    const lookupFailed = lookupLog();
+    // Active, but outside ALLOWED_EMAILS and ALLOWED_DOMAINS: the rule never runs again.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO users (id, org_id, email, role, active) VALUES ('unadmitted-removal', 'default', 'removal-owner@former.example', 'member', 1)",
+      ),
+      env.DB.prepare(
+        "UPDATE rules SET enabled = 1, user_id = 'unadmitted-removal' WHERE id = ?",
+      ).bind(ruleId),
+    ]);
+    await runDurableObjectAlarm(stub);
+    expect(deletes()).toBe(2);
+    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
+    expect(lookupFailed()).toBe(false);
+  });
+
   it("retries the removal for a calendar the rule no longer writes into", async () => {
     const { stub, ruleId, graph } = await setupRule("acc-removal-moved").then(async (setup) => {
       await setup.stub.storeTokens("acc-removal-moved", {
@@ -2310,6 +2328,261 @@ describe("written IDs", () => {
   });
 });
 
+/**
+ * A rule whose owner the access policy no longer admits: the user row is active, but its address
+ * is outside the test policy, as after an operator removed it from ALLOWED_* variables.
+ */
+async function setupRemovedOwnerRule(accountId: string) {
+  // Creates the default org.
+  await signIn("owner@example.com");
+  const userId = `${accountId}-user`;
+  await env.DB.prepare(
+    "INSERT INTO users (id, org_id, email, role, active) VALUES (?, 'default', ?, 'member', 1)",
+  )
+    .bind(userId, `${accountId}@former.example`)
+    .run();
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, 'microsoft', ?)",
+    ).bind(accountId, userId, `${accountId}@private.example`),
+    env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Work'), (?, ?, ?, 'Test')",
+    ).bind(`${accountId}-src`, accountId, SOURCE_CAL, `${accountId}-dst`, accountId, TARGET_CAL),
+    env.DB.prepare(
+      "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options) VALUES (?, ?, ?, ?, ?)",
+    ).bind(
+      `${accountId}-rule`,
+      userId,
+      `${accountId}-src`,
+      `${accountId}-dst`,
+      JSON.stringify({ detailLevel: "full" }),
+    ),
+  ]);
+  const stub = env.ACCOUNT_SYNC.getByName(accountId);
+  await stub.storeTokens(accountId, {
+    refreshToken: "r",
+    accessToken: "a",
+    accessExpiresAt: Date.now() + 3_600_000,
+  });
+  /** Admit the owner again, as if the operator added the address back. */
+  const readmit = () =>
+    env.DB.prepare("UPDATE users SET email = ? WHERE id = ?")
+      .bind(`${accountId}@org.example`, userId)
+      .run();
+  return { stub, ruleId: `${accountId}-rule`, readmit };
+}
+
+describe("access policy in the background", () => {
+  it("runs no rule of an owner the policy no longer admits in a full cycle", async () => {
+    const { stub, ruleId, readmit } = await setupRemovedOwnerRule("acc-unadmitted");
+    const calls = fakeGraph();
+
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    // No read, no write, no watch: not a single provider call.
+    expect(calls).toEqual([]);
+    expect(await auditOf(ruleId)).toEqual([]);
+
+    // Control: the same rule runs once its owner is admitted again.
+    await readmit();
+    await stub.requestSync();
+    await runDurableObjectAlarm(stub);
+    expect(calls.some((call) => call.url.endsWith("/$batch"))).toBe(true);
+  });
+
+  it("queues no rule of such an owner on a tick between full cycles", async () => {
+    const { stub, ruleId, readmit } = await setupRemovedOwnerRule("acc-unadmitted-tick");
+    fakeGraph();
+    const queue = () =>
+      runInDurableObject(stub, (_instance, state) => state.storage.get<string[]>("ruleQueue"));
+    await runInDurableObject(stub, (_instance, state) =>
+      state.storage.put("fullCycleAt", Date.now()),
+    );
+
+    await stub.tick();
+    expect(await queue()).toBeUndefined();
+
+    await readmit();
+    await stub.tick();
+    expect(await queue()).toEqual([ruleId]);
+  });
+
+  it("keeps no watch for the calendars of such an owner", async () => {
+    const { stub, readmit } = await setupRemovedOwnerRule("acc-unadmitted-watch");
+    const calls = fakeGraph();
+
+    await stub.ensureWatches();
+    expect(calls.filter((call) => call.url.includes("/subscriptions"))).toEqual([]);
+
+    await readmit();
+    await stub.ensureWatches();
+    expect(calls.filter((call) => call.url.includes("/subscriptions")).length).toBeGreaterThan(0);
+  });
+
+  it("refuses a direct run of such an owner's rule", async () => {
+    const { stub, ruleId } = await setupRemovedOwnerRule("acc-unadmitted-run");
+    const calls = fakeGraph();
+    await expectRejection(stub.runRule(ruleId));
+    expect(calls.filter((call) => !call.url.includes("/token"))).toEqual([]);
+    const [failure] = await auditOf(ruleId, "sync_failed");
+    expect(failure?.detail).toEqual({
+      code: "The rule's owner is deactivated or no longer admitted",
+    });
+  });
+});
+
+/**
+ * Fake Graph whose target calendar keeps state: `$batch` creates and deletes change it, and its
+ * calendarView returns what is there. Source calendars return the fixture.
+ */
+function writeTrackingGraph() {
+  const [template] = fixture.value;
+  const target = new Map<string, Record<string, unknown>>();
+  const writes: string[] = [];
+  let next = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("/oauth2/v2.0/token")) {
+      return Response.json({ access_token: "a", refresh_token: "r", expires_in: 3600 });
+    }
+    if (url.includes(`/calendars/${SOURCE_CAL}`)) return Response.json({ value: fixture.value });
+    if (url.includes(`/calendars/${TARGET_CAL}/calendarView`)) {
+      return Response.json({ value: [...target.values()] });
+    }
+    if (url.endsWith("/$batch")) {
+      const { requests } = JSON.parse(init?.body as string) as {
+        requests: { id: string; method: string; url: string; body?: Record<string, unknown> }[];
+      };
+      const responses = requests.map((request) => {
+        writes.push(request.method);
+        if (request.method === "POST") {
+          const id = `block-${next++}`;
+          target.set(id, {
+            ...template,
+            ...request.body,
+            id,
+            type: "singleInstance",
+            seriesMasterId: null,
+            originalStart: null,
+          });
+          return { id: request.id, status: 201, body: { id } };
+        }
+        if (request.method === "DELETE") {
+          target.delete(decodeURIComponent(request.url.split("/").at(-1) ?? ""));
+          return { id: request.id, status: 204 };
+        }
+        return { id: request.id, status: 200 };
+      });
+      return Response.json({ responses });
+    }
+    return Response.json({ value: [] });
+  });
+  return { target, writes };
+}
+
+/** Two rules from two source calendars into one target calendar; one alarm ran the first. */
+async function secondRuleQueued(accountId: string) {
+  const { stub, ruleId } = await setupRule(accountId);
+  // An owner of its own: the tests deactivate or remove it.
+  const { user } = await signIn(`${accountId}@org.example`);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE accounts SET user_id = ? WHERE id = ?").bind(user.id, accountId),
+    env.DB.prepare("UPDATE rules SET user_id = ? WHERE id = ?").bind(user.id, ruleId),
+    env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Copy')",
+    ).bind(`${accountId}-src2`, accountId, `${SOURCE_CAL}-2`),
+    env.DB.prepare(
+      'INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options) SELECT ?, user_id, ?, target_calendar_id, \'{"detailLevel":"title"}\' FROM rules WHERE id = ?',
+    ).bind(`${accountId}-rule-2`, `${accountId}-src2`, ruleId),
+  ]);
+  await stub.storeTokens(accountId, {
+    refreshToken: "r",
+    accessToken: "a",
+    accessExpiresAt: Date.now() + 3_600_000,
+  });
+  const graph = writeTrackingGraph();
+  await stub.requestSync();
+  expect(await runDurableObjectAlarm(stub)).toBe(true);
+  const queue = await runInDurableObject(stub, (_instance, state) =>
+    state.storage.get<string[]>("ruleQueue"),
+  );
+  const [stale] = queue ?? [];
+  if (queue?.length !== 1 || !stale) throw new Error("expected one rule left in the queue");
+  return { stub, rules: [ruleId, `${accountId}-rule-2`], stale, userId: user.id, ...graph };
+}
+
+async function runAllAlarms(stub: DurableObjectStub<AccountSync>): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    if (!(await runDurableObjectAlarm(stub))) return;
+  }
+  throw new Error("alarms did not stop");
+}
+
+describe("stale queued rules", () => {
+  it("drops a queued rule after its user is deactivated: the removal runs first, then no writes", async () => {
+    const { stub, rules, stale, userId, target, writes } = await secondRuleQueued("acc-stale-off");
+    expect(target.size).toBeGreaterThan(0);
+    const runsBefore = (await auditOf(stale, "sync_run")).length;
+
+    const { setUserActive } = await import("../src/offboarding");
+    await setUserActive(env, { id: userId, orgId: "default" }, false, "scim");
+    writes.length = 0;
+    await runAllAlarms(stub);
+
+    expect(writes.filter((method) => method !== "DELETE")).toEqual([]);
+    expect(target.size).toBe(0);
+    expect(await auditOf(stale, "sync_run")).toHaveLength(runsBefore);
+    for (const ruleId of rules) expect(await auditOf(ruleId, "sync_failed")).toEqual([]);
+  });
+
+  it("drops a queued rule whose direction was turned off after its removal ran", async () => {
+    const { stub, rules, stale, target, writes } = await secondRuleQueued("acc-queued-pause");
+    // Finish the cycle, so that both rules have blocks; then the rule waits in a queue again.
+    await runAllAlarms(stub);
+    const kept = rules.find((id) => id !== stale) ?? "";
+    const tagged = async (ruleId: string) => {
+      const tag = await ruleTagFor(ruleId);
+      return [...target.values()].filter((block) =>
+        (block.singleValueExtendedProperties as { id: string; value: string }[] | undefined)?.some(
+          (property) => property.id === MARKER_PROPERTY_ID && property.value.startsWith(`${tag}.`),
+        ),
+      ).length;
+    };
+    const keptBefore = await tagged(kept);
+    expect(keptBefore).toBeGreaterThan(0);
+    expect(await tagged(stale)).toBeGreaterThan(0);
+    await runInDurableObject(stub, (_instance, state) => state.storage.put("ruleQueue", [stale]));
+
+    // The editor's "off": queue the removal, then disable the rule.
+    await stub.queueRemoval(stale, TARGET_CAL);
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(stale).run();
+    writes.length = 0;
+    await runAllAlarms(stub);
+
+    expect(writes.filter((method) => method !== "DELETE")).toEqual([]);
+    // The removal took every block of the rule that went off; the other rule keeps its blocks.
+    expect(await tagged(stale)).toBe(0);
+    expect(await tagged(kept)).toBe(keptBefore);
+    expect(target.size).toBe(keptBefore);
+    expect(await auditOf(stale, "sync_failed")).toEqual([]);
+    expect(
+      await runInDurableObject(stub, (_instance, state) => state.storage.get("ruleQueue")),
+    ).toBeUndefined();
+  });
+
+  it("drops a queued rule of an owner the policy no longer admits without recording a failure", async () => {
+    const { stub, stale, userId, writes } = await secondRuleQueued("acc-stale-policy");
+    await env.DB.prepare("UPDATE users SET email = 'gone@former.example' WHERE id = ?")
+      .bind(userId)
+      .run();
+    writes.length = 0;
+    await runAllAlarms(stub);
+
+    expect(writes).toEqual([]);
+    expect(await auditOf(stale, "sync_failed")).toEqual([]);
+  });
+});
+
 describe("accounts that need reconnecting", () => {
   /** Token endpoint that refuses every refresh token, and an alert webhook that accepts. */
   function refusingTokenEndpoint() {
@@ -3428,6 +3701,49 @@ describe("overlapping runs", () => {
     await alarm;
 
     expect(target.some((block) => block.start.dateTime.startsWith("2026-12-01T10:00"))).toBe(true);
+  });
+});
+
+describe("rules enabled during a cycle", () => {
+  it("runs a rule that was enabled again after the running cycle dropped it", async () => {
+    const { stub, ruleId } = await setupRule("acc-reenable");
+    const { cookie } = await signIn("owner@example.com");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-reenable-src2', 'acc-reenable', ?, 'Copy')",
+      ).bind(`${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) SELECT 'acc-reenable-rule-2', user_id, 'acc-reenable-src2', target_calendar_id FROM rules WHERE id = ?",
+      ).bind(ruleId),
+    ]);
+    await stub.storeTokens("acc-reenable", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    writeTrackingGraph();
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-reenable-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+
+    // A cycle is running; the first rule was paused, so its alarm drops it.
+    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(first).run();
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put("ruleQueue", [first, second]);
+      await state.storage.put("fullCycleAt", Date.now());
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await auditOf(first, "sync_run")).toEqual([]);
+
+    const enable = await exports.default.fetch(`${BASE}/rules/${first}/enable`, {
+      method: "POST",
+      headers: { cookie },
+      redirect: "manual",
+    });
+    expect(enable.status).toBe(302);
+    await runAllAlarms(stub);
+
+    expect(await auditOf(first, "sync_run")).toHaveLength(1);
   });
 });
 

@@ -215,7 +215,10 @@ async function applyChanges(
       .bind(changes.email, row.id)
       .first();
     if (taken) return scimError(c, 409, "A user with this userName exists.", "uniqueness");
-    await c.env.DB.prepare("UPDATE users SET email = ? WHERE id = ?")
+    // A new sign-in address starts with a new sign-in. Sessions of the old address end.
+    await c.env.DB.prepare(
+      "UPDATE users SET email = ?, session_version = session_version + 1 WHERE id = ?",
+    )
       .bind(changes.email, row.id)
       .run();
   }

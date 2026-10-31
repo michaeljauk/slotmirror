@@ -14,14 +14,19 @@ accounts.
 4. Under **API permissions**, add the delegated Microsoft Graph permissions `openid`, `email`,
    `profile`, `offline_access`, `User.Read` and `Calendars.ReadWrite`. Users can consent to these
    themselves, unless your tenant blocks user consent.
-5. Under **Certificates & secrets**, create a client secret. Entra shows its expiry date. Choose
+5. Optional: under **Token configuration**, add the optional claims `email` and `xms_edov` to
+   the ID token. slotmirror then signs in a user under their email address if their tenant
+   verified its domain. Without them, new users sign in under their user principal name;
+   existing users keep their address.
+6. Under **Certificates & secrets**, create a client secret. Entra shows its expiry date. Choose
    the longest lifetime the portal offers, and put the expiry date in your calendar a few weeks
    ahead. When the secret expires, token refreshes fail and the sync stops. Before that date,
    create a new secret and replace `MICROSOFT_CLIENT_SECRET` with its value. Copy the value
    when you create it: Entra shows it only once.
-6. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET` as secrets. In
+7. Set `MICROSOFT_CLIENT_ID` (the application ID) and `MICROSOFT_CLIENT_SECRET` as secrets. In
    the Cloudflare dashboard, open your Worker, **Settings**, **Variables and Secrets**. With a
    clone, you can run `pnpm wrangler secret put <NAME>` instead.
 
-For a team on Microsoft 365, also see [Organisations](../organisations/): it explains
-`ALLOWED_TENANT_IDS`, `SIGN_IN_PROVIDERS` and SCIM.
+Set `ALLOWED_TENANT_IDS` to restrict Microsoft sign-in to your tenants. For a team on Microsoft
+365, also see [Organisations](../organisations/): it explains `ALLOWED_TENANT_IDS`,
+`SIGN_IN_PROVIDERS` and SCIM.

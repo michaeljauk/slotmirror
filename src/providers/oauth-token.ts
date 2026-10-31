@@ -60,6 +60,14 @@ export function idTokenPayload(idToken: string): unknown {
 
 /** The identity a provider signed in. `tenantId` is the Entra tenant; Google has none. */
 export interface Identity {
+  provider: "microsoft" | "google";
+  /** The first verified address: the address of a new user or account. */
   email: string;
   tenantId: string | null;
+  /** The ID that never changes: Entra object ID, or Google `sub`. */
+  subject: string;
+  /** Every verified address of the identity, the preferred one first. */
+  addresses: string[];
+  /** Microsoft only: the `email` claim if no verified domain backs it. */
+  unverifiedEmail?: string;
 }

@@ -292,7 +292,7 @@ export const en = {
       "slotmirror mirrors busy times between calendars. It is open-source software that each operator runs in their own Cloudflare account.",
     storedTitle: "What is stored",
     stored: [
-      "Your email address and, for Microsoft accounts, the tenant ID, to identify you and your connected accounts.",
+      "Your email address and, for Microsoft accounts, the tenant ID and object ID, to identify you and your connected accounts.",
       "OAuth tokens for each connected account, encrypted with AES-256-GCM.",
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
@@ -323,6 +323,9 @@ export const en = {
     never: "never",
     onlyAdmins: "Only admins can open this page.",
     deleteUser: "Delete",
+    resetSignIn: "Reset sign-in",
+    resetSignInHint:
+      "Unbinds the user from their Microsoft or Google account and ends their sessions. For 24 hours, a sign-in under a verified address binds them to a new account; the previous account stays refused. After that, reset again.",
     inactive: "deactivated",
     needsReconnect: (count: number) =>
       count === 1 ? "1 needs reconnecting" : `${count} need reconnecting`,
@@ -357,6 +360,7 @@ export const en = {
     kinds: {
       sign_in: "Signed in",
       sign_in_refused: "Sign-in refused",
+      sign_in_reset: "Sign-in binding reset",
       sign_out: "Signed out",
       account_connected: "Account connected",
       account_disconnected: "Account disconnected",
@@ -470,6 +474,8 @@ export const en = {
   messages: {
     back: "Back to the start page",
     notAllowed: "Not allowed",
+    crossSiteRequest:
+      "This request came from another website. Open slotmirror directly and try again.",
     notAvailable: "Not available yet",
     errorTitle: "Something went wrong",
     errorText: "The request failed. Try again in a moment.",
@@ -483,6 +489,10 @@ export const en = {
     exchangeFailed: (provider: string) =>
       `The token exchange with ${provider} failed. See the Worker logs.`,
     notAllowedToSignIn: (email: string) => `${email} may not sign in to this deployment.`,
+    otherIdentity: (email: string, provider: string) =>
+      `In this deployment, ${email} belongs to a different ${provider} account. Sign in with the account you used before, or ask the administrator.`,
+    useOtherProvider: (email: string, provider: string) =>
+      `${email} signs in to this deployment with ${provider}. Use the ${provider} sign-in, or ask the administrator.`,
     connectFailed: "Connect failed",
     noRefreshToken: (provider: string) =>
       `${provider} returned no refresh token (offline_access missing).`,

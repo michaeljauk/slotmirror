@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
@@ -39,13 +39,14 @@ import {
   type AccountWorkHours,
 } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
-import { loadUser, type CurrentUser } from "./users";
+import { loadUser, resetSignInBinding, type CurrentUser } from "./users";
 import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
 import { isValidToken, notifyChange } from "./webhooks";
 import { deleteUser, removeAccounts } from "./offboarding";
 import { scim } from "./routes/scim";
+import { crossSiteGuard, securityHeaders } from "./request-guard";
 import { feeds } from "./routes/feeds";
 import { feedResponse, listFeeds } from "./feeds";
 import { userCalendars } from "./calendars";
@@ -53,6 +54,19 @@ import { userCalendars } from "./calendars";
 export { AccountSync } from "./account-sync";
 
 const app = new Hono<AppEnv>();
+
+const noReferrer: MiddlewareHandler<AppEnv> = async (c, next) => {
+  await next();
+  c.header("Referrer-Policy", "no-referrer");
+};
+
+// A feed address is a secret. These answers keep their stricter referrer policy: this runs after
+// the headers below, which set the default for every other answer.
+app.use("/ics/*", noReferrer);
+app.use("/feeds/*", noReferrer);
+
+// First, so that every answer of the Worker carries the headers, also errors and redirects.
+app.use("*", securityHeaders);
 
 app.get("/healthz", (c) => c.text("ok"));
 
@@ -120,6 +134,10 @@ app.use(
   }),
 );
 
+// After the language, so that a refusal speaks it. The webhooks above answer before this runs,
+// and the guard exempts them and SCIM by path as well.
+app.use("*", crossSiteGuard);
+
 // SCIM provisioning from Entra: its own bearer token, independent of sessions and the setup.
 app.route("/scim/v2", scim);
 
@@ -141,7 +159,7 @@ app.use("*", async (c, next) => {
     return render(c, <SetupPage status={status} />, 503);
   }
   const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
-  c.set("user", session ? await loadUser(c.env, session.userId) : null);
+  c.set("user", session ? await loadUser(c.env, session.userId, session.version ?? 0) : null);
   await next();
 });
 
@@ -395,6 +413,16 @@ app.post("/admin/users/:id/delete", async (c) => {
   const target = await deletableUser(c.env, user, c.req.param("id"));
   if (!target) return c.notFound();
   await deleteUser(c.env, { id: target.id, orgId: user.orgId }, "admin");
+  return c.redirect("/admin");
+});
+
+app.post("/admin/users/:id/reset-sign-in", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const target = await deletableUser(c.env, user, c.req.param("id"));
+  if (!target) return c.notFound();
+  await resetSignInBinding(c.env, { id: target.id, orgId: user.orgId }, "admin");
   return c.redirect("/admin");
 });
 

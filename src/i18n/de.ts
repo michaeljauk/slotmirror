@@ -295,7 +295,7 @@ export const de: Messages = {
       "slotmirror spiegelt Belegt-Zeiten zwischen Kalendern. Es ist Open-Source-Software, die jeder Betreiber in seinem eigenen Cloudflare-Konto betreibt.",
     storedTitle: "Was gespeichert wird",
     stored: [
-      "Deine E-Mail-Adresse und bei Microsoft-Konten die Tenant-ID, um dich und deine verbundenen Konten zu erkennen.",
+      "Deine E-Mail-Adresse und bei Microsoft-Konten die Tenant-ID und Objekt-ID, um dich und deine verbundenen Konten zu erkennen.",
       "OAuth-Tokens je verbundenem Konto, verschlüsselt mit AES-256-GCM.",
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
@@ -326,6 +326,9 @@ export const de: Messages = {
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
     deleteUser: "Löschen",
+    resetSignIn: "Anmeldung zurücksetzen",
+    resetSignInHint:
+      "Löst die Bindung an das Microsoft- oder Google-Konto und beendet die Sitzungen. 24 Stunden lang bindet eine Anmeldung unter einer bestätigten Adresse die Person an ein neues Konto; das bisherige Konto bleibt gesperrt. Danach ist ein neuer Reset nötig.",
     inactive: "deaktiviert",
     needsReconnect: (count) =>
       count === 1 ? "1 muss neu verbunden werden" : `${count} müssen neu verbunden werden`,
@@ -376,6 +379,7 @@ export const de: Messages = {
       user_deactivated: "Nutzer deaktiviert",
       user_reactivated: "Nutzer reaktiviert",
       user_deleted: "Nutzer gelöscht",
+      sign_in_reset: "Anmeldebindung zurückgesetzt",
       sync_run: "Synchronisierung",
       sync_failed: "Synchronisierung fehlgeschlagen",
       feed_created: "Frei/Belegt-Feed erstellt",
@@ -475,6 +479,8 @@ export const de: Messages = {
   messages: {
     back: "Zurück zur Startseite",
     notAllowed: "Nicht erlaubt",
+    crossSiteRequest:
+      "Diese Anfrage kam von einer anderen Website. Öffne slotmirror direkt und versuche es noch einmal.",
     notAvailable: "Noch nicht verfügbar",
     errorTitle: "Etwas ist schiefgelaufen",
     errorText: "Die Anfrage ist fehlgeschlagen. Bitte gleich noch einmal versuchen.",
@@ -489,6 +495,10 @@ export const de: Messages = {
     exchangeFailed: (provider) =>
       `Der Token-Austausch mit ${provider} ist fehlgeschlagen. Details stehen in den Worker-Logs.`,
     notAllowedToSignIn: (email) => `${email} darf sich bei dieser Installation nicht anmelden.`,
+    otherIdentity: (email, provider) =>
+      `${email} gehört in dieser Installation zu einem anderen ${provider}-Konto. Melde dich mit dem Konto an, das du bisher verwendet hast, oder frag die Verwaltung.`,
+    useOtherProvider: (email, provider) =>
+      `${email} meldet sich bei dieser Installation mit ${provider} an. Nutze die Anmeldung mit ${provider}, oder frag die Verwaltung.`,
     connectFailed: "Verbinden fehlgeschlagen",
     noRefreshToken: (provider) =>
       `${provider} hat kein Refresh-Token geliefert (offline_access fehlt).`,

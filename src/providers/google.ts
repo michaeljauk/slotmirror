@@ -85,5 +85,6 @@ const idTokenClaimsSchema = z.object({
 export function identityFromIdToken(idToken: string): Identity {
   const claims = idTokenClaimsSchema.parse(idTokenPayload(idToken));
   if (claims.email_verified !== true) throw new Error("Google address is not verified");
-  return { email: claims.email.toLowerCase(), tenantId: null };
+  const email = claims.email.toLowerCase();
+  return { provider: "google", email, tenantId: null, subject: claims.sub, addresses: [email] };
 }

@@ -82,13 +82,34 @@ const idTokenClaimsSchema = z.object({
   oid: z.string(),
   email: z.optional(z.string()),
   preferred_username: z.optional(z.string()),
+  /** Optional claim: true if the user's own tenant verified the domain of `email`. */
+  xms_edov: z.optional(z.unknown()),
 });
 
-/** Read the identity from a Microsoft ID token. */
+/**
+ * Read the identity from a Microsoft ID token.
+ *
+ * The `email` claim counts as verified only if `xms_edov` says so. App registrations send
+ * `xms_edov` only if it is added as an optional claim. `preferred_username` is verified: for a
+ * work account it is the UPN, whose domain the tenant `tid` must have verified.
+ */
 export function identityFromIdToken(idToken: string): Identity & { tenantId: string } {
   const claims = idTokenClaimsSchema.parse(idTokenPayload(idToken));
-  // Work accounts often have no `email` claim; `preferred_username` holds the sign-in name.
-  const email = (claims.email ?? claims.preferred_username ?? "").toLowerCase();
-  if (!email) throw new Error("ID token carries no email or preferred_username");
-  return { email, tenantId: claims.tid };
+  const edov = claims.xms_edov;
+  const edovTrue = edov === true || edov === "true" || edov === "1";
+  const email = claims.email?.trim().toLowerCase() || undefined;
+  const username = claims.preferred_username?.trim().toLowerCase() || undefined;
+  const addresses = [
+    ...new Set([...(edovTrue && email ? [email] : []), ...(username ? [username] : [])]),
+  ];
+  const [first] = addresses;
+  if (!first) throw new Error("ID token carries no verified email and no preferred_username");
+  return {
+    provider: "microsoft",
+    email: first,
+    tenantId: claims.tid,
+    subject: claims.oid,
+    addresses,
+    ...(email && !edovTrue ? { unverifiedEmail: email } : {}),
+  };
 }

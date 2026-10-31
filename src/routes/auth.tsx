@@ -12,7 +12,7 @@ import type { Identity, TokenResponse } from "../providers/oauth-token";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "../session";
 import { render } from "../render";
 import { refreshUserCalendars } from "../calendars";
-import { signInUser } from "../users";
+import { admitSignIn, CONSUMER_TENANT_ID } from "../users";
 import { accountSync } from "../durable";
 
 export const auth = new Hono<AppEnv>();
@@ -159,18 +159,30 @@ auth.get("/:provider/callback", async (c) => {
   }
 
   if (stored.purpose === "sign-in") {
-    const user = await signInUser(c.env, identity);
-    if (!user) {
+    const outcome = await admitSignIn(c.env, identity);
+    if ("refused" in outcome) {
       // No user exists for a refused identity; the log keeps the reason, not the address.
       await recordAudit(c.env.DB, {
         orgId: DEFAULT_ORG_ID,
         kind: "sign_in_refused",
-        detail: { reason: "policy" },
+        detail: { reason: outcome.refused },
       });
-      return message(c, 403, t.messages.notAllowed, t.messages.notAllowedToSignIn(identity.email));
+      const other: Provider = provider === "microsoft" ? "google" : "microsoft";
+      const text =
+        outcome.refused === "identity"
+          ? t.messages.otherIdentity(identity.email, label)
+          : outcome.refused === "provider"
+            ? t.messages.useOtherProvider(identity.email, PROVIDER_LABEL[other])
+            : t.messages.notAllowedToSignIn(identity.email);
+      return message(c, 403, t.messages.notAllowed, text);
     }
+    const { user } = outcome;
     const session = await signSession(
-      { userId: user.id, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS },
+      {
+        userId: user.id,
+        exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+        version: user.sessionVersion,
+      },
       c.env.SESSION_SECRET,
     );
     await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_in" });
@@ -190,6 +202,29 @@ auth.get("/:provider/callback", async (c) => {
   if (!tokens.refresh_token) {
     return message(c, 502, t.messages.connectFailed, t.messages.noRefreshToken(label));
   }
+  // A reconnect finds the user's account under any address the provider gave it before. An
+  // unverified Microsoft email claim counts only within the account's own tenant.
+  const known = [
+    ...identity.addresses,
+    ...(identity.unverifiedEmail && identity.tenantId !== CONSUMER_TENANT_ID
+      ? [identity.unverifiedEmail]
+      : []),
+  ];
+  const existing = await c.env.DB.prepare(
+    `SELECT id, email FROM accounts
+     WHERE user_id = ? AND provider = ? AND email IN (${known.map(() => "?").join(", ")})
+       AND (email <> ? OR tenant_id IS ?)
+     ORDER BY email = ? DESC LIMIT 1`,
+  )
+    .bind(
+      user.id,
+      provider,
+      ...known,
+      identity.unverifiedEmail ?? "",
+      identity.tenantId,
+      identity.email,
+    )
+    .first<{ id: string; email: string }>();
   // The WHERE clause keeps an account that belongs to another user untouched; RETURNING is then empty.
   const account = await c.env.DB.prepare(
     `INSERT INTO accounts (id, user_id, provider, email, tenant_id) VALUES (?, ?, ?, ?, ?)
@@ -197,7 +232,13 @@ auth.get("/:provider/callback", async (c) => {
        WHERE accounts.user_id = excluded.user_id
      RETURNING id`,
   )
-    .bind(crypto.randomUUID(), user.id, provider, identity.email, identity.tenantId)
+    .bind(
+      crypto.randomUUID(),
+      user.id,
+      provider,
+      existing?.email ?? identity.email,
+      identity.tenantId,
+    )
     .first<{ id: string }>();
   if (!account) {
     return message(

@@ -15,6 +15,7 @@ import {
   cleanupWindow,
   loadRule,
   originLine,
+  ownerMayRun,
   ruleWritesInto,
   rulesRunningFromAlarm,
   rulesTargetingAccount,
@@ -45,6 +46,7 @@ import {
   type FetchBudget,
 } from "./providers/fake-calendar";
 import { notifyChange, requestSyncs, SyncRequestError, webhookToken, webhookUrl } from "./webhooks";
+import { OWNER_COLUMNS, ownerAdmission, type OwnerColumns } from "./users";
 import { sendReconnectAlert } from "./alerts";
 
 export interface StoredTokens {
@@ -424,21 +426,23 @@ export class AccountSync extends DurableObject<Env> {
       return;
     }
     const { results } = await this.env.DB.prepare(
-      `SELECT r.id FROM rules r
+      `SELECT r.id, ${OWNER_COLUMNS} FROM rules r
        JOIN calendars sc ON sc.id = r.source_calendar_id
        JOIN accounts sa ON sa.id = sc.account_id
        JOIN calendars tc ON tc.id = r.target_calendar_id
        JOIN users u ON u.id = r.user_id
+       JOIN orgs o ON o.id = u.org_id
        WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
          AND (sc.watched_until IS NULL OR sc.watched_until < ?
               OR tc.watched_until IS NULL OR tc.watched_until < ?)
        ORDER BY r.id`,
     )
       .bind(accountId, now, now)
-      .all<{ id: string }>();
-    if (results.length === 0) return;
+      .all<{ id: string } & OwnerColumns>();
+    const due = results.filter(ownerAdmission(this.env)).map((row) => row.id);
+    if (due.length === 0) return;
     await this.updateQueue<string>(RULE_QUEUE_KEY, (queue) =>
-      inPrecedenceOrder([...new Set([...queue, ...results.map((row) => row.id)])]),
+      inPrecedenceOrder([...new Set([...queue, ...due])]),
     );
     this.sourceCache.clear();
     if ((await this.pendingAlarm()) === null) {
@@ -1197,6 +1201,9 @@ export class AccountSync extends DurableObject<Env> {
     if (rule.target.accountId !== this.accountId()) {
       throw new Error("A rule runs in the instance of its target account");
     }
+    if (!ownerMayRun(this.env, rule)) {
+      throw new Error("The rule's owner is deactivated or no longer admitted");
+    }
     // The rule was queued before its source account needed reconnecting. Its read would only
     // fail; it runs again in the full cycle after the reconnect. No audit entry.
     if (options.fromAlarm && rule.source.needsReconnect) {
@@ -1452,7 +1459,7 @@ export class AccountSync extends DurableObject<Env> {
   /** True if the removal's rule writes into its calendar again. If D1 fails, the removal goes on. */
   private async ruleWritesAgain(job: Removal): Promise<boolean> {
     try {
-      return await ruleWritesInto(this.env.DB, job.ruleId, job.remoteCalendarId);
+      return await ruleWritesInto(this.env, job.ruleId, job.remoteCalendarId);
     } catch (error) {
       console.error("Removal rule lookup failed", errorCode(error));
       return false;
@@ -1639,7 +1646,7 @@ export class AccountSync extends DurableObject<Env> {
       // This cycle covers every request so far. Cleared before the rule list is read: a request
       // during the read, for example for a new rule, marks again and gets one more cycle.
       await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
-      const all = await inPrecedenceOrder(await rulesTargetingAccount(this.env.DB, accountId));
+      const all = await inPrecedenceOrder(await rulesTargetingAccount(this.env, accountId));
       // Stored before the run, so that the end of the run reads the whole cycle back.
       // A tick may have queued some rules meanwhile; the full cycle still runs all of them.
       queue = await this.updateQueue<string>(RULE_QUEUE_KEY, (current) =>
@@ -1654,8 +1661,9 @@ export class AccountSync extends DurableObject<Env> {
     const notBefore =
       (await this.ctx.storage.get<Record<string, number>>(RULE_NOT_BEFORE_KEY)) ?? {};
     const due = queue.find((id) => (notBefore[id] ?? 0) <= Date.now());
-    // A rule disabled or removed while queued leaves the queue without a run and without an audit
-    // event. Its removal may be queued already, and a run would write its blocks again.
+    // A rule disabled or removed while queued, or one whose owner was deactivated or left the
+    // access policy, leaves the queue without a run and without an audit event. Its removal may be
+    // queued already, and a run would write its blocks again.
     const running = await this.rulesRunningFromAlarm(due === undefined ? queue : [due]);
     if (!running) return;
     // If every queued rule waits, a stopped one leaves the queue now instead of at its wait's end.
@@ -1758,7 +1766,7 @@ export class AccountSync extends DurableObject<Env> {
   private async rulesRunningFromAlarm(ruleIds: string[]): Promise<Set<string> | null> {
     const failures = (await this.ctx.storage.get<number>(RULE_LOOKUP_FAILURES_KEY)) ?? 0;
     try {
-      const running = await rulesRunningFromAlarm(this.env.DB, ruleIds);
+      const running = await rulesRunningFromAlarm(this.env, ruleIds);
       if (failures > 0) await this.ctx.storage.delete(RULE_LOOKUP_FAILURES_KEY);
       return running;
     } catch (error) {
@@ -1835,14 +1843,17 @@ export class AccountSync extends DurableObject<Env> {
     const url = webhookUrl(this.env, this.providerOrDefault(), accountId);
     const stored = this.storedWatches();
     const { results } = await this.env.DB.prepare(
-      `SELECT DISTINCT c.remote_id AS remoteId FROM calendars c
+      `SELECT c.remote_id AS remoteId, ${OWNER_COLUMNS} FROM calendars c
        JOIN rules r ON (r.source_calendar_id = c.id OR r.target_calendar_id = c.id)
        JOIN users u ON u.id = r.user_id
+       JOIN orgs o ON o.id = u.org_id
        WHERE c.account_id = ? AND r.enabled = 1 AND u.active = 1`,
     )
       .bind(accountId)
-      .all<{ remoteId: string }>();
-    const needed = url ? new Set(results.map((row) => row.remoteId)) : new Set<string>();
+      .all<{ remoteId: string } & OwnerColumns>();
+    // A calendar of an owner the policy no longer admits loses its watch with the next cycle.
+    const admitted = results.filter(ownerAdmission(this.env));
+    const needed = url ? new Set(admitted.map((row) => row.remoteId)) : new Set<string>();
     if (needed.size === 0 && stored.length === 0) return;
 
     const client = await this.client();

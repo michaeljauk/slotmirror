@@ -4,17 +4,17 @@ import editor from "../../../docs/images/editor.png";
 import "../styles/home.css";
 
 const repo = "https://github.com/michaeljauk/slotmirror";
-const title = "slotmirror: calendar sync that keeps up with moved meetings";
+const title = "slotmirror: stop getting double-booked across Microsoft and Google calendars";
 const description =
-  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Only Busy leaves a calendar. Runs in your own Cloudflare account, on the free plan.";
+  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. By default only Busy leaves a calendar. Runs in your own Cloudflare account, on the free plan.";
 
 // Hero sentence, two variants. No latency has been measured yet, so the live variant names no
 // number. After the measurement, replace `null` with the measured values and the conditions, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
 // That one change turns on the second variant. Never fill in a figure that was not measured.
 const latency: { p50: string; p95: string; conditions: string } | null = null;
 const heroSub = latency
-  ? `Only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies in a median of ${latency.p50} (p95: ${latency.p95}; ${latency.conditions}). It runs in your own Cloudflare account on the free plan, with no server to run.`
-  : `Only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies. It runs in your own Cloudflare account on the free plan, with no server to run. By default it mirrors the next 90 days.`;
+  ? `By default only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies in a median of ${latency.p50} (p95: ${latency.p95}; ${latency.conditions}). It runs in your own Cloudflare account on the free plan, with no server to run.`
+  : `By default only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies. It runs in your own Cloudflare account on the free plan, with no server to run. The default window is the next 90 days.`;
 
 // Links inside the site. The base comes from astro.config.mjs, the only place that sets it.
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");

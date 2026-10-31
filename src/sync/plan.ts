@@ -290,12 +290,20 @@ export interface TimeWindow {
   end: Date;
 }
 
-/** The windows of one run: sync window, target read and source read; see `planSync`. */
+/** The source read around the start of the sync window, and the markers of its events. */
+export interface EdgeRead {
+  window: TimeWindow;
+  markers: ReadonlySet<string>;
+}
+
+/** The windows of one run: sync window, target read and source reads; see `planSync`. */
 export interface PlanWindows {
   sync: TimeWindow;
   target?: TimeWindow;
   /** The wider source read of a buffered rule; a rule without a buffer reads `sync`. */
   read?: TimeWindow | undefined;
+  /** The edge read of the run, if it made one. It decides deletes only; see `planSync`. */
+  edge?: EdgeRead | undefined;
 }
 
 /** True if a block overlaps a window. All-day dates count from midnight UTC. */
@@ -313,7 +321,7 @@ const MAX_ZONE_OFFSET_MS = 14 * 60 * 60 * 1000;
  * target calendar. Each provider filters all-day events at the midnights of its own calendar's
  * time zone, but returns them as dates; see `planSync`.
  */
-function isInEveryRead(block: DesiredBlock, read: TimeWindow): boolean {
+function isInEveryRead(block: { start: string; end: string }, read: TimeWindow): boolean {
   return (
     Date.parse(block.start) + MAX_ZONE_OFFSET_MS < read.end.getTime() &&
     Date.parse(block.end) - MAX_ZONE_OFFSET_MS > read.start.getTime()
@@ -325,11 +333,14 @@ function isInEveryRead(block: DesiredBlock, read: TimeWindow): boolean {
  * window only stands in for a desired block outside it too, so that the wider target read changes
  * nothing for timed blocks inside the window. A buffered rule reads the source in `windows.read`,
  * so a timed block in that read stands in too: it moves with its buffer, in and out of the window.
+ * A block that ends at the start of the window stands in too. Its event moved into the window, and
+ * no later run can reach the block: it would stay at the old time next to the new block.
  */
 function standsIn(existing: ExistingBlock, desired: DesiredBlock, windows: PlanWindows): boolean {
   if (existing.allDay || overlaps(existing, windows.sync) || !overlaps(desired, windows.sync)) {
     return true;
   }
+  if (endsAtStart(existing, windows.sync)) return true;
   return windows.read !== undefined && overlaps(existing, windows.read);
 }
 
@@ -343,6 +354,40 @@ function isInMarginOnly(block: DesiredBlock, windows: PlanWindows): boolean {
     Date.parse(block.start) <= windows.read.end.getTime() &&
     Date.parse(block.end) >= windows.read.start.getTime()
   );
+}
+
+/** True if a block ends exactly at the start of a window, so that it lies outside it. */
+export function endsAtStart(block: { end: string }, window: TimeWindow): boolean {
+  return Date.parse(block.end) === window.start.getTime();
+}
+
+/**
+ * The blocks that an edge read can show as gone: they end at the start of the sync window, and the
+ * run wants no block with their marker. Without such a block, a run needs no edge read.
+ */
+export function blocksAtEdge(
+  desired: DesiredBlock[],
+  existing: ExistingBlock[],
+  sync: TimeWindow,
+): ExistingBlock[] {
+  const wanted = new Set(desired.map((block) => block.marker));
+  return existing.filter((block) => !wanted.has(block.marker) && endsAtStart(block, sync));
+}
+
+/**
+ * True if the edge read of the run shows that the source event of a block is gone. That also holds
+ * for an event that left the read, for example a shortened multi-day event or an all-day event
+ * moved to an earlier date. The delete is wanted: the block shows a date on which the event no
+ * longer is, and no later run could correct it.
+ *
+ * An event that a filter leaves out counts as existing, so its block stays. At the next midnight
+ * UTC the block no longer ends at the start of the window. No run deletes it after that, even
+ * after the event is deleted, so the block stays for good.
+ */
+function isGoneAtEdge(block: ExistingBlock, windows: PlanWindows): boolean {
+  const { edge, sync } = windows;
+  if (!edge || !endsAtStart(block, sync) || edge.markers.has(block.marker)) return false;
+  return block.allDay ? isInEveryRead(block, edge.window) : overlaps(block, edge.window);
 }
 
 /**
@@ -359,23 +404,26 @@ function isInMarginOnly(block: DesiredBlock, windows: PlanWindows): boolean {
  * is wider than `windows.sync`, and the plan then works as follows:
  * - It creates an all-day block outside the sync window only if every target read returns it, so
  *   that the next run finds it. Without `windows.target`, it creates no such block.
- * - It never deletes a block outside the sync window for a missing source event. The source read
- *   may not return the event, whatever its zone.
- * - A timed block outside the sync window stands in for no desired block inside it; see `standsIn`.
+ * - It deletes a block outside the sync window for a missing source event only by `windows.edge`.
+ *   The source read may not return the event, whatever its zone.
+ * - A timed block outside the sync window stands in for no desired block inside it, unless it ends
+ *   at the start of the window; see `standsIn`.
  *
- * Known limitation: the plan cannot tell "the source read did not return the event" from "the
- * event is gone". So some blocks outside the sync window stay for good:
- * - Source and target at UTC-8: if the user deletes today's all-day event between 00:00 and
- *   08:00 UTC, its block stays. Earlier versions deleted it.
- * - After a rule is deleted, `cleanupWindow` starts at 00:00 UTC. In a target east of UTC, it
- *   does not return the all-day block of the day before, so that block stays.
- * - A block that ends exactly at 00:00 UTC lies outside the sync window and is never deleted.
- * A possible follow-up: read the source one day wider too, and delete an outside block only if
- * the source read returns its date for every time zone.
+ * The source read of the sync window cannot tell "the read did not return the event" from "the
+ * event is gone". For example, at UTC-8 today's all-day date lies before the sync window between
+ * 00:00 and 08:00 UTC. A block that ends exactly at 00:00 UTC lies outside the window too.
+ * `windows.edge` tells the two apart. It is a second source read, see `edgeReadWindow`, and it
+ * returns the date of a block for every time zone. The plan deletes a block that ends at the start
+ * of the sync window only if that read does not return its event. A read over the whole window
+ * cannot do this: it would return dates that this run must not write. So the edge read decides
+ * deletes only, and it counts an event that a filter leaves out as an existing event. Without
+ * `windows.edge`, for example after a failed edge read, such a block stays for this run. The next
+ * run reads again, until the next midnight UTC. After that, no run deletes the block.
+ * Older blocks stay as a record, and a block at the end of the window waits until it is inside.
  *
  * `windows.read` is the window of the source read of a buffered rule: the sync window with the
  * largest buffer added on each side, so that a block that reaches into the sync window has its
- * event in the read. A rule without a buffer passes no `windows.read`.
+ * event in the read. A rule without a buffer passes no `windows.read`, whatever `windows.edge` is.
  * The read margin can return an event whose block, with a small buffer, stays outside the sync
  * window. The plan writes no such block, as if the read had not returned the event. The one
  * exception: its block reaches into the sync window now, for example before a lower buffer. Then
@@ -425,7 +473,7 @@ export function planSync(
   for (const orphans of existingByMarker.values()) {
     for (const orphan of orphans) {
       // Outside the sync window, the source read may not return the event of the block.
-      if (windows && !overlaps(orphan, windows.sync)) continue;
+      if (windows && !overlaps(orphan, windows.sync) && !isGoneAtEdge(orphan, windows)) continue;
       actions.push({ kind: "delete", targetId: orphan.targetId, marker: orphan.marker });
     }
   }
@@ -439,4 +487,14 @@ export function planSync(
       unchanged,
     },
   };
+}
+
+/**
+ * The deletes of a plan that remove an extra block of a wanted event. `planSync` deletes a block
+ * with the marker of a wanted event only as a duplicate; other deletes have no wanted event.
+ */
+export function countDuplicates(plan: SyncPlan, desired: DesiredBlock[]): number {
+  const wanted = new Set(desired.map((block) => block.marker));
+  return plan.actions.filter((action) => action.kind === "delete" && wanted.has(action.marker))
+    .length;
 }

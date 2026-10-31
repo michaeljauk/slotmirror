@@ -3,7 +3,9 @@
   "name": "slotmirror",
   "main": "src/index.tsx",
   "compatibility_date": "2026-10-25",
-  "observability": { "enabled": true },
+  // Invocation logs record the request URL, and feed and OAuth URLs carry tokens or codes. `console`
+  // output is a separate kind of log and stays in Workers Logs.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
   "upload_source_maps": true,
   "assets": { "directory": "./public" },
   "d1_databases": [

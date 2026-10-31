@@ -52,6 +52,31 @@ pnpm --filter website dev
 pnpm --filter website build
 ```
 
+## List what the audit log holds
+
+`pnpm trial:report` reads the `rules` and `audit_events` tables and prints a plain list. It shows,
+for each active rule, the time since the last successful run, runs that held duplicates twice in
+a row, aborted runs and account pauses. It also lists alerts, comparisons and audit codes that
+the script does not know. It makes no judgement: read the list and decide.
+
+```sh
+pnpm trial:report                                  # local database, last 7 days
+pnpm trial:report --remote --since 3d              # deployed database
+pnpm trial:report --remote --config wrangler.local.jsonc
+```
+
+- The script sends `SELECT` statements only. A test enforces this.
+- Without `--remote` it reads the local database. `--remote` counts against the D1 read quota, so
+  the audit read has a period (`--since`, default `7d`; also `72h` or a date) and a row limit
+  (`--limit`, default 5000).
+- `--config` goes to wrangler. `--db` names the database or binding (default `DB`).
+- A successful run is not a dry run and has `failed` = 0 and `remaining` = 0. If the period holds
+  no such run for a rule, the list says so and gives the facts: no run, only dry runs, or runs
+  without success.
+- A rule shows a pause when its source or its target account needs a reconnect.
+- The output holds rule and account IDs, a short hash of each calendar ID, times, numbers and
+  error codes. It holds no event content and no addresses.
+
 ## Contributing
 
 [CONTRIBUTING.md](https://github.com/michaeljauk/slotmirror/blob/main/CONTRIBUTING.md) explains

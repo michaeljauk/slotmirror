@@ -1,6 +1,7 @@
 import { GoogleApiError } from "./providers/google-calendar";
 import { GraphError } from "./providers/graph-calendar";
 import { TokenError } from "./providers/microsoft";
+import { parseProviderErrorMessage } from "./sync/throttle";
 
 /**
  * The audit log answers "who did what, and did the sync work". It stores IDs, times, counts and
@@ -13,6 +14,8 @@ export type AuditKind =
   | "sign_out"
   | "account_connected"
   | "account_disconnected"
+  | "account_disconnect_failed"
+  | "cleanup_finished"
   | "account_renamed"
   | "token_refresh_failed"
   | "rule_created"
@@ -28,17 +31,34 @@ export type AuditKind =
   | "user_deleted"
   | "sync_run"
   | "sync_failed"
+  | "sync_run_aborted"
+  | "account_paused"
+  | "account_resumed"
+  | "alert_sent"
+  | "alert_test"
+  | "compare_run"
+  | "compare_failed"
   | "feed_created"
   | "feed_rotated"
   | "feed_deleted";
 
+/** How the removal of an offboarding ended. */
+export type CleanupResult = "removed" | "incomplete" | "token_refused" | "no_tokens";
+
+/** Detail of a `cleanup_finished` event. `left` is the count of the last step that could count. */
+export type CleanupDetail = { result: CleanupResult; removed: number; left?: number };
+
 /** Detail of a `sync_run` event. */
 export interface SyncRunDetail {
+  /** ID of the run, as in its start marker. A dry run has no marker and no ID. */
+  runId?: string;
   dryRun: boolean;
   create: number;
   update: number;
   delete: number;
   unchanged: number;
+  /** Extra blocks of a wanted event that the run planned to delete; part of `delete`. */
+  duplicates: number;
   applied: number;
   failed: number;
   remaining: number;
@@ -46,6 +66,8 @@ export interface SyncRunDetail {
   throttled: number;
   /** Status and reason of failed and throttled actions, e.g. "429 ApplicationThrottled:13". */
   statuses: string;
+  /** Edge reads that failed, so blocks at the start of the window stayed; see `planSync`. */
+  edgeReadsFailed: number;
   durationMs: number;
 }
 
@@ -60,6 +82,12 @@ export interface AuditEvent {
 
 /** Audit rows older than this many days are deleted by the cron handler. */
 export const AUDIT_RETENTION_DAYS = 90;
+
+/** Audit rows that one lookup of a run's outcome reads at most. */
+export const RUN_OUTCOME_SCAN_ROWS = 500;
+
+/** A lookup starts this long before a run's start: the instance and D1 have different clocks. */
+const RUN_OUTCOME_SKEW_MS = 60_000;
 
 /** Rows shown on an activity page. */
 export const ACTIVITY_LIMIT = 100;
@@ -92,11 +120,73 @@ export function auditStatement(
 
 /** Write one event. Never throws: a broken log must not break a sync or a sign-in. */
 export async function recordAudit(db: D1Database, event: AuditEvent): Promise<void> {
+  await recordAuditChecked(db, event);
+}
+
+/**
+ * `recordAudit` for a caller that must know the outcome. Returns true only if D1 reports a new row.
+ */
+export async function recordAuditChecked(db: D1Database, event: AuditEvent): Promise<boolean> {
   try {
-    await auditStatement(db, event).run();
+    const { meta } = await auditStatement(db, event).run();
+    return meta.changes > 0;
   } catch (error) {
     console.error("Audit write failed", event.kind, ...errorLogFields(error));
+    return false;
   }
+}
+
+/** The start of a run, as far as a lookup of its outcome needs it. */
+export interface RunStart {
+  ruleId: string;
+  runId: string;
+  /** Unix ms. */
+  startedAt: number;
+}
+
+/**
+ * The lookup of one run's outcome event. It walks the index on user and time from the start of the
+ * run and stops after `RUN_OUTCOME_SCAN_ROWS` rows. If a run's event lies further on, the run
+ * counts as without an outcome. A result event follows the start of its run within minutes, and a
+ * marker waits at most one tick, unless D1 stays down.
+ */
+export function runOutcomeStatement(
+  db: D1Database,
+  userId: string,
+  { ruleId, runId, startedAt }: RunStart,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `SELECT ?1 AS runId FROM (
+         SELECT rule_id, kind, detail FROM audit_events
+         WHERE user_id = ?2 AND created_at >= ?3
+         ORDER BY created_at
+         LIMIT ?4
+       )
+       WHERE rule_id = ?5
+         AND kind IN ('sync_run', 'sync_failed', 'sync_run_aborted')
+         AND json_extract(detail, '$.runId') = ?1
+       LIMIT 1`,
+    )
+    .bind(
+      runId,
+      userId,
+      new Date(startedAt - RUN_OUTCOME_SKEW_MS).toISOString(),
+      RUN_OUTCOME_SCAN_ROWS,
+      ruleId,
+    );
+}
+
+/** The IDs among `runs` with an outcome event. One batch is one subrequest. Throws on error. */
+export async function runsWithOutcome(
+  db: D1Database,
+  userId: string,
+  runs: RunStart[],
+): Promise<Set<string>> {
+  const results = await db.batch<{ runId: string }>(
+    runs.map((run) => runOutcomeStatement(db, userId, run)),
+  );
+  return new Set(results.flatMap(({ results: rows }) => rows.map((row) => row.runId)));
 }
 
 /**
@@ -206,6 +296,11 @@ export function errorCode(error: unknown): string {
       // A TokenError that crossed the boundary: its message is its code.
       const code = safeCode(error);
       if (code && error.message.startsWith(code)) return `token_${code}`;
+      // A provider error that crossed the boundary: the same code as before it crossed.
+      const crossed = parseProviderErrorMessage(error.message);
+      if (crossed) {
+        return withReason(`${crossed.provider.toLowerCase()}_${crossed.status}`, crossed.reason);
+      }
       return safeMessage(error) ?? code ?? "Error";
     }
     return error.name;
@@ -278,6 +373,40 @@ export async function orgActivity(
       `SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, u.email
        FROM audit_events e LEFT JOIN users u ON u.id = e.user_id
        WHERE e.org_id = ? ORDER BY e.created_at DESC, e.id DESC LIMIT ?`,
+    )
+    .bind(orgId, limit)
+    .all<ActivityRow>();
+  return results;
+}
+
+/** Calendars per mode that the admin page shows the last comparison of. */
+export const COMPARE_LIMIT = 20;
+
+/**
+ * The latest comparison per calendar and mode of an org. Its own query: hourly `sync_run` rows push
+ * a comparison out of the rows of `orgActivity`. The limit applies per mode: there are more daily
+ * comparisons than full ones, and they must not push the full ones out. It reads the org's rows of
+ * the retention period through `audit_events_org_created`, once per view of the admin page.
+ */
+export async function latestCompares(
+  db: D1Database,
+  orgId: string,
+  limit = COMPARE_LIMIT,
+): Promise<ActivityRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, kind, detail, createdAt, email FROM (
+         SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, a.email,
+                ROW_NUMBER() OVER (
+                  PARTITION BY json_extract(e.detail, '$.mode')
+                  ORDER BY e.created_at DESC, e.id DESC) AS position
+         FROM audit_events e LEFT JOIN accounts a ON a.id = e.account_id
+         WHERE e.id IN (
+           SELECT MAX(id) FROM audit_events
+           WHERE org_id = ? AND kind IN ('compare_run', 'compare_failed')
+           GROUP BY account_id, json_extract(detail, '$.calendarId'),
+                    json_extract(detail, '$.mode')))
+       WHERE position <= ? ORDER BY createdAt DESC, id DESC`,
     )
     .bind(orgId, limit)
     .all<ActivityRow>();

@@ -16,7 +16,12 @@ import {
   type BatchResult,
 } from "../sync/throttle";
 import { cleanupWindow } from "../sync/rules";
-import type { ExistingBlock, SourceEvent, SyncAction } from "../sync/types";
+import {
+  blockStatusOf,
+  type ExistingBlock,
+  type SourceEvent,
+  type SyncAction,
+} from "../sync/types";
 import type {
   CalendarClient,
   CalendarInfo,
@@ -25,6 +30,13 @@ import type {
   TimeWindow,
   Watch,
 } from "./calendar-client";
+import {
+  BATCH_TIMEOUT_MS,
+  CALL_TIMEOUT_MS,
+  providerFetch,
+  TIMEOUT_REASON,
+  TIMEOUT_STATUS,
+} from "./provider-fetch";
 
 const API = "https://www.googleapis.com/calendar/v3";
 const BATCH_URL = "https://www.googleapis.com/batch/calendar/v3";
@@ -80,15 +92,20 @@ export class GoogleCalendar implements CalendarClient {
   /** Google accepts up to 1000 calls in one batch and recommends staying at or below 50. */
   readonly batchLimit = 50;
 
-  constructor(private readonly accessToken: string) {}
+  constructor(
+    private readonly accessToken: string,
+    /** Called for every read request, so for every page; see `calendarClient`. */
+    private readonly onRead: () => void = () => {},
+  ) {}
 
-  async listCalendars(): Promise<CalendarInfo[]> {
+  async listCalendars({ complete = false }: { complete?: boolean } = {}): Promise<CalendarInfo[]> {
     const calendars: CalendarInfo[] = [];
     const items: z.infer<typeof calendarListSchema>["items"] = [];
     let ownerAddress: string | null = null;
     let pageToken: string | undefined;
     do {
       const params = new URLSearchParams({ maxResults: "250", minAccessRole: "reader" });
+      if (complete) params.set("showHidden", "true");
       if (pageToken) params.set("pageToken", pageToken);
       const page = calendarListSchema.parse(
         await this.get(`${API}/users/me/calendarList?${params.toString()}`),
@@ -136,18 +153,25 @@ export class GoogleCalendar implements CalendarClient {
     window: TimeWindow,
     ruleTags: readonly string[],
   ): Promise<ExistingBlock[]> {
+    return (await this.allBlocks(calendarId, window)).filter((block) =>
+      ruleTags.includes(block.ruleTag),
+    );
+  }
+
+  async allBlocks(calendarId: string, window: TimeWindow): Promise<ExistingBlock[]> {
     const blocks: ExistingBlock[] = [];
     for (const raw of await this.listEvents(calendarId, window, false)) {
       const event = parseGoogleEvent(raw);
       const marker = googleEventMarker(event);
       const source = googleSourceEvent(event);
-      if (!marker || !source || !ruleTags.includes(marker.ruleTag)) continue;
+      if (!marker || !source) continue;
       blocks.push({
         targetId: event.id,
         ...marker,
         start: source.start,
         end: source.end,
         allDay: source.allDay,
+        status: blockStatusOf(source.showAs),
       });
     }
     return blocks;
@@ -175,14 +199,19 @@ export class GoogleCalendar implements CalendarClient {
             : httpPart("DELETE", `${path}/${encodeURIComponent(action.targetId)}`);
       return `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <item${index}>\r\n\r\n${request}\r\n`;
     });
-    const response = await fetch(BATCH_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": `multipart/mixed; boundary=${boundary}`,
+    const response = await googleFetch(
+      BATCH_URL,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": `multipart/mixed; boundary=${boundary}`,
+        },
+        body: `${parts.join("")}--${boundary}--\r\n`,
       },
-      body: `${parts.join("")}--${boundary}--\r\n`,
-    });
+      "batch",
+      BATCH_TIMEOUT_MS,
+    );
     if (!response.ok) throw await googleError(response, "batch");
     // The body is multipart, which `text()` warns about; decode the bytes instead.
     const statuses = parseBatchStatuses(
@@ -202,7 +231,7 @@ export class GoogleCalendar implements CalendarClient {
   }
 
   async watch(calendarId: string, url: string, token: string, expiresAt: number): Promise<Watch> {
-    const response = await fetch(
+    const response = await googleFetch(
       `${API}/calendars/${encodeURIComponent(calendarId)}/events/watch`,
       {
         method: "POST",
@@ -218,6 +247,7 @@ export class GoogleCalendar implements CalendarClient {
           expiration: expiresAt,
         }),
       },
+      "watch",
     );
     if (!response.ok) throw await googleError(response, "watch");
     const body = channelSchema.parse(await response.json());
@@ -230,11 +260,18 @@ export class GoogleCalendar implements CalendarClient {
   }
 
   async unwatch(watch: Watch): Promise<void> {
-    const response = await fetch(`${API}/channels/stop`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ id: watch.id, resourceId: watch.resourceId }),
-    });
+    const response = await googleFetch(
+      `${API}/channels/stop`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id: watch.id, resourceId: watch.resourceId }),
+      },
+      "stop",
+    );
     if (!response.ok && response.status !== 404) throw await googleError(response, "stop");
   }
 
@@ -316,10 +353,36 @@ export class GoogleCalendar implements CalendarClient {
   }
 
   private async get(url: string): Promise<unknown> {
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${this.accessToken}` } });
+    this.onRead();
+    const response = await googleFetch(
+      url,
+      { headers: { Authorization: `Bearer ${this.accessToken}` } },
+      "GET",
+    );
     if (!response.ok) throw await googleError(response, "GET");
     return response.json();
   }
+}
+
+/** `providerFetch` for Google. A timeout is a GoogleApiError, in the message format of the others. */
+function googleFetch(
+  url: string,
+  init: RequestInit,
+  what: string,
+  timeoutMs = CALL_TIMEOUT_MS,
+): Promise<Response> {
+  return providerFetch(
+    url,
+    init,
+    timeoutMs,
+    () =>
+      new GoogleApiError(
+        TIMEOUT_STATUS,
+        providerErrorMessage("Google", what, TIMEOUT_STATUS, TIMEOUT_REASON),
+        undefined,
+        TIMEOUT_REASON,
+      ),
+  );
 }
 
 async function googleError(response: Response, what: string): Promise<GoogleApiError> {

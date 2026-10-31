@@ -2,6 +2,7 @@ import type { CalendarInfo } from "./providers/calendar-client";
 import { errorCode, errorLogFields } from "./audit";
 import { accountSync } from "./durable";
 import { reconcileRules } from "./editor";
+import { namesOwners } from "./feeds";
 
 export interface CalendarRow {
   id: string;
@@ -64,6 +65,10 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
       continue;
     }
     if (calendars.length === 0) continue;
+    // Otherwise known calendars keep their owner, and a new calendar counts as not owned. Only
+    // a list that lacks the main calendar, as the first Graph page can, lets its entries speak.
+    const ownersKnown = namesOwners(calendars);
+    const newOwnersKnown = ownersKnown || !calendars.some((calendar) => calendar.isDefault);
     await env.DB.batch(
       calendars.map((calendar) =>
         env.DB.prepare(
@@ -72,8 +77,8 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
              (id, account_id, remote_id, name, can_edit, is_default, is_source, data_owned)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (account_id, remote_id) DO UPDATE SET
-             name = excluded.name, can_edit = excluded.can_edit, is_default = excluded.is_default,
-             data_owned = excluded.data_owned`,
+             name = excluded.name, can_edit = excluded.can_edit, is_default = excluded.is_default
+             ${ownersKnown ? ", data_owned = excluded.data_owned" : ""}`,
         ).bind(
           crypto.randomUUID(),
           account.id,
@@ -84,7 +89,7 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
           calendar.canEdit && calendar.owned ? 1 : 0,
           calendar.isDefault ? 1 : 0,
           calendar.isDefault ? 1 : 0,
-          calendar.dataOwned ? 1 : 0,
+          newOwnersKnown && calendar.dataOwned ? 1 : 0,
         ),
       ),
     );

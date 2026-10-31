@@ -1,0 +1,39 @@
+{
+  "id": "window-start-edge",
+  "title": "A block that ends exactly at the start of the window goes when its event goes",
+  "covers": "window boundary",
+  "expectedText": "An event ends at 00:00 UTC. Five minutes later, midnight has moved the window start to that end. While the event exists the target stays busy, and after the delete it is free.",
+  "requires": ["clock", "provider-calls"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "late",
+      "event": { "start": "today+1d@22:00Z", "end": "today+2d@00:00Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["today+1d@00:00Z", "today+3d@00:00Z"],
+        "busy": [["today+1d@22:00Z", "today+2d@00:00Z"]]
+      }
+    },
+    { "do": "advance", "to": "today+2d@00:05Z" },
+    { "do": "expect-calls", "calendar": "target", "seconds": 600 },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["today+1d@00:00Z", "today+3d@00:00Z"],
+        "busy": [["today+1d@22:00Z", "today+2d@00:00Z"]],
+        "noDuplicates": true
+      }
+    },
+    { "do": "write", "change": "delete", "key": "late" },
+    {
+      "do": "sync",
+      "expect": { "window": ["today+1d@00:00Z", "today+3d@00:00Z"], "busy": [] }
+    }
+  ]
+}

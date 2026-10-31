@@ -111,13 +111,15 @@ privacy-friendly statistics. It replaces Cloudflare Web Analytics.
 - There is no autocapture, no session replay, no survey and no feature flag. URLs are sent
   without query string and fragment.
 - Only the website is measured. A slotmirror deployment that you run sends nothing to PostHog.
-- The browser talks to the own domain. A Cloudflare Worker forwards the requests to PostHog and
-  adds the visitor IP address as `X-Forwarded-For`. PostHog needs the IP address for the daily
-  hash, and without it all visitors would look like one visitor. The Worker accepts only the
-  event path (`POST /ingest/e/`) and answers every other request with 404. It forwards only the
-  headers `Content-Type`, `Content-Encoding` and `User-Agent`, plus `X-Forwarded-For`. It drops all
-  other headers, including cookies and authorisation headers, and stores nothing. The PostHog
-  project discards the IP address after it has built the hash.
+- The browser talks to the own domain. A Cloudflare Worker forwards the requests to PostHog. The
+  Worker passes on the client IP address: it sends the value of `CF-Connecting-IP` to PostHog as
+  `X-Forwarded-For` with every event. PostHog needs the IP address for the daily hash, and without
+  it all visitors would look like one visitor. Under `/ingest` the Worker accepts only the event
+  path (`POST /ingest/e/`) and answers every other request with 404. It forwards only the headers
+  `Content-Type`, `Content-Encoding` and `User-Agent`, plus `X-Forwarded-For`. It drops all other
+  headers, including cookies and authorisation headers, and stores nothing. The Worker does not
+  remove the IP address. The PostHog project setting "Discard client IP data" removes it after
+  PostHog has built the hash.
 - The browser also keeps the theme choice in local storage. It is not used for tracking.
 
 Controller: [operator name and address, to be added before launch]. Contact:

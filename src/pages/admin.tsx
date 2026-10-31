@@ -1,9 +1,11 @@
 import type { Role } from "../access";
-import type { ActivityRow } from "../audit";
+import type { TestAlertOutcome } from "../alerts";
+import { parseDetail, type ActivityRow } from "../audit";
 import type { DetailCaps } from "../detail-policy";
 import { useI18n } from "../i18n";
+import type { CompareRunDetail } from "../sync/compare";
 import type { CurrentUser } from "../users";
-import { ActivityTable } from "./activity";
+import { ActivityTable, describeCompare } from "./activity";
 import { Layout } from "./layout";
 
 export interface AdminUserRow {
@@ -23,6 +25,15 @@ export function AdminPage(props: {
   user: CurrentUser;
   users: AdminUserRow[];
   activity: ActivityRow[];
+  /** The latest comparison per calendar and mode. */
+  compares: ActivityRow[];
+  /** The admin just started comparisons. */
+  /** What the last click on "Start comparison" did, if the page follows one. */
+  compareStart: { started: number; open: number; failed: number } | null;
+  /** True if a webhook is set. Its URL is a secret and never reaches this page. */
+  alertsConfigured: boolean;
+  /** What the last click on "Send test alert" did, if the page follows one. */
+  testAlert: TestAlertOutcome | null;
   caps: DetailCaps;
   /** Domains and Entra tenants whose accounts count as work calendars. */
   org: { domains: string[]; tenantCount: number };
@@ -135,6 +146,71 @@ export function AdminPage(props: {
           </table>
         </div>
         <p class="fineprint caps-how">{t.admin.capsHow}</p>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.admin.compareTitle}</h2>
+            <p class="lead">{t.admin.compareLead}</p>
+          </div>
+          <form method="post" action="/admin/compare" class="inline-form">
+            <button type="submit" class="button">
+              {t.admin.compareStart}
+            </button>
+          </form>
+        </div>
+        {props.compareStart ? (
+          <p class="notice">
+            {t.admin.compareCounts(
+              props.compareStart.started,
+              props.compareStart.open,
+              props.compareStart.failed,
+            )}
+          </p>
+        ) : null}
+        <div class="card">
+          {props.compares.length === 0 ? (
+            <div class="empty">{t.admin.compareEmpty}</div>
+          ) : (
+            <ul class="compare-list">
+              {props.compares.map((row) => {
+                const { calendarId, mode } = parseDetail(row.detail) as Partial<CompareRunDetail>;
+                return (
+                  <li data-compare={`${calendarId}:${mode}`}>
+                    <span>{describeCompare(row, t)}</span>
+                    <span class="muted">
+                      {mode ? t.admin.compareModes[mode] : ""} · {row.email ?? "–"} ·{" "}
+                      {formatTimestamp(row.createdAt)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <p class="fineprint caps-how">{t.admin.compareHorizon}</p>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.admin.alertsTitle}</h2>
+            <p class="lead">{props.alertsConfigured ? t.admin.alertsLead : t.admin.alertsOff}</p>
+          </div>
+          {props.alertsConfigured ? (
+            <form method="post" action="/admin/test-alert" class="inline-form">
+              <button type="submit" class="button">
+                {t.admin.testAlertSend}
+              </button>
+            </form>
+          ) : null}
+        </div>
+        {props.testAlert ? (
+          <p class="notice test-alert-result" role="status">
+            {t.admin.testAlertResults[props.testAlert]}
+          </p>
+        ) : null}
       </section>
 
       <section class="section">

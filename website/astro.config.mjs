@@ -63,6 +63,7 @@ export default defineConfig({
           label: "Reference",
           items: [
             { label: "Limits", slug: "docs/limits" },
+            { label: "Troubleshooting", slug: "docs/troubleshooting" },
             { label: "FAQ", slug: "docs/faq" },
             { label: "Local development and load tests", slug: "docs/development" },
           ],

@@ -17,7 +17,9 @@ import type { SourceEvent } from "../src/sync/types";
 import type { CurrentUser } from "../src/users";
 import { signIn } from "./helpers";
 
-const NOW = Date.UTC(2026, 10, 1);
+// Far in the future: the runtime fires a Durable Object alarm by real time, so an alarm that the
+// fake clock sets must not lie in the real past.
+const NOW = Date.UTC(2036, 10, 1);
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const SECRET = ["Secret plan", "Room 7", "Agenda text"];
@@ -85,8 +87,8 @@ function graphSource(occurrences = 6, singles = 3): Record<string, unknown>[] {
     ...content("ms-all-day"),
     id: "ms-all-day",
     type: "singleInstance",
-    start: { dateTime: "2026-11-20T00:00:00.0000000", timeZone: "UTC" },
-    end: { dateTime: "2026-11-21T00:00:00.0000000", timeZone: "UTC" },
+    start: { dateTime: "2036-11-20T00:00:00.0000000", timeZone: "UTC" },
+    end: { dateTime: "2036-11-21T00:00:00.0000000", timeZone: "UTC" },
     isAllDay: true,
   });
   events.push({
@@ -136,8 +138,8 @@ function googleSource(): Record<string, unknown>[] {
   events.push({
     ...content("g-all-day"),
     id: "g-all-day",
-    start: { date: "2026-11-24" },
-    end: { date: "2026-11-25" },
+    start: { date: "2036-11-24" },
+    end: { date: "2036-11-25" },
   });
   events.push({
     ...content("g-private"),
@@ -405,13 +407,9 @@ function sourceReads(fake: Fake, from = 0): URL[] {
     .map((url) => new URL(url));
 }
 
-/** Ids of the included source events: default options skip the free and the all-day ones. */
-const MS_COPIES = graphSource()
-  .filter((event) => !event.isAllDay)
-  .map((event) => event.id as string);
-const G_COPIES = googleSource()
-  .filter((event) => !(event.start as { date?: string }).date)
-  .map((event) => event.id as string);
+/** Ids of the included source events, all-day ones too. */
+const MS_COPIES = graphSource().map((event) => event.id as string);
+const G_COPIES = googleSource().map((event) => event.id as string);
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -510,10 +508,10 @@ describe("origin note", () => {
     await setOriginNote(env, user, "allday-ms-src", on, "en");
     await setOriginNote(env, user, "allday-g-src", on, "en");
     const second = await run();
-    expect(second.mg.stats.update).toBe(MS_COPIES.length + 1);
-    expect(second.gm.stats.update).toBe(G_COPIES.length + 1);
+    expect(second.mg.stats.update).toBe(MS_COPIES.length);
+    expect(second.gm.stats.update).toBe(G_COPIES.length);
     const googleAllDay = [...fake.google.get("allday-g-dst-remote")!.values()].find(
-      (event) => (event.start as { date?: string }).date === "2026-11-20",
+      (event) => (event.start as { date?: string }).date === "2036-11-20",
     );
     expect(googleAllDay?.description).toBe(`From: Microsoft account\n${graphLink("ms-all-day")}`);
     const graphAllDay = [...fake.graph.get("allday-ms-dst-remote")!.values()].find(
@@ -1025,8 +1023,8 @@ describe("setOriginNote", () => {
 describe("origin note content", () => {
   const event: SourceEvent = {
     occurrenceKey: "event:x",
-    start: "2026-11-02",
-    end: "2026-11-03",
+    start: "2036-11-02",
+    end: "2036-11-03",
     allDay: true,
     showAs: "busy",
     isPrivate: false,
@@ -1042,8 +1040,8 @@ describe("origin note content", () => {
   it("leaves the block as before while the option is off", () => {
     const options = ruleOptionsSchema.parse({ detailLevel: "full", linkOrigin: true });
     expect(blockContent(event, options, "From: A (Google)")).toEqual({
-      start: "2026-11-02",
-      end: "2026-11-03",
+      start: "2036-11-02",
+      end: "2036-11-03",
       allDay: true,
       showAs: "busy",
       isPrivate: true,

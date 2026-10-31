@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "trial:report": "node scripts/trial-report.ts",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy --define \"__BUILD_COMMIT__:\\\"$(git rev-parse --short=9 HEAD 2>/dev/null)\\\"\"",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "cf-typegen": "wrangler types --strict-vars=false",
@@ -16,8 +17,12 @@
     "format:check": "oxfmt --check",
     "test": "vitest run",
     "capacity:probe": "node scripts/capacity-probe.ts",
+    "suite": "node suite/cli.ts",
+    "suite:gate": "node suite/cli.ts --gate",
+    "suite:published": "node suite/check-published.ts",
+    "suite:proof": "vitest run --config suite/vitest.config.ts suite/proof/",
     "waitlist:check": "pnpm --filter slotmirror-waitlist check",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm waitlist:check",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm suite:proof && pnpm suite:gate && pnpm suite:published && pnpm waitlist:check",
     "prepare": "husky"
   },
   "dependencies": {

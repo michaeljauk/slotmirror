@@ -1,0 +1,59 @@
+{
+  "id": "working-hours-other-date",
+  "title": "A working hours filter reads the date of its own zone, not the date in UTC",
+  "covers": "working hours filter",
+  "expectedText": "Hours are Monday to Friday 09:00 to 17:00 Tokyo. The event from Friday 23:30 UTC is Saturday morning in Tokyo, and the event from Saturday 23:30 UTC is Sunday morning there: both are free. The event from Sunday 23:30 UTC is Monday 08:30 to 09:30 in Tokyo, so it is busy at its full length.",
+  "calendars": {
+    "source": {
+      "timeZone": "UTC"
+    },
+    "target": {
+      "timeZone": "UTC"
+    }
+  },
+  "rule": {
+    "workingHours": {
+      "days": [1, 2, 3, 4, 5],
+      "start": "09:00",
+      "end": "17:00",
+      "timeZone": "Asia/Tokyo"
+    }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "friday-utc",
+      "event": {
+        "start": "week+4d@23:30Z",
+        "end": "week+5d@00:30Z"
+      }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "saturday-utc",
+      "event": {
+        "start": "week+5d@23:30Z",
+        "end": "week+6d@00:30Z"
+      }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "sunday-utc",
+      "event": {
+        "start": "week+6d@23:30Z",
+        "end": "week+7d@00:30Z"
+      }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+8d@00:00Z"],
+        "busy": [["week+6d@23:30Z", "week+7d@00:30Z"]]
+      }
+    }
+  ]
+}

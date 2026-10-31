@@ -40,8 +40,10 @@ Not yet. Microsoft 365 and Google Calendar are supported.
 
 ## Why is there a "not verified" warning from Google?
 
-Your OAuth client is your own, and Google has not verified it. For your own deployment, you can
-continue past the warning. See [Google OAuth client](../google-setup/).
+Your OAuth client is your own, and Google has not verified it. To continue, choose **Advanced**,
+then **Go to … (unsafe)**. slotmirror shows this before the redirect. If the app is in **Testing**
+mode, Google also expires its refresh tokens after 7 days. See
+[Google OAuth client](../google-setup/).
 
 ## Who is the operator, and what does the role include?
 

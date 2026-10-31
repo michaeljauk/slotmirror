@@ -20,6 +20,7 @@ function byKey(suffix: string): SourceEvent | undefined {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("fromGoogleEvent", () => {
@@ -48,8 +49,8 @@ describe("fromGoogleEvent", () => {
 
   it("mirrors the same events as the Graph adapter would with default options", async () => {
     const blocks = await desiredBlocks("rule", events(), ruleOptionsSchema.parse({}));
-    // single, private, tentative and two football occurrences; not all-day, free, declined, mirror
-    expect(blocks).toHaveLength(5);
+    // single, private, tentative, all-day and two football occurrences; not free, declined, mirror
+    expect(blocks).toHaveLength(6);
   });
 });
 
@@ -319,6 +320,9 @@ describe("Google sign-in and connect", () => {
 
 describe("rule across providers", () => {
   it("mirrors a Google calendar into a Microsoft calendar", async () => {
+    // The fixture events lie in the sync window only at this time, whatever the real date.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-22T00:00:00Z"));
     const { user } = await signIn("owner@example.com");
     await env.DB.batch([
       env.DB.prepare(
@@ -354,7 +358,7 @@ describe("rule across providers", () => {
     });
 
     const result = await target.runRule("x-rule", { dryRun: true });
-    expect(result.stats).toMatchObject({ create: 5, delete: 0 });
+    expect(result.stats).toMatchObject({ create: 6, delete: 0 });
     expect(urls.some((url) => url.includes("singleEvents=true"))).toBe(true);
   });
 });
@@ -394,5 +398,18 @@ describe("Google calendar list", () => {
       "Shared with manage sharing": [true, false],
       Colleague: [false, false],
     });
+  });
+
+  it("asks for hidden calendars only for a complete list", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return Response.json({ items: [] });
+    });
+    const google = new GoogleCalendar("token");
+    await google.listCalendars();
+    await google.listCalendars({ complete: true });
+    expect(urls[0]).not.toContain("showHidden");
+    expect(urls[1]).toContain("showHidden=true");
   });
 });

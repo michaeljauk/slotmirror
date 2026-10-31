@@ -10,6 +10,8 @@ description: What slotmirror does not do yet, and how it stays inside the Cloudf
   other calendars of the account.
 - **A window of 90 days.** By default the sync mirrors the next 90 days. The window moves forward
   every day. You can change it under **For all calendars**.
+- **All-day events block whole days.** By default the sync mirrors all-day events, unless they are
+  marked as free. You can leave them out with **Skip all-day events** under **For all calendars**.
 - **Past blocks stay.** The sync looks from today forward. If you delete a rule, its blocks from
   today on are removed. Blocks before today stay as history.
 - **Unverified Google app.** Until Google verifies your OAuth client, Google shows a warning when
@@ -23,6 +25,18 @@ each sync into one step per rule direction, so that each step stays inside these
 The daily quotas are 100,000 Worker requests and 100,000 Durable Object requests. They cover a
 person or a small team. Each connected account needs a few hundred requests a day. A large team
 needs Workers Paid ($5 a month).
+
+The cron reaches 44 accounts per invocation. With more accounts, the accounts split into rounds,
+and each invocation takes the next round. Up to 88 accounts, each account gets a tick every 20
+minutes, and a rule can miss one cycle before the 3-hour alert. Up to 704 accounts, the alert stays
+quiet only if every cycle succeeds. From 705 accounts, a healthy rule can alert. Above about 260
+accounts, one new or removed account can cause one false silence alert, because one wait of an
+account can then last two rounds. These limits count all connected accounts and hold on Workers
+Paid too.
+
+An alert names 20 silent rules per hour, and one check reads 500 rules. From about 3,400 rules that
+stay silent, an alert can no longer name each rule in turn. It still reports that rules are silent,
+and its count covers the rules that this check read and that no lock holds back.
 
 ## Provider rate limits
 

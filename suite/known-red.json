@@ -1,0 +1,8 @@
+[
+  {
+    "id": "window-past-block-delete",
+    "reason": "The block of an event that ended before the window start stays after the event goes.",
+    "issue": "#49",
+    "step": 6
+  }
+]

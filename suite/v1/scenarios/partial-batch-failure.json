@@ -1,0 +1,43 @@
+{
+  "id": "partial-batch-failure",
+  "title": "One failed write in a batch comes back with the next cycle, without duplicates",
+  "covers": "partial failure in a batch",
+  "expectedText": "The target refuses one write of a batch of three. Within 70 minutes all three times are busy, each with one block.",
+  "requires": ["faults"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    { "do": "control", "action": "fail-writes", "calendar": "target", "status": 500, "actions": 1 },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "first",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "second",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "third",
+      "event": { "start": "week+3d@10:00Z", "end": "week+3d@11:00Z" }
+    },
+    { "do": "wait-for-fault" },
+    {
+      "do": "sync",
+      "timeoutSeconds": 4200,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@10:00Z", "week+1d@11:00Z"],
+          ["week+2d@10:00Z", "week+2d@11:00Z"],
+          ["week+3d@10:00Z", "week+3d@11:00Z"]
+        ],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

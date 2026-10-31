@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
+import { OperatorNotice } from "./operator-notice";
 import { MAX_NAME_LENGTH, type EditorAccount, type EditorState } from "../editor";
 import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
 import { ALL_WEEKDAYS, isTimeZone } from "../sync/working-hours";
@@ -51,6 +52,13 @@ export function SignInPage(props: { providers: Record<Provider, boolean> }) {
               </a>
             ))}
           </div>
+          {props.providers.google ? (
+            <p class="notice-lines">
+              {t.signIn.googleNotice}
+              <br />
+              {t.signIn.googleNoticeSteps}
+            </p>
+          ) : null}
         </div>
         <p class="fineprint">{t.signIn.fineprint}</p>
         <p class="fineprint">
@@ -157,6 +165,8 @@ export function HomePage(props: {
   user: CurrentUser;
   accounts: AccountRow[];
   providers: Record<Provider, boolean>;
+  /** The operator's notice, shown before the connect buttons. Empty: none. */
+  operatorNotice?: string;
   /** Sync status per account ID; accounts without an entry were never synced. */
   statuses: Map<string, AccountSyncStatus>;
   editor: EditorState;
@@ -216,7 +226,7 @@ export function HomePage(props: {
   return (
     <Layout title={t.accounts.title} user={props.user} active="accounts">
       <section class="section">
-        <ReconnectNotice accounts={props.editor.accounts} />
+        <ReconnectNotice accounts={props.editor.accounts} operatorNotice={props.operatorNotice} />
 
         <div class="section-head">
           <div>
@@ -352,6 +362,10 @@ export function HomePage(props: {
           )}
         </div>
 
+        {props.editor.accounts.some((a) => a.needsReconnect) ? null : (
+          <OperatorNotice text={props.operatorNotice} />
+        )}
+
         <div class="actions">
           {enabledProviders(props.providers).map((provider) => (
             <a class="button" href={`/auth/${provider}/connect`}>
@@ -360,6 +374,11 @@ export function HomePage(props: {
             </a>
           ))}
         </div>
+        {props.providers.google ? (
+          <p class="notice-lines">
+            {t.accounts.googleNotice} {t.accounts.googleNoticeSteps}
+          </p>
+        ) : null}
       </section>
 
       <section class="section">

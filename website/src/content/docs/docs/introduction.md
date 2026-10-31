@@ -10,7 +10,8 @@ plan.
 
 It is for people with more than one calendar: consultants with client tenants, founders with two
 companies, anyone with a work and a private calendar. You host it yourself, so your calendar
-tokens stay with you and not with a sync service.
+tokens stay with you and not with a sync service. If someone else runs a deployment, that
+operator holds the tokens. The deployment then shows who runs it before you connect an account.
 
 :::caution[Early version]
 The version is below 1.0. Settings and the database can still change between releases.

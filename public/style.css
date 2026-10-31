@@ -673,6 +673,14 @@ h2 {
   color: #1f3f8a;
 }
 
+.operator-notice {
+  margin-top: 14px;
+}
+
+.operator-notice p {
+  margin: 4px 0;
+}
+
 .notice.error {
   background: #f6e4e2;
   color: #8a2a23;
@@ -1362,6 +1370,25 @@ details.source.dirty {
 .caps-how {
   margin-top: 8px;
   text-align: left;
+}
+
+.compare-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13.5px;
+}
+
+.compare-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 10px 16px;
+}
+
+.compare-list li + li {
+  border-top: 1px solid var(--line);
 }
 
 /* Settings for all calendars */
@@ -2305,4 +2332,65 @@ details.feed-new[open] > summary {
 .feed-error .link-button {
   color: inherit;
   text-decoration: underline;
+}
+
+/* Provider error pages: left-aligned, with a request that can be copied. */
+
+.center.wide {
+  max-width: 520px;
+}
+
+.error-card {
+  text-align: left;
+}
+
+.error-card .request {
+  margin-top: 20px;
+}
+
+.error-card .request h2 {
+  margin-bottom: 8px;
+}
+
+.request-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font:
+    12.5px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  resize: vertical;
+}
+
+.error-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 20px 0 0;
+}
+
+.error-facts dt {
+  color: var(--muted);
+}
+
+.error-facts dd {
+  margin: 0;
+}
+
+.error-card .actions {
+  flex-direction: row;
+}
+
+.notice-lines {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }

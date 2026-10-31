@@ -3,6 +3,18 @@ title: Quickstart
 description: Deploy slotmirror to Cloudflare, connect your calendars, and choose where events go.
 ---
 
+## Check first: can I approve the app myself?
+
+If you connect a work or school Microsoft account, check this before you deploy. The tenant
+decides whether users may approve apps. If it does not allow that, the first sign-in stops with a
+consent error, and an administrator of the tenant has to approve the app.
+
+[Microsoft Entra app](../entra-setup/#check-first-can-i-approve-the-app-myself) shows where to find
+this setting. The error page contains a request that you can copy for the administrator. See
+[Troubleshooting](../troubleshooting/#consent-errors).
+
+## What you need
+
 You need:
 
 - A Cloudflare account. The free plan is enough.
@@ -100,7 +112,7 @@ valid value, and the checklist shows the value it read.
 
 ## 7. Sign in and connect
 
-Open the address of your Worker, sign in, and connect your calendars under **Accounts**. To add
+Open the address of your Worker, sign in, and connect your calendars under **Accounts**. If a sign-in fails, the error page shows a code. Look it up in [Troubleshooting](../troubleshooting/). To add
 the other provider later, repeat steps 5 and 6 for it.
 
 ## 8. Watch the first block

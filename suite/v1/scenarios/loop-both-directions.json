@@ -1,0 +1,63 @@
+{
+  "id": "loop-both-directions",
+  "title": "With rules in both directions a block never comes back as a new block",
+  "covers": "loop protection in both directions",
+  "expectedText": "Each calendar shows its own event and one block of the other event, after a settle time of 4300 s too. After the delete, both calendars are free on Tuesday and busy on Wednesday.",
+  "localLimit": "The simulation flags every block as a mirror itself. How the tool recognises its blocks in a real calendar stays unchecked.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "rule": { "direction": "both" },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "from-source",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "calendar": "target",
+      "change": "create",
+      "key": "from-target",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 4300,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@10:00Z", "week+1d@11:00Z"],
+          ["week+2d@10:00Z", "week+2d@11:00Z"]
+        ],
+        "noDuplicates": true
+      }
+    },
+    {
+      "do": "expect",
+      "calendar": "source",
+      "window": ["week@00:00Z", "week+7d@00:00Z"],
+      "busy": [
+        ["week+1d@10:00Z", "week+1d@11:00Z"],
+        ["week+2d@10:00Z", "week+2d@11:00Z"]
+      ],
+      "noDuplicates": true
+    },
+    { "do": "write", "change": "delete", "key": "from-source" },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+2d@10:00Z", "week+2d@11:00Z"]],
+        "noDuplicates": true
+      }
+    },
+    {
+      "do": "expect",
+      "calendar": "source",
+      "window": ["week@00:00Z", "week+7d@00:00Z"],
+      "busy": [["week+2d@10:00Z", "week+2d@11:00Z"]],
+      "noDuplicates": true
+    }
+  ]
+}

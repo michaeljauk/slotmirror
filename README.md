@@ -28,7 +28,8 @@ plan.
 
 It is for people with more than one calendar: consultants with client tenants, founders with two
 companies, anyone with a work and a private calendar. You host it yourself, so your calendar
-tokens stay with you and not with a sync service.
+tokens stay with you and not with a sync service. If someone else runs a deployment, that
+operator holds the tokens. The deployment then shows who runs it before you connect an account.
 
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.
@@ -139,26 +140,27 @@ Set variables in the Cloudflare dashboard (Worker, Settings, Variables and Secre
 locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy keeps your values. A
 `vars` entry in that file would replace the dashboard value on every deploy.
 
-| Name                              | Kind     | Purpose                                                                                    |
-| --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| `ALLOWED_EMAILS`                  | variable | Comma-separated addresses that may sign in. For a personal deployment, your own address.   |
-| `ALLOWED_DOMAINS`                 | variable | Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team.     |
-| `ALLOWED_TENANT_IDS`              | variable | Recommended. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.          |
-| `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).      |
-| `ORG_NAME`                        | variable | Optional display name.                                                                     |
-| `TIME_ZONE`                       | variable | IANA time zone for dashboard dates and working hours, e.g. `Europe/Vienna`. Default `UTC`. |
-| `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                            |
-| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or `microsoft,google`. Limits sign-in; accounts stay open. |
-| `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.               |
-| `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set before the first account connects. |
-| `MAX_DETAIL_TO_EXTERNAL`          | variable | Optional cap from org accounts to other accounts: `busy`, `title`, `title_location`.       |
-| `MAX_DETAIL_FROM_EXTERNAL`        | variable | Optional cap from other accounts to org accounts. Same values.                             |
-| `SESSION_SECRET`                  | secret   | At least 32 characters. Signs the session cookie. `openssl rand -base64 48`                |
-| `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`         |
-| `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                       |
-| `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                        |
-| `SCIM_TOKEN`                      | secret   | Optional. Bearer token for user provisioning from Entra over SCIM.                         |
-| `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook that hears when an account needs reconnecting. See below.       |
+| Name                              | Kind     | Purpose                                                                                                                                                     |
+| --------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ALLOWED_EMAILS`                  | variable | Comma-separated addresses that may sign in. For a personal deployment, your own address.                                                                    |
+| `ALLOWED_DOMAINS`                 | variable | Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team.                                                                      |
+| `ALLOWED_TENANT_IDS`              | variable | Recommended. Entra tenant IDs; Microsoft sign-ins from other tenants are refused.                                                                           |
+| `ADMIN_EMAILS`                    | variable | Addresses with access to the admin page (users and account counts, no calendar data).                                                                       |
+| `ORG_NAME`                        | variable | Optional display name.                                                                                                                                      |
+| `TIME_ZONE`                       | variable | IANA time zone for dashboard dates and working hours, e.g. `Europe/Vienna`. Default `UTC`.                                                                  |
+| `PRIVACY_CONTACT`                 | variable | Address shown on the `/privacy` page as the operator's contact.                                                                                             |
+| `OPERATOR_NOTICE`                 | variable | Optional. Plain text shown before users connect an account and on `/privacy`: who runs this deployment and what the operator can see. Empty: nothing shown. |
+| `SIGN_IN_PROVIDERS`               | variable | Optional. `microsoft`, `google` or `microsoft,google`. Limits sign-in; accounts stay open.                                                                  |
+| `PUBLIC_URL`                      | variable | Optional. The https address of this deployment. Turns on push notifications.                                                                                |
+| `DATA_JURISDICTION`               | variable | Optional. `eu` keeps the Durable Objects in the EU. Set before the first account connects.                                                                  |
+| `MAX_DETAIL_TO_EXTERNAL`          | variable | Optional cap from org accounts to other accounts: `busy`, `title`, `title_location`.                                                                        |
+| `MAX_DETAIL_FROM_EXTERNAL`        | variable | Optional cap from other accounts to org accounts. Same values.                                                                                              |
+| `SESSION_SECRET`                  | secret   | At least 32 characters. Signs the session cookie. `openssl rand -base64 48`                                                                                 |
+| `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`                                                                          |
+| `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                                                                                        |
+| `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                                                                                         |
+| `SCIM_TOKEN`                      | secret   | Optional. Bearer token for user provisioning from Entra over SCIM.                                                                                          |
+| `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See below.                                                                                                  |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last 12
 hours; signing in again is one click with the provider. Their rules stop at the next sync, and their
@@ -201,9 +203,11 @@ activity entries stay until the retention period ends.
 A disconnected account keeps its encrypted tokens until the blocks in its own calendars are
 removed. Its next alarm stops its watches. A watch that cannot be stopped is tried again when the
 tokens are deleted, or expires within days; its notifications are ignored. The account reads its calendars only to find and delete those blocks.
-If the provider keeps failing, the removal tries again after 1 minute, 10 minutes, 2 hours and
-12 hours. After the fifth failed attempt, or at once if the provider refuses the tokens, the tokens
-are deleted and the remaining blocks stay.
+If the provider keeps failing or refuses the tokens, the removal tries again after 1 minute,
+10 minutes, 2 hours and 12 hours. After the fifth failed attempt, the tokens are deleted and the
+remaining blocks stay. The activity log then shows the result of each rule, without event contents.
+If a removal cannot be queued at all, the account and its rules stay and the request reports an
+error, so that you can try again.
 
 **Resetting a sign-in.** The first sign-in binds a user to that Microsoft or Google account. If
 someone moves to another tenant or account, an admin chooses **Reset sign-in** on the admin page.
@@ -287,11 +291,13 @@ marks the account and stops its work until the user connects it again:
 - When the user connects the same account again, the mark goes and a full sync starts.
 
 **Alerts.** If you set the secret `ALERT_WEBHOOK_URL`, slotmirror posts `{"text": "..."}` to it
-at most once each time an account changes to "needs reconnecting". The text names the provider and
-`PUBLIC_URL`, never the account, the user or any event. This is the format of Slack incoming
-webhooks; Google Chat and Mattermost accept it too. Microsoft Teams needs its own card format, so
-use a Teams workflow that takes the `text` field. The URL must start with `https://`. A failed
-post is logged without the URL and is not retried.
+each time an account changes to "needs reconnecting". It also posts if an active rule finishes no
+run for 3 hours, if a run aborts, and if a comparison confirms a deviation. The text names the
+provider, rule IDs or calendar IDs and `PUBLIC_URL`, never an address, a calendar name or any
+event. This is the format of Slack incoming webhooks; Google
+Chat and Mattermost accept it too. Microsoft Teams needs its own card format, so use a Teams
+workflow that takes the `text` field. The URL must start with `https://`. A failed post is logged
+without the URL and sent again. The settings reference describes each alert and its repeat lock.
 
 ## Free/busy feed
 
@@ -302,10 +308,10 @@ people outside the deployment. They subscribe to it by URL in their calendar app
 **What it shares.** Busy blocks from up to five calendars, from 7 days ago to up to 180 days ahead
 (60 by default). Overlapping and adjacent events form one block. Each block has only its start,
 its end, the title "Busy" in your language, and the marks private and busy. Titles, places, notes,
-attendees, organizers, source event IDs and the number of events in a block stay out. The same
-events count as for a rule with default settings: free and declined events stay out, tentative
-ones count as busy, and all-day events count only if you turn them on. Blocks that slotmirror
-wrote are left out, so choose every calendar whose own events should count. Only calendars that
+attendees, organizers, source event IDs and the number of events in a block stay out. Free and
+declined events stay out, and tentative ones count as busy, as for a rule with default settings.
+Unlike for such a rule, all-day events count only if you turn them on for the feed. Blocks that
+slotmirror wrote are left out, so choose every calendar whose own events should count. Only calendars that
 your accounts own can go into a feed, not calendars that other people shared with you. For
 Google, these are the primary calendar and calendars whose data owner is the account; the access
 role "owner" alone also covers calendars shared with "make changes and manage sharing". This rule
@@ -316,7 +322,10 @@ and two feeds cannot be linked through their UIDs.
 
 **At most 1000 blocks.** Above that, past blocks go first, those that ended earliest first. A
 block that runs into today, such as an ongoing absence, stays. If the feed is still too long, it
-ends early, and the start page says before which date. Choose fewer days or calendars.
+ends early, and the start page says before which date. Choose fewer days or calendars. The same
+limit and order apply to the busy events of each calendar before they merge. If one calendar loses
+events at the end, the whole feed ends at that date, so that the calendar does not look free
+behind it.
 
 **Who can see it.** Anyone with the address. The address holds a random 256-bit token;
 slotmirror stores only its SHA-256 hash and shows the address once, when you create the feed or
@@ -334,35 +343,56 @@ empty `ALLOWED_*` values, the feeds stay and answer 503 until the settings are b
 a repeated fetch costs one D1 read and no calendar read; the Cache API also keeps it, but
 Cloudflare documents a working cache only for custom domains. Calendar apps fetch subscribed
 calendars on their own schedule, from every 15 minutes to once a day. A change can take that long
-to appear.
+to appear. While one fetch reads the calendars, parallel fetches get the last copy, unless the
+feed has a calendar it names as lost. Then they get 503.
 
 **When a calendar cannot be read.** Subscribers never get a partial feed:
 
 - While Microsoft or Google throttles the account, the feed serves its last copy, however old, and
-  makes no provider call. Without a copy, it answers 503 with the remaining `Retry-After`.
+  makes no provider call. Without a copy, or with a calendar it names as lost, it answers 503 with
+  the remaining `Retry-After`.
 - If an account needs to be connected again, the feed answers 503.
 - If the provider no longer finds a calendar or refuses access to it, or the account no longer
   owns it, the feed answers 503, and the start page names the calendar with a button to remove it
-  from the feed.
-- Any other failed read also answers 503.
+  from the feed. The feed serves no older copy until a read of all its calendars succeeds.
+- slotmirror reads the owners of feed calendars once a day, hidden Google calendars included. If
+  the list no longer names a feed calendar, the feed answers 503 in the same way. If a check takes
+  a calendar away from an account, the next check runs after about an hour, so that one short list
+  does not stop a feed for a day. After two short lists in a row, the feed answers 503 until the
+  next daily check. Once a list names the calendar again with the account as owner, a stored
+  failure can still answer 503 for up to 15 minutes.
+- If that read fails, or the list does not name the account as owner of its main calendar, the feed
+  stays as it is, and a later full cycle reads the owners again. A calendar refresh or a sign-in
+  with such a list also leaves the owners of known calendars as they are. Only a list that lacks
+  the main calendar sets the owner of a new calendar from its own entry.
+- Any other failed read also answers 503, and so does a read that outlasts its 60-second lease
+  after another fetch or a failure took over.
 
 A failure is stored with the feed: for 15 minutes, fetches answer 503 from that one D1 read and
 make no new read. Apps keep their last copy while the feed answers 503.
 
 ### Logs and the feed token
 
-With `observability` on in `wrangler.jsonc`, Workers Logs record an invocation log for every
-request, with its URL, so the feed token is stored in the operator's Cloudflare account. slotmirror
-itself logs only feed IDs. An operator can turn the invocation logs off; `console` output is a
-separate kind of log in Workers Logs:
+`wrangler.jsonc` keeps Workers Logs on and turns invocation logs off:
 
 ```jsonc
 "observability": { "enabled": true, "logs": { "invocation_logs": false } }
 ```
 
-This drops the invocation logs of every request, not only of feeds. `wrangler tail` and the
-dashboard's live logs still show URLs while they run. On a custom domain, other Cloudflare
-products that log requests, such as Logpush, record the path too.
+`console` output is a separate kind of log and stays in Workers Logs. slotmirror itself logs only
+feed IDs. An invocation log records the URL of a request, so with `invocation_logs` set to `true`,
+Workers Logs store feed tokens and OAuth parameters in your Cloudflare account. A deploy applies
+this setting from `wrangler.jsonc`, so change it there and not in the dashboard.
+
+`wrangler tail` and the dashboard's live logs show URLs while they run. On a custom domain, other
+Cloudflare products that log requests, such as Logpush, record the path too. Workers traces record
+the webhook URL. Cloudflare's documentation (Spans and Attributes) also lists `url.full` and
+`url.path` for the incoming fetch span. So if you turn on traces, feed tokens and OAuth parameters
+can end up in your Cloudflare account.
+
+The same documentation lists `url.full` and `url.query` for outgoing fetch spans. These URLs hold
+calendar IDs, and a Google calendar ID is often an email address. It also lists `db.query.text` for
+D1 spans. The documentation does not say whether bind values appear in that attribute.
 
 ## Limits
 
@@ -373,7 +403,8 @@ products that log requests, such as Logpush, record the path too.
   from today on are removed; blocks before today stay as history.
 - **Free plan quotas.** See below. A large team needs Workers Paid.
 - **Unverified Google app.** Until you have Google verify your OAuth client, Google shows a
-  warning when someone connects a Google account.
+  warning when someone connects a Google account. Choose **Advanced**, then **Go to … (unsafe)**.
+  Testing-mode tokens expire after 7 days.
 
 ### Free plan limits
 
@@ -382,6 +413,14 @@ splits each sync into one step per rule direction, so that a step stays inside t
 The daily quotas (100,000 Worker requests, 100,000 Durable Object requests) cover a person or a
 small team. Each connected account needs a few hundred requests a day, so a large team needs
 Workers Paid ($5/month).
+
+The cron reaches 44 accounts per invocation. With more accounts, the accounts split into rounds,
+and each invocation takes the next round. Up to 88 accounts, each account gets a tick every 20
+minutes, and a rule can miss one cycle before the 3-hour alert. Up to 704 accounts, the alert stays
+quiet only if every cycle succeeds. From 705 accounts, a healthy rule can alert. Above about 260
+accounts, one new or removed account can cause one false silence alert, because one wait of an
+account can then last two rounds. These limits count all connected accounts and hold on Workers
+Paid too.
 
 ### Provider rate limits
 

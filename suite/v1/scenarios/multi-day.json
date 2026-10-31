@@ -1,0 +1,33 @@
+{
+  "id": "multi-day",
+  "title": "Timed and all-day events over several days block every day they touch",
+  "covers": "multi-day event",
+  "expectedText": "Busy from Friday 14:00 UTC to Monday 09:00 UTC without a gap, and Tuesday to Thursday of the next week as full days.",
+  "calendars": {
+    "source": { "timeZone": "Europe/Vienna" },
+    "target": { "timeZone": "Europe/Vienna" }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "trip",
+      "event": { "start": "week+4d@14:00Z", "end": "week+7d@09:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "offsite",
+      "event": { "start": "week+8d", "end": "week+11d" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+14d@00:00Z"],
+        "busy": [["week+4d@14:00Z", "week+7d@09:00Z"]],
+        "busyDates": [["week+8d", "week+11d"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

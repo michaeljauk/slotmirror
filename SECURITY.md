@@ -25,3 +25,6 @@ Only the latest release receives security fixes. Self-hosters should update to i
 - The OAuth state is signed and checked against a cookie; sign-in uses PKCE.
 - Access to a deployment is limited by `ALLOWED_EMAILS`, `ALLOWED_DOMAINS` and
   `ALLOWED_TENANT_IDS`, and it is checked again on every request.
+- `wrangler.jsonc` turns Workers invocation logs off, because they record request URLs. `console`
+  output stays in Workers Logs. An operator who turns them on stores those URLs in their Cloudflare
+  account.

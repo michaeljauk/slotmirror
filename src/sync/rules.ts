@@ -169,6 +169,79 @@ export async function rulesTargetingAccount(env: Env, accountId: string): Promis
   return results.filter(ownerAdmission(env)).map((row) => row.id);
 }
 
+/**
+ * The rules that write into a calendar and may run: the rules a comparison judges the calendar by.
+ * Unlike `rulesTargetingAccount`, it keeps rules from an account that needs reconnecting, so that
+ * the comparison can tell that it cannot read them.
+ */
+export async function rulesIntoCalendar(env: Env, calendarId: string): Promise<RuleContext[]> {
+  const { results } = await env.DB.prepare(
+    `${RULE_SELECT} WHERE r.target_calendar_id = ? AND r.enabled = 1 AND u.active = 1 ORDER BY r.id`,
+  )
+    .bind(calendarId)
+    .all<RuleRow>();
+  return results.map(toContext).filter((rule) => ownerMayRun(env, rule));
+}
+
+/** The calendars of an account that an enabled rule writes into. */
+export async function targetCalendars(
+  db: D1Database,
+  accountId: string,
+): Promise<{ calendarId: string; remoteCalendarId: string }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT DISTINCT tc.id AS calendarId, tc.remote_id AS remoteCalendarId
+       FROM calendars tc JOIN rules r ON r.target_calendar_id = tc.id
+       WHERE tc.account_id = ? AND r.enabled = 1 ORDER BY tc.id`,
+    )
+    .bind(accountId)
+    .all<{ calendarId: string; remoteCalendarId: string }>();
+  return results;
+}
+
+/**
+ * The writable calendars of an account that no enabled rule writes into. A deleted rule can leave
+ * blocks there. Only calendars of an owner who may still run rules: a full comparison reads them.
+ */
+export async function leftoverCalendars(
+  env: Env,
+  accountId: string,
+): Promise<{ calendarId: string; remoteCalendarId: string }[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT c.id AS calendarId, c.remote_id AS remoteCalendarId, ${OWNER_COLUMNS}
+     FROM calendars c JOIN accounts a ON a.id = c.account_id
+     JOIN users u ON u.id = a.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE c.account_id = ? AND c.can_edit = 1 AND u.active = 1
+       AND NOT EXISTS (SELECT 1 FROM rules r WHERE r.target_calendar_id = c.id AND r.enabled = 1)
+     ORDER BY c.id`,
+  )
+    .bind(accountId)
+    .all<{ calendarId: string; remoteCalendarId: string } & OwnerColumns>();
+  return results
+    .filter(ownerAdmission(env))
+    .map(({ calendarId, remoteCalendarId }) => ({ calendarId, remoteCalendarId }));
+}
+
+/**
+ * The rules that write into the same remote calendar as this calendar row, through a row of another
+ * account. Google gives the same calendar id to every account that owns a shared calendar. The
+ * providers keep their ids apart, so the provider must match too.
+ */
+export async function rulesThroughOtherRows(env: Env, calendarId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, ${OWNER_COLUMNS} FROM calendars own
+     JOIN accounts oa ON oa.id = own.account_id
+     JOIN calendars tc ON tc.remote_id = own.remote_id AND tc.id <> own.id
+     JOIN accounts ta ON ta.id = tc.account_id AND ta.provider = oa.provider
+     JOIN rules r ON r.target_calendar_id = tc.id
+     JOIN users u ON u.id = r.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE own.id = ? AND r.enabled = 1 AND u.active = 1 ORDER BY r.id`,
+  )
+    .bind(calendarId)
+    .all<{ id: string } & OwnerColumns>();
+  return results.filter(ownerAdmission(env)).map((row) => row.id);
+}
+
 /** True if the rule's owner is active and the policy still admits them. */
 export function ownerMayRun(env: Env, rule: RuleContext): boolean {
   return rule.owner.active && ownerAdmission(env)(rule.owner);
@@ -260,8 +333,24 @@ export function targetReadWindow(window: { start: Date; end: Date }): { start: D
 }
 
 /**
+ * The window of an edge read: one day on each side of the start of a window. It returns the date
+ * before the window for every time zone, and an event or a block that ends exactly at the start of
+ * the window. It does not depend on the rule's buffers; see `planSync`. A removal reads its target
+ * like this, because a target east of UTC otherwise keeps the all-day block of the day before.
+ */
+export function edgeReadWindow(window: { start: Date; end: Date }): { start: Date; end: Date } {
+  const day = 24 * 60 * 60 * 1000;
+  return {
+    start: new Date(window.start.getTime() - day),
+    end: new Date(window.start.getTime() + day),
+  };
+}
+
+/**
  * Window for removing a rule's blocks: from the start of the current UTC day to one year and a
- * month ahead, wider than any rule window. Past blocks stay as a record of when the user was busy.
+ * month ahead, wider than any rule window. Blocks that end before this window stay as a record of
+ * when the user was busy. A removal also deletes the blocks that end exactly at its start; see
+ * `removeRuleBlocks`.
  */
 export function cleanupWindow(now = new Date()): { start: Date; end: Date } {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));

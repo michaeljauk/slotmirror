@@ -6,6 +6,7 @@ import { Layout } from "./layout";
 export function PrivacyPage(props: {
   operator: string;
   contact: string;
+  notice?: string;
   user?: CurrentUser | null;
 }) {
   const { t } = useI18n();
@@ -15,6 +16,12 @@ export function PrivacyPage(props: {
       <article class="prose">
         <h1>{p.title}</h1>
         <p>{props.contact ? p.operator(props.operator, props.contact) : p.operatorUnknown}</p>
+        {props.notice ? (
+          <>
+            <h2>{p.noticeTitle}</h2>
+            <p>{props.notice}</p>
+          </>
+        ) : null}
         <p>{p.intro}</p>
         <h2>{p.storedTitle}</h2>
         <ul>

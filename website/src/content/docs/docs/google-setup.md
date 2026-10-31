@@ -26,5 +26,12 @@ If the app stays in **Testing**, Google expires refresh tokens after 7 days. The
 shows a notice to connect it again.
 :::
 
-Until Google verifies the app, users see a warning that the app is not verified. For your own
-deployment, you can continue past it.
+Until Google verifies the app, users see a warning that the app is not verified. slotmirror
+tells people about it before they click "Sign in with Google" or "Connect Google". To continue:
+
+1. On the warning page, choose **Advanced**.
+2. Choose **Go to … (unsafe)**, where the dots are the name of your OAuth app.
+3. Approve the calendar access.
+
+This is the normal path for your own deployment. It does not replace verification, and it does
+not change the 7-day expiry of an app in **Testing** mode.

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountSync } from "../src/account-sync";
 import { notifyChange, webhookToken, webhookUrl } from "../src/webhooks";
 import fixture from "./fixtures/graph/calendar-view.json";
-import { BASE, signIn } from "./helpers";
+import { BASE, shortProviderTimeouts, signIn } from "./helpers";
 
 /** Two accounts with one rule from the first into the second, both with tokens. */
 async function setup(prefix: string) {
@@ -543,6 +543,27 @@ describe("echo filter", () => {
     await runDurableObjectAlarm(stub);
     // The echo needs no sync, but the requested cycle still follows in the next alarm.
     expect(await alarmOf(a)).not.toBeNull();
+  });
+
+  it("syncs and keeps the token if the feed read times out", async () => {
+    const { a, b, stub, notify, storedToken } = await setupGoogle("gtimeout", []);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    shortProviderTimeouts();
+    vi.mocked(globalThis.fetch).mockImplementation(() => new Promise<Response>(() => {}));
+
+    await notify();
+    await runDurableObjectAlarm(stub);
+
+    // The old token returns the same changes again, and the sync does not depend on them.
+    expect(await storedToken()).toBe("token-1");
+    expect(await alarmOf(a)).not.toBeNull();
+    expect(await alarmOf(b)).not.toBeNull();
+    const left = await runInDurableObject(stub, async (_instance, state) => ({
+      queue: await state.storage.get("changedCalendars"),
+      penalty: await state.storage.get("throttledUntil"),
+    }));
+    expect(left.queue ?? []).toEqual([]);
+    expect(left.penalty).toBeUndefined();
   });
 
   it("syncs and starts a new feed from the start of the day if Google expired the token", async () => {

@@ -103,6 +103,42 @@ file and that the dashboard does not hold. Do not rely on it. Set the value in t
 If you want a value in the file again, add a `vars` entry. Then use the file for that name and not
 the dashboard. The file value replaces the dashboard value on every deploy.
 
+## All-day events are mirrored by default
+
+New rules now mirror all-day events, unless the events are marked as free. Rules from the editor
+keep their behavior, because each rule stores `skipAllDay` in `rules.options`. The **Skip all-day
+events** switch stays on for a user with a rule that skips these events, and that user's new rules
+skip them too. A save changes the rules only if the user changes this switch. Then every rule of
+the user follows it.
+
+If such a user never saved the settings and removes their last rule, the switch goes off. Turn it
+on again before you add a rule, or the new rule mirrors all-day events.
+
+A rule without `skipAllDay` in `rules.options` starts to mirror all-day events after the update. The
+editor never writes such a rule. It can come from your own SQL, because `options` defaults to `{}`.
+To keep the old behavior, add `"skipAllDay": true` to the row before you update.
+
+All-day blocks in Outlook now lie in the time zone of the mailbox, if Microsoft Graph names that
+zone. slotmirror reads the zone once per day from the working hours of the mailbox, and this needs
+no new permission. If the mailbox names no usable zone, the blocks use UTC as before. If the read
+fails, the blocks keep the last known zone, or use UTC if no zone is known. slotmirror reads the
+zone again after 15 minutes.
+
+Two other cases also use UTC:
+
+- If Graph refuses an all-day write with status 400, and no other all-day write of the same batch
+  passes, the blocks use UTC for the day.
+- If a sync step has too few requests left for the read, its blocks use the last known zone, or UTC
+  if no zone is known.
+
+The Graph documentation says that `getSchedule`, the call behind this read, does not support
+personal Microsoft accounts. So all-day blocks on personal accounts probably stay in UTC. We did not
+test this on a live personal account.
+
+Existing blocks stay as they are, and a block written in UTC also stays that way. Such an all-day
+block stays off the local day, by one hour at CET and by eight hours at Pacific time, until its
+content changes.
+
 ## After the update
 
 Open your Worker and sign in. If a checklist shows instead of the sign-in page, a variable or secret

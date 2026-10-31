@@ -173,6 +173,17 @@ afterEach(() => {
 });
 
 describe("silence check", () => {
+  it("links the admin page without the trailing slashes of PUBLIC_URL", async () => {
+    const alerts = acceptAlerts();
+    const ruleId = await seedRule("slashes", userId);
+    await addRun(ruleId, NOON - 4 * HOUR);
+
+    await checkSilentRules({ ...env, PUBLIC_URL: ` ${env.PUBLIC_URL}/// ` }, NOON);
+
+    expect(alerts[0]?.text).toContain(`${env.PUBLIC_URL}/admin`);
+    expect(alerts[0]?.text).not.toContain("//admin");
+  });
+
   it("alerts for an active rule without a run for 3 hours, without content", async () => {
     const alerts = acceptAlerts();
     const ruleId = await seedRule("silent", userId);

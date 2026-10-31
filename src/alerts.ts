@@ -129,7 +129,8 @@ export function alertsConfigured(env: Env): boolean {
 
 /** The admin page of this deployment, or nothing without PUBLIC_URL. */
 function adminLink(env: Env): string {
-  const base = env.PUBLIC_URL?.trim().replace(/\/+$/, "");
+  let base = env.PUBLIC_URL?.trim() ?? "";
+  while (base.endsWith("/")) base = base.slice(0, -1);
   return base ? `${base}/admin` : "";
 }
 

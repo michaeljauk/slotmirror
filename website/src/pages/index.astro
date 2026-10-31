@@ -275,16 +275,16 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
           <h2>One page for every direction</h2>
           <p class="lead">
             Each calendar gets a card: where its events go and how much shows there. The overview
-            on the right shows all directions at once.
+            shows all directions at once.
           </p>
           <figure class="shot">
             <Image
               src={editor}
               widths={[640, 960, editor.width]}
               sizes="(max-width: 1120px) 100vw, 1080px"
-              alt="The sync editor of slotmirror, with one card per calendar and an overview of all directions"
+              alt="The rules page of slotmirror, with one card per calendar and an overview of all directions"
             />
-            <figcaption>The sync editor, with three demo accounts.</figcaption>
+            <figcaption>The rules page, with three demo accounts.</figcaption>
           </figure>
         </div>
       </section>
@@ -367,24 +367,20 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         </div>
       </section>
 
-      <section id="changelog">
-        <div class="wrap">
-          <h2>Changelog</h2>
-          <p class="changes">
-            {
-              latest ? (
-                <>
-                  <span class="version">{latest[1]}</span>
-                  <time datetime={latest[2]}>{latest[2]}</time>
-                </>
-              ) : (
-                <span>No release yet.</span>
-              )
-            }
-            <a href={page("changelog/")}>All releases</a>
-          </p>
-        </div>
-      </section>
+      {
+        latest && (
+          <section id="changelog">
+            <div class="wrap">
+              <h2>Changelog</h2>
+              <p class="changes">
+                <span class="version">{latest[1]}</span>
+                <time datetime={latest[2]}>{latest[2]}</time>
+                <a href={page("changelog/")}>All releases</a>
+              </p>
+            </div>
+          </section>
+        )
+      }
 
       {
         waitlist && (

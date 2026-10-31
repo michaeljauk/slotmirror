@@ -179,9 +179,7 @@ describe("working hours of an account", () => {
       .filter(([input]) => /checked/.test(input))
       .map(([input]) => input.match(/value="(\d)"/)?.[1]);
     expect(checked).toEqual(["1", "2", "3", "4", "5"]);
-    expect(fieldset).toContain(
-      'title="You turn it on per calendar in the sync settings. Without working hours the whole day counts."',
-    );
+    expect(fieldset).toMatch(/name="workHoursOn"[^>]*checked/);
     expect(html).toMatch(/<details class="rename" open/);
 
     const cases = [
@@ -232,10 +230,9 @@ describe("working hours of an account", () => {
     const empty = settingsForm({ workTimeZone: "Europe/Vienna" }, []);
     expect((await post(`/accounts/${w}/settings`, cookie, empty)).status).toBe(302);
     expect(await accountHoursOf(user.id, w)).toBeNull();
-    // A form without hours shows no ticked day, so that saving the name sets no hours.
+    // A form without hours is switched off, so that saving the name sets no hours.
     const fieldset = hoursFieldset(await page(cookie, "/"), w);
-    expect(fieldset).not.toMatch(/name="workDays"[^>]*checked/);
-    expect(fieldset).not.toContain("No working hours");
+    expect(fieldset).not.toMatch(/name="workHoursOn"[^>]*checked/);
 
     // All seven days and no times filter nothing, so they are none as well.
     const allDays = settingsForm({}, ["1", "2", "3", "4", "5", "6", "7"]);
@@ -397,12 +394,59 @@ describe("the account settings form", () => {
     const { user, cookie, w } = await setup("acctenter");
     await setAccountWorkHours(env, user, w, OFFICE);
     const form = settingsOf(await page(cookie, "/"), w);
-    expect(form).toContain("No working hours");
     const buttons = form.match(/<button[^>]*>/g) ?? [];
     const submits = buttons.filter((button) => !/type="button"/.test(button));
     // Enter submits with the first submit button of the form, so that one must not clear.
+    expect(submits).toHaveLength(1);
     expect(submits[0]).not.toContain('name="workHours"');
-    expect(submits.some((button) => button.includes('value="none"'))).toBe(true);
+  });
+
+  it("clears the hours with the switch off, whatever the prefilled fields say", async () => {
+    const { user, cookie, w } = await setup("acctswitch");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    const off = settingsForm({ workStart: "09:00", workEnd: "17:00" }, ["1"], {
+      workHoursSwitch: "1",
+    });
+    expect((await post(`/accounts/${w}/settings`, cookie, off)).status).toBe(302);
+    expect(await accountHoursOf(user.id, w)).toBeNull();
+  });
+
+  it("sets the hours and the directions in one save, and ticks every direction for new hours", async () => {
+    const { user, cookie, w, g } = await setup("acctapply");
+    await setDirection(env, user, g, w, "busy");
+    const fresh = hoursFieldset(await page(cookie, "/"), w);
+    expect(fresh).toMatch(/name="applyFrom" value="[^"]+" checked/);
+    expect(await page(cookie, "/")).not.toContain("filter nothing yet");
+
+    const body = settingsForm(
+      { workStart: "08:00", workEnd: "18:00", workTimeZone: "Europe/Vienna" },
+      ["1", "2", "3", "4", "5"],
+      { workHoursSwitch: "1", workHoursOn: "1", applyFromShown: g, applyFrom: g },
+    );
+    expect((await post(`/accounts/${w}/settings`, cookie, body)).status).toBe(302);
+    const state = await loadEditorState(env, user.id);
+    const direction = state.directions.find((d) => d.from === g && d.to === w);
+    expect(direction?.options?.workDays).toEqual([1, 2, 3, 4, 5]);
+    expect(await page(cookie, "/")).toContain("used by 1 of 1 direction");
+  });
+
+  it("warns on the account while hours filter nothing", async () => {
+    const { user, cookie, w, g } = await setup("acctwarn");
+    await setAccountWorkHours(env, user, w, OFFICE);
+    expect(await page(cookie, "/")).toContain("nothing copies into this account yet");
+    await setDirection(env, user, g, w, "busy");
+    const html = await page(cookie, "/");
+    expect(html).toContain("filter nothing yet");
+    expect(html).toContain(`href="/?settings=${w}#account-${w}"`);
+  });
+
+  it("returns to the source card after a save that came from the rules", async () => {
+    const { cookie, w, g } = await setup("acctreturn");
+    const html = await page(cookie, `/?settings=${w}&from=${g}`);
+    expect(html).toContain(`name="returnSource" value="${g}"`);
+    const body = new URLSearchParams({ name: "Office", returnSource: g });
+    const response = await post(`/accounts/${w}/settings`, cookie, body);
+    expect(response.headers.get("location")).toBe(`/rules?open=${encodeURIComponent(g)}`);
   });
 
   it("leaves the end field enabled without the script, and the script disables it", async () => {
@@ -488,7 +532,7 @@ describe("working hours per target", () => {
     const { user, cookie, w, g } = await setup("targetnone");
     await setDirection(env, user, g, w, "busy");
     const row = targetRow(await page(cookie, `/rules?open=${g}`), g, w);
-    expect(row).toContain(`href="/?settings=${w}#account-${w}"`);
+    expect(row).toContain(`href="/?settings=${w}&amp;from=${g}#account-${w}"`);
     expect(row).toContain("Set working hours");
     expect(row).not.toContain('name="workHours"');
 

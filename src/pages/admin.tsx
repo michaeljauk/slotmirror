@@ -8,6 +8,9 @@ import type { CurrentUser } from "../users";
 import { ActivityTable, describeCompare } from "./activity";
 import { Layout } from "./layout";
 
+/** Rows of the log on the admin page; `/admin/activity` shows all of them. */
+const ADMIN_ACTIVITY_ROWS = 10;
+
 export interface AdminUserRow {
   id: string;
   email: string;
@@ -63,7 +66,7 @@ export function AdminPage(props: {
           </div>
         ) : null}
         <div class="card">
-          <table class="table">
+          <table class="table stack">
             <thead>
               <tr>
                 <th>{t.admin.email}</th>
@@ -76,20 +79,26 @@ export function AdminPage(props: {
             <tbody>
               {props.users.map((row) => (
                 <tr>
-                  <td>{row.email}</td>
-                  <td>
-                    <span class={row.role === "admin" ? "badge admin" : "badge"}>
-                      {t.roles[row.role]}
+                  <td data-label={t.admin.email}>{row.email}</td>
+                  <td data-label={t.admin.role}>
+                    <span>
+                      <span class={row.role === "admin" ? "badge admin" : "badge"}>
+                        {t.roles[row.role]}
+                      </span>
+                      {row.active === 0 ? <span class="badge">{t.admin.inactive}</span> : null}
                     </span>
-                    {row.active === 0 ? <span class="badge">{t.admin.inactive}</span> : null}
                   </td>
-                  <td>
-                    {row.accounts}
-                    {row.needsReconnect > 0 ? (
-                      <span class="badge error">{t.admin.needsReconnect(row.needsReconnect)}</span>
-                    ) : null}
+                  <td data-label={t.admin.accounts}>
+                    <span>
+                      {row.accounts}
+                      {row.needsReconnect > 0 ? (
+                        <span class="badge error">
+                          {t.admin.needsReconnect(row.needsReconnect)}
+                        </span>
+                      ) : null}
+                    </span>
                   </td>
-                  <td class="muted">
+                  <td class="muted" data-label={t.admin.lastSignIn}>
                     {row.lastSignInAt ? formatTimestamp(row.lastSignInAt) : t.admin.never}
                   </td>
                   <td>
@@ -217,11 +226,14 @@ export function AdminPage(props: {
         <div class="section-head">
           <div>
             <h2>{t.activity.title}</h2>
-            <p class="lead">{t.activity.orgLead}</p>
+            <p class="lead">{t.admin.activityLead(ADMIN_ACTIVITY_ROWS)}</p>
           </div>
+          <a class="button" href="/admin/activity">
+            {t.admin.activityAll}
+          </a>
         </div>
         <div class="card">
-          <ActivityTable rows={props.activity} showUser />
+          <ActivityTable rows={props.activity.slice(0, ADMIN_ACTIVITY_ROWS)} showUser />
         </div>
       </section>
     </Layout>

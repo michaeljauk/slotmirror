@@ -5,14 +5,19 @@ import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { LanguageSwitch, Layout } from "./layout";
 import { OperatorNotice } from "./operator-notice";
-import { MAX_NAME_LENGTH, type EditorAccount, type EditorState } from "../editor";
+import {
+  MAX_NAME_LENGTH,
+  type EditorAccount,
+  type EditorDirection,
+  type EditorState,
+} from "../editor";
 import { ACCOUNT_COLOR_KEYS, ACCOUNT_COLORS } from "../colors";
-import { ALL_WEEKDAYS, isTimeZone } from "../sync/working-hours";
+import { ALL_WEEKDAYS, hasWorkingHours, isTimeZone } from "../sync/working-hours";
 import {
   colorStyle,
   ReconnectNotice,
   reconnectUrl,
-  SourcePills,
+  workHoursText,
   type Notice,
 } from "./calendar-editor";
 import type { CalendarRow } from "../calendars";
@@ -75,89 +80,180 @@ export interface AccountSettingsDraft {
   name: string;
   color: string;
   hours: {
+    on: boolean;
     workDays: number[];
     workStart: string;
     workEnd: string;
     untilMidnight: boolean;
     workTimeZone: string;
+    /** Sources whose direction the working hours apply to. */
+    applyFrom: string[];
   } | null;
 }
 
+/** What the fields show before an account has working hours. They count only once switched on. */
+const DEFAULT_HOURS = { workDays: [1, 2, 3, 4, 5], workStart: "09:00", workEnd: "17:00" };
+
+/** Directions that copy into an account, that is, the ones that working hours can filter. */
+function incomingDirections(editor: EditorState, accountId: string): EditorDirection[] {
+  return editor.directions.filter(
+    (direction) =>
+      direction.to === accountId && direction.ruleId !== null && direction.effective !== "off",
+  );
+}
+
+function usesWorkHours(direction: EditorDirection): boolean {
+  return direction.options !== null && hasWorkingHours(direction.options);
+}
+
 /**
- * The working hours of an account: weekdays, a time range and its time zone. Without a stored
- * zone the field shows the deployment's zone; the page script puts in the browser's. A draft
- * shows what the user typed instead.
+ * The working hours of an account and the directions they filter, on one switch. Hours alone
+ * filter nothing, so the form names the directions, and for new hours it ticks all of them. Without
+ * a stored zone the field shows the deployment's zone; the page script puts in the browser's. A
+ * draft shows what the user typed instead.
  */
-function AccountHours(props: { account: EditorAccount; draft?: AccountSettingsDraft["hours"] }) {
+function AccountHours(props: {
+  account: EditorAccount;
+  editor: EditorState;
+  draft?: AccountSettingsDraft["hours"];
+}) {
   const { t, timeZone } = useI18n();
   const hours = props.account.workHours;
   const draft = props.draft;
-  // Without hours no day is ticked, so that saving the name does not set hours by accident.
-  const days = new Set<number>(draft?.workDays ?? hours?.workDays ?? []);
+  const on = draft ? draft.on : hours !== null;
+  const days = new Set<number>(draft?.workDays ?? hours?.workDays ?? DEFAULT_HOURS.workDays);
   const untilMidnight = draft ? draft.untilMidnight : hours?.workEnd === "24:00";
-  const start = draft ? draft.workStart : (hours?.workStart ?? "");
-  const end = draft ? draft.workEnd : untilMidnight ? "" : (hours?.workEnd ?? "");
+  const start = draft ? draft.workStart : hours ? hours.workStart : DEFAULT_HOURS.workStart;
+  const storedEnd = hours ? hours.workEnd : DEFAULT_HOURS.workEnd;
+  const end = draft ? draft.workEnd : untilMidnight ? "" : storedEnd;
   const storedZone = hours?.workTimeZone ?? "";
   const zone = draft ? draft.workTimeZone : storedZone || timeZone;
+  const incoming = incomingDirections(props.editor, props.account.id);
+  const applied = (direction: EditorDirection) =>
+    draft ? draft.applyFrom.includes(direction.from) : hours ? usesWorkHours(direction) : true;
   return (
     <fieldset class="account-hours">
       <legend>{t.accounts.workHoursLabel}</legend>
       <input type="hidden" name="workHoursShown" value="1" />
-      <span class="weekday-row" role="group" aria-label={t.accounts.workHoursLabel}>
-        {ALL_WEEKDAYS.map((day) => (
-          <label class="weekday" title={t.editor.weekdayNames[day - 1]}>
-            <input
-              type="checkbox"
-              name="workDays"
-              value={String(day)}
-              checked={days.has(day)}
-              aria-label={t.editor.weekdayNames[day - 1]}
-            />
-            <span>{t.editor.weekdays[day - 1]}</span>
+      <input type="hidden" name="workHoursSwitch" value="1" />
+      <label class="hours-switch">
+        <span>{t.accounts.workHoursSwitch}</span>
+        <input type="checkbox" role="switch" name="workHoursOn" value="1" checked={on} />
+      </label>
+      <div class="hours-fields">
+        <span class="weekday-row" role="group" aria-label={t.accounts.workHoursLabel}>
+          {ALL_WEEKDAYS.map((day) => (
+            <label class="weekday" title={t.editor.weekdayNames[day - 1]}>
+              <input
+                type="checkbox"
+                name="workDays"
+                value={String(day)}
+                checked={days.has(day)}
+                aria-label={t.editor.weekdayNames[day - 1]}
+              />
+              <span>{t.editor.weekdays[day - 1]}</span>
+            </label>
+          ))}
+        </span>
+        <span class="work-time">
+          <label>
+            <span>{t.editor.workStart}</span>
+            <input type="time" name="workStart" value={start} />
           </label>
-        ))}
-      </span>
-      <span class="work-time">
-        <input
-          type="time"
-          name="workStart"
-          value={start}
-          aria-label={t.editor.workStart}
-          title={t.editor.workStart}
-        />
-        {"–"}
-        {/* A time field cannot hold 24:00; "until midnight" stands for it. The page script disables
-            the field then; without the script the server ignores it. */}
-        <input
-          type="time"
-          name="workEnd"
-          value={end}
-          aria-label={t.editor.workEnd}
-          title={t.editor.workEnd}
-        />
-        <label class="work-midnight">
-          <input type="checkbox" name="workUntilMidnight" value="1" checked={untilMidnight} />
-          {t.editor.workUntilMidnight}
+          {/* A time field cannot hold 24:00; "until midnight" stands for it. The page script
+              disables the field then; without the script the server ignores it. */}
+          <label>
+            <span>{t.editor.workEnd}</span>
+            <input type="time" name="workEnd" value={end} />
+          </label>
+          <label class="work-midnight">
+            <input type="checkbox" name="workUntilMidnight" value="1" checked={untilMidnight} />
+            {t.editor.workUntilMidnight}
+          </label>
+        </span>
+        <p class="fineprint">{t.accounts.workHoursHint}</p>
+        <label class="work-zone-field">
+          <span>{t.editor.workTimeZone}</span>
+          <input
+            type="text"
+            name="workTimeZone"
+            class="work-zone"
+            maxlength={64}
+            value={zone}
+            data-browser-zone={draft || storedZone ? undefined : "1"}
+            autocomplete="off"
+          />
         </label>
-      </span>
-      <input
-        type="text"
-        name="workTimeZone"
-        class="work-zone"
-        maxlength={64}
-        value={zone}
-        data-browser-zone={draft || storedZone ? undefined : "1"}
-        aria-label={t.editor.workTimeZone}
-        title={t.editor.workTimeZone}
-        autocomplete="off"
-      />
-      {storedZone !== "" && !isTimeZone(storedZone) ? (
-        <p class="fineprint work-zone-unknown">{t.editor.workZoneUnknown(storedZone)}</p>
-      ) : null}
-      <p class="fineprint" title={t.accounts.workHoursTitle}>
-        {t.accounts.workHoursHint}
-      </p>
+        {storedZone !== "" && !isTimeZone(storedZone) ? (
+          <p class="fineprint work-zone-unknown">{t.editor.workZoneUnknown(storedZone)}</p>
+        ) : null}
+        {incoming.length > 0 ? (
+          <div class="hours-apply">
+            <span class="hours-apply-title">{t.accounts.workHoursApply}</span>
+            {incoming.map((direction) => (
+              <label class="hours-apply-row">
+                <input type="hidden" name="applyFromShown" value={direction.from} />
+                <input
+                  type="checkbox"
+                  name="applyFrom"
+                  value={direction.from}
+                  checked={applied(direction)}
+                />
+                {props.editor.accounts.find((a) => a.id === direction.from)?.name}
+              </label>
+            ))}
+          </div>
+        ) : (
+          <p class="fineprint">{t.accounts.workHoursNoRules}</p>
+        )}
+      </div>
     </fieldset>
+  );
+}
+
+/**
+ * What the working hours of an account do right now, in the account's row. Hours that no direction
+ * uses filter nothing, and only this line says so outside the rules.
+ */
+function WorkHoursStatus(props: { account: EditorAccount; editor: EditorState }) {
+  const { t } = useI18n();
+  const hours = props.account.workHours;
+  if (!hours) return null;
+  const text = workHoursText(t, hours);
+  const incoming = incomingDirections(props.editor, props.account.id);
+  const used = incoming.filter(usesWorkHours).length;
+  if (incoming.length === 0) return <div class="item-meta">{t.accounts.workHoursIdle(text)}</div>;
+  if (used > 0) {
+    return <div class="item-meta">{t.accounts.workHoursInUse(text, used, incoming.length)}</div>;
+  }
+  return (
+    <div class="item-meta warning">
+      {t.accounts.workHoursUnused(text)}{" "}
+      <a href={`/?settings=${encodeURIComponent(props.account.id)}#account-${props.account.id}`}>
+        {t.accounts.workHoursChoose}
+      </a>
+    </div>
+  );
+}
+
+/** Until the first rule runs: the three steps of the setup, with the next one as a link. */
+function SetupSteps(props: { connected: number }) {
+  const { t } = useI18n();
+  const ready = props.connected >= 2;
+  return (
+    <div class="card first-steps">
+      <h2>{t.editor.firstStepsTitle}</h2>
+      <ol>
+        <li class={props.connected >= 1 ? "done" : ""}>{t.editor.stepConnectFirst}</li>
+        <li class={ready ? "done" : ""}>{t.editor.stepConnectSecond}</li>
+        <li>{t.editor.stepChooseRules}</li>
+      </ol>
+      {ready ? (
+        <a class="button primary" href="/rules">
+          {t.editor.openRules}
+        </a>
+      ) : null}
+    </div>
   );
 }
 
@@ -178,6 +274,8 @@ export function HomePage(props: {
   openSettings?: string;
   /** What the user typed into the settings that start open. */
   draft?: AccountSettingsDraft;
+  /** The source card of the rules page that the settings return to after a save. */
+  returnSource?: string;
 }) {
   const { t, formatDate, formatTimestamp, formatRelative } = useI18n();
 
@@ -223,6 +321,10 @@ export function HomePage(props: {
       : t.accounts.kindMicrosoftWork;
   }
 
+  const activeDirections = props.editor.directions.filter(
+    (direction) => direction.effective !== "off",
+  ).length;
+
   return (
     <Layout title={t.accounts.title} user={props.user} active="accounts">
       <section class="section">
@@ -237,13 +339,10 @@ export function HomePage(props: {
 
         {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
 
-        <div class="card">
-          {props.accounts.length === 0 ? (
-            <div class="empty">
-              <strong>{t.accounts.emptyTitle}</strong>
-              {t.accounts.emptyText}
-            </div>
-          ) : (
+        {activeDirections === 0 ? <SetupSteps connected={props.accounts.length} /> : null}
+
+        {props.accounts.length === 0 ? null : (
+          <div class="card">
             <ul class="list">
               {props.accounts.map((account) => {
                 const editor = props.editor.accounts.find((a) => a.id === account.id);
@@ -273,6 +372,7 @@ export function HomePage(props: {
                       >
                         {accountKind(account)}
                       </div>
+                      {editor ? <WorkHoursStatus account={editor} editor={props.editor} /> : null}
                     </div>
                     {account.needsReconnect ? (
                       <a
@@ -286,12 +386,15 @@ export function HomePage(props: {
                       syncStatus(props.statuses.get(account.id))
                     )}
                     <details class="rename" open={props.openSettings === account.id}>
-                      <summary class="link-button quiet">{t.accounts.rename}</summary>
+                      <summary class="link-button">{t.accounts.rename}</summary>
                       <form
                         method="post"
                         action={`/accounts/${account.id}/settings`}
                         class="rename-form"
                       >
+                        {props.returnSource ? (
+                          <input type="hidden" name="returnSource" value={props.returnSource} />
+                        ) : null}
                         <label>
                           <span>{t.accounts.nameLabel}</span>
                           <input
@@ -333,34 +436,30 @@ export function HomePage(props: {
                           </span>
                           <p class="fineprint">{t.accounts.colorHint}</p>
                         </fieldset>
-                        {editor ? <AccountHours account={editor} draft={draft?.hours} /> : null}
+                        {editor ? (
+                          <AccountHours
+                            account={editor}
+                            editor={props.editor}
+                            draft={draft?.hours}
+                          />
+                        ) : null}
                         {/* Enter submits with the first submit button, so Save comes first. */}
                         <div class="rename-actions">
                           <button type="submit" class="button small">
                             {t.accounts.save}
                           </button>
-                          {editor?.workHours ? (
-                            <button
-                              type="submit"
-                              name="workHours"
-                              value="none"
-                              class="link-button quiet"
-                            >
-                              {t.accounts.workHoursNone}
-                            </button>
-                          ) : null}
+                          <a class="link-button danger" href={`/accounts/${account.id}/disconnect`}>
+                            {t.accounts.disconnect}
+                          </a>
                         </div>
                       </form>
                     </details>
-                    <a class="link-button quiet" href={`/accounts/${account.id}/disconnect`}>
-                      {t.accounts.disconnect}
-                    </a>
                   </li>
                 );
               })}
             </ul>
-          )}
-        </div>
+          </div>
+        )}
 
         {props.editor.accounts.some((a) => a.needsReconnect) ? null : (
           <OperatorNotice text={props.operatorNotice} />
@@ -381,41 +480,19 @@ export function HomePage(props: {
         ) : null}
       </section>
 
-      <section class="section">
-        <div class="section-head">
-          <div>
-            <h2>{t.editor.title}</h2>
-            <p class="lead">{t.editor.lead}</p>
+      {activeDirections > 0 ? (
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <h2>{t.editor.title}</h2>
+              <p class="lead">{t.editor.activeDirections(activeDirections)}</p>
+            </div>
+            <a class="button" href="/rules">
+              {t.editor.openRules}
+            </a>
           </div>
-          <a class="button" href="/rules">
-            {t.editor.manage}
-          </a>
-        </div>
-
-        <div class="card">
-          {props.editor.directions.every((direction) => direction.effective === "off") ? (
-            <div class="empty">{t.rules.overviewEmpty}</div>
-          ) : (
-            <ul class="list">
-              {props.editor.accounts
-                .filter((account) => account.calendar)
-                .map((account) => (
-                  <li>
-                    <div class="item-main">
-                      <a
-                        class="item-title plain-link"
-                        href={`/rules?open=${account.id}#src-${account.id}`}
-                      >
-                        {t.editor.sourceTitle(account.name)}
-                      </a>
-                      <SourcePills state={props.editor} source={account} />
-                    </div>
-                  </li>
-                ))}
-            </ul>
-          )}
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       <FeedSection feeds={props.feeds} calendars={props.calendars} />
     </Layout>

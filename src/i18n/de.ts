@@ -3,9 +3,10 @@ import type { Messages } from "./en";
 export const de: Messages = {
   nav: {
     accounts: "Konten",
-    rules: "Sync",
+    rules: "Regeln",
     activity: "Aktivität",
     admin: "Verwaltung",
+    main: "Hauptnavigation",
     accountMenu: "Kontomenü",
     signOut: "Abmelden",
     deleteMyData: "Meine Daten löschen",
@@ -29,10 +30,8 @@ export const de: Messages = {
   accounts: {
     title: "Konten",
     lead: "Kalender, aus denen diese App liest und in die sie schreibt.",
-    emptyTitle: "Noch kein Konto verbunden",
     googleNotice: "Google zeigt gleich, dass die App nicht überprüft ist.",
     googleNoticeSteps: "Öffne dort die erweiterten Optionen und gehe über den Link weiter zur App.",
-    emptyText: "Verbinde mindestens zwei Kalender, um Belegt-Zeiten zwischen ihnen zu spiegeln.",
     kindGoogle: "Google Kalender",
     kindMicrosoftWork: "Microsoft 365 · Geschäftskonto",
     kindMicrosoftPersonal: "Microsoft 365 · privates Konto",
@@ -50,10 +49,16 @@ export const de: Messages = {
     disconnect: "Trennen",
     rename: "Einstellungen",
     workHoursLabel: "Arbeitszeit",
-    workHoursHint: "Gilt für alles, was in dieses Konto kopiert wird.",
-    workHoursTitle:
-      "Im Sync schaltest du sie pro Kalender ein. Ohne Arbeitszeit zählt der ganze Tag.",
-    workHoursNone: "Keine Arbeitszeit",
+    workHoursSwitch: "Nur während der Arbeitszeit kopieren",
+    workHoursHint: "Lass beide Zeiten leer für ganze Tage.",
+    workHoursApply: "Gilt für Kopien von",
+    workHoursNoRules:
+      "Noch kopiert nichts in dieses Konto. Sobald das so ist, schalte die Arbeitszeit in den Regeln ein.",
+    workHoursInUse: (hours, used, total) =>
+      `Arbeitszeit ${hours} · gilt für ${used} von ${total} ${total === 1 ? "Richtung" : "Richtungen"}`,
+    workHoursUnused: (hours) => `Arbeitszeit ${hours} filtert noch nichts.`,
+    workHoursChoose: "Richtungen wählen",
+    workHoursIdle: (hours) => `Arbeitszeit ${hours} · noch kopiert nichts in dieses Konto`,
     colorLabel: "Farbe",
     colorHint: "Nur auf diesen Seiten, nicht in deinen Kalendern.",
     colorAuto: "Automatisch",
@@ -133,7 +138,7 @@ export const de: Messages = {
     pausedShort: "Pausiert",
   },
   editor: {
-    title: "Wohin deine Termine gehen",
+    title: "Regeln",
     lead: "Pro Kalender: wohin seine Termine gehen und wie viel man dort sieht.",
     views: "Ansicht",
     viewList: "Liste",
@@ -157,6 +162,7 @@ export const de: Messages = {
     exception: "Ausnahme",
     reset: "zurücksetzen",
     checkReal: "Mit echten Terminen prüfen",
+    checkShort: "Prüfen",
     capNote: (level: string) =>
       `Die Richtlinie dieser Installation erlaubt hier höchstens „${level}“.`,
     readOnly: "slotmirror kann in diesen Kalender nicht schreiben.",
@@ -165,7 +171,7 @@ export const de: Messages = {
     moreOptions: "Mehr Optionen",
     save: "Speichern",
     matrixCorner: "Von ↓ · nach →",
-    matrixHint: "Klick auf ein Feld öffnet den Kalender links.",
+    matrixHint: "Klick auf ein Feld öffnet diesen Kalender.",
     cellGroup: "Gruppe",
     cellException: "Ausnahme",
     manyTargets: (count: number) => `${count} Kalender`,
@@ -174,6 +180,10 @@ export const de: Messages = {
     stepConnectFirst: "Verbinde dein erstes Kalenderkonto.",
     stepConnectSecond: "Verbinde ein zweites, zum Beispiel deinen Arbeits- oder Privatkalender.",
     stepChoose: "Lege hier fest, wohin die Termine jedes Kalenders gehen.",
+    stepChooseRules: "Lege in den Regeln fest, wohin die Termine jedes Kalenders gehen.",
+    openRules: "Regeln öffnen",
+    activeDirections: (count) =>
+      count === 1 ? "1 Richtung ist aktiv." : `${count} Richtungen sind aktiv.`,
     quickStartTitle: "Schnellstart",
     quickStartText: (count: number) =>
       `Alle ${count} Kalender blocken sich gegenseitig als „Belegt“. Details stellst du danach ein.`,
@@ -190,8 +200,13 @@ export const de: Messages = {
     blockTitleHint: "Diesen Titel tragen Kopien mit der Stufe „Als belegt“.",
     defaultBlockTitle: "Belegt",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
-    skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
+    skipCategoriesHint:
+      "Termine mit einer dieser Outlook-Kategorien werden nicht kopiert. Gross- und Kleinschreibung zählt nicht.",
+    skipCategoriesCommas: "Trenne Namen durch Kommas.",
     skipCategoriesPlaceholder: "Privat, Fokus",
+    skipCategoriesAdd: "Kategorie eingeben, dann Enter",
+    skipCategoriesRemove: (name) => `${name} entfernen`,
+    skipGroupTitle: "Nicht kopieren",
     skipColorsLabel: "Google-Termine mit diesen Farben auslassen",
     weekdays: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
     weekdayNames: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
@@ -326,6 +341,9 @@ export const de: Messages = {
     noTracking: "Es gibt kein Tracking, keine Analyse und keine Werbung.",
   },
   admin: {
+    activityLead: (count) =>
+      `Die letzten ${count} Ereignisse aller Nutzer dieser Instanz. Nur Metadaten.`,
+    activityAll: "Alle anzeigen",
     title: "Nutzer",
     lead: "Alle, die sich bei dieser Installation angemeldet haben. Kalenderinhalte bleiben privat.",
     email: "E-Mail",
@@ -390,6 +408,7 @@ export const de: Messages = {
     lead: "Deine letzten 100 Ereignisse: Anmeldungen, Änderungen und Synchronisierungen. Inhalte von Terminen werden nie protokolliert.",
     orgLead: "Die letzten 100 Ereignisse aller Personen dieser Installation. Nur Metadaten.",
     time: "Zeit",
+    account: "Konto",
     event: "Ereignis",
     details: "Details",
     empty: "Noch nichts passiert.",
@@ -430,7 +449,7 @@ export const de: Messages = {
       feed_deleted: "Frei/Belegt-Feed gelöscht",
     },
     changes: (create: number, update: number, remove: number) =>
-      `+${create} / ~${update} / −${remove}`,
+      `${create} neu, ${update} geändert, ${remove} entfernt`,
     preview: (changes: string) => `Vorschau ${changes}`,
     failedCount: (count: number) => `${count} fehlgeschlagen`,
     throttledCount: (count: number) => `${count} gedrosselt, neuer Versuch nach der Wartezeit`,
@@ -484,7 +503,7 @@ export const de: Messages = {
     lead: "Eine geheime Kalenderadresse für Personen außerhalb dieser Installation. Sie zeigt, wann du belegt bist, nie, was du tust.",
     empty: "Noch kein Feed.",
     noCalendars:
-      "Deine Kalender erscheinen hier, sobald du nach dem Verbinden eines Kontos die Sync-Einstellungen öffnest.",
+      "Deine Kalender erscheinen hier, sobald du nach dem Verbinden eines Kontos die Regeln öffnest.",
     feedTitle: (date) => `Feed vom ${date}`,
     renewedOn: (date) => `neue Adresse ${date}`,
     daysAhead: (count) => `${count} Tage voraus`,

@@ -25,7 +25,7 @@ import {
 import { setupStatus, signInProviders } from "./config";
 import { operatorNotice } from "./operator-notice";
 import { i18nFromContext, LOCALES } from "./i18n";
-import { ActivityPage } from "./pages/activity";
+import { ActivityPage, OrgActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
 import { DeleteUserPage } from "./pages/delete-user";
 import { DisconnectPage } from "./pages/disconnect";
@@ -46,6 +46,7 @@ import {
   renameAccount,
   setAccountColor,
   setAccountWorkHours,
+  setRuleDetails,
   type AccountWorkHours,
 } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
@@ -190,14 +191,22 @@ app.get("/", async (c) => {
   if (!user) {
     return render(c, <SignInPage providers={signInProviders(c.env)} />);
   }
-  return renderHome(c, user, { openSettings: c.req.query("settings") });
+  return renderHome(c, user, {
+    openSettings: c.req.query("settings"),
+    returnSource: c.req.query("from"),
+  });
 });
 
 /** The home page, with a notice and an account's settings open if given. */
 async function renderHome(
   c: Context<AppEnv>,
   user: CurrentUser,
-  options: { notice?: Notice; openSettings?: string; draft?: AccountSettingsDraft } = {},
+  options: {
+    notice?: Notice;
+    openSettings?: string;
+    draft?: AccountSettingsDraft;
+    returnSource?: string;
+  } = {},
   status: 200 | 400 = 200,
 ) {
   const { providers } = setupStatus(c.env);
@@ -228,6 +237,7 @@ async function renderHome(
       notice={options.notice}
       openSettings={options.openSettings}
       draft={options.draft}
+      returnSource={options.returnSource}
     />,
     status,
   );
@@ -237,11 +247,13 @@ async function renderHome(
 const accountColorField = z.enum(["auto", ...ACCOUNT_COLOR_KEYS]);
 
 /**
- * Working hours from the account settings form. No weekday and no time, or the button "No working
- * hours", mean none. A time field cannot hold 24:00; "until midnight" stands for it.
+ * Working hours from the account settings form. The switch off, no weekday and no time, or the
+ * button "No working hours" of an older page, mean none. A time field cannot hold 24:00; "until
+ * midnight" stands for it.
  */
 function workHoursFrom(form: FormData): AccountWorkHours | null {
   if (form.get("workHours") === "none") return null;
+  if (form.has("workHoursSwitch") && !form.has("workHoursOn")) return null;
   const text = (name: string) => {
     const value = form.get(name);
     return typeof value === "string" ? value.trim() : "";
@@ -265,6 +277,8 @@ function settingsDraft(accountId: string, form: FormData): AccountSettingsDraft 
     color: text("color") || "auto",
     hours: form.has("workHoursShown")
       ? {
+          on: form.has("workHoursOn") || !form.has("workHoursSwitch"),
+          applyFrom: form.getAll("applyFrom").filter((value) => typeof value === "string"),
           workDays: form.getAll("workDays").map((value) => Number(value)),
           workStart: text("workStart"),
           workEnd: text("workEnd"),
@@ -289,6 +303,8 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     const color = form.has("color") ? accountColorField.safeParse(form.get("color")) : null;
     if (color && !color.success) return c.text("Bad colour", 400);
     const hours = form.has("workHoursShown") ? accountWorkHours(c.env, workHoursFrom(form)) : null;
+    const back = form.get("returnSource");
+    const returnSource = typeof back === "string" ? back : "";
     const refuse = (text: string) =>
       renderHome(
         c,
@@ -297,6 +313,7 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
           notice: { kind: "error", text },
           openSettings: accountId,
           draft: settingsDraft(accountId, form),
+          returnSource: returnSource || undefined,
         },
         400,
       );
@@ -308,6 +325,16 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     if (hours) {
       try {
         await setAccountWorkHours(c.env, user, accountId, hours.hours);
+        // Hours filter only the directions that use them, so the form sets both. Without hours
+        // the write above already cleared every rule.
+        const applyFrom = new Set(form.getAll("applyFrom"));
+        const workHours = form
+          .getAll("applyFromShown")
+          .filter((from) => typeof from === "string")
+          .map((from) => ({ from, to: accountId, on: applyFrom.has(from) }));
+        if (hours.hours && workHours.length > 0) {
+          await setRuleDetails(c.env, user, { workHours });
+        }
       } catch (error) {
         if (error instanceof EditorConflict) return refuse(t.editor.saveConflict);
         throw error;
@@ -320,6 +347,7 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     if (form.has("name")) {
       await renameAccount(c.env, user, accountId, typeof name === "string" ? name : "");
     }
+    if (returnSource) return c.redirect(`/rules?open=${encodeURIComponent(returnSource)}`);
     return c.redirect(`/#account-${encodeURIComponent(accountId)}`);
   });
 }
@@ -500,6 +528,13 @@ app.get("/admin", async (c) => {
       }}
     />,
   );
+});
+
+app.get("/admin/activity", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  return render(c, <OrgActivityPage user={user} rows={await orgActivity(c.env.DB, user.orgId)} />);
 });
 
 // Start a comparison of every calendar of the org that a rule writes into, and of the writable

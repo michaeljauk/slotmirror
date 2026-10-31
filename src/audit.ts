@@ -344,6 +344,8 @@ export interface ActivityRow {
   createdAt: string;
   /** Set on the org-wide view only. */
   email: string | null;
+  /** The connected account, on the view of its own user only. Admins do not get this address. */
+  accountEmail?: string | null;
 }
 
 /** The latest events of one user. */
@@ -354,8 +356,10 @@ export async function userActivity(
 ): Promise<ActivityRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT id, kind, detail, created_at AS createdAt, NULL AS email
-       FROM audit_events WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, NULL AS email,
+              a.email AS accountEmail
+       FROM audit_events e LEFT JOIN accounts a ON a.id = e.account_id
+       WHERE e.user_id = ? ORDER BY e.created_at DESC, e.id DESC LIMIT ?`,
     )
     .bind(userId, limit)
     .all<ActivityRow>();

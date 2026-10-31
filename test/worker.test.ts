@@ -268,11 +268,11 @@ describe("admin page", () => {
     ).run();
     const html = await page();
     expect(html).toContain("1 user has an account that needs reconnecting.");
-    const row = html.slice(html.indexOf("<td>owner@example.com</td>"));
+    const row = html.slice(html.indexOf('<td data-label="Email">owner@example.com</td>'));
     expect(row.slice(0, row.indexOf("</tr>"))).toContain(
       '<span class="badge error">1 needs reconnecting</span>',
     );
-    const adminRow = html.slice(html.indexOf("<td>admin@example.com</td>"));
+    const adminRow = html.slice(html.indexOf('<td data-label="Email">admin@example.com</td>'));
     expect(adminRow.slice(0, adminRow.indexOf("</tr>"))).not.toContain("badge error");
     expect(html).not.toContain("broken@example.com");
   });

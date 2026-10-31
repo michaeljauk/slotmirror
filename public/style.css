@@ -3,13 +3,17 @@
   --surface: #ffffff;
   --text: #1c1c1a;
   --muted: #6e6d68;
-  --faint: #9a9993;
+  /* Secondary text. Meets 4.5:1 on the page and card backgrounds. */
+  --faint: #6e6d68;
+  /* Marks and borders only, never text: it stays below 3:1. */
+  --deco: #9a9993;
   --line: #e6e5e0;
   --line-strong: #d6d5cf;
   --accent: #2b59c3;
   --accent-hover: #2149a8;
   --page-width: 1040px;
   --page-gutter: 20px;
+  --sidebar-width: 224px;
   --ok: #2f8a57;
   --danger: #b4372e;
   --radius: 10px;
@@ -100,41 +104,163 @@ main {
   color: var(--text);
 }
 
-/* Logo left; navigation and account menu together on the right. */
+/*
+ * Signed in: a fixed sidebar with the footer at its bottom. Below 900px the same elements flow as
+ * a header, and the links form a row, so that a phone reaches each page with one tap.
+ */
+.sidebar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 10px var(--page-gutter) 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
 .nav {
   display: flex;
-  gap: 4px;
-  margin-left: auto;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  gap: 2px;
+  margin: 0 calc(var(--page-gutter) * -1);
+  padding: 0 var(--page-gutter);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav a {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-bottom: 2px solid transparent;
   color: var(--muted);
-  padding: 6px 10px;
-  border-radius: 6px;
   font-weight: 500;
 }
 
 .nav a:hover {
-  background: #f1f0ec;
   color: var(--text);
   text-decoration: none;
 }
 
 .nav a[aria-current="page"] {
+  border-bottom-color: var(--accent);
   color: var(--text);
-  background: #f1f0ec;
+}
+
+.nav-icon {
+  flex: none;
+}
+
+@media (min-width: 900px) {
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    width: var(--sidebar-width);
+    padding: 16px 12px 58px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+    overflow-y: auto;
+  }
+
+  .sidebar .brand {
+    padding: 2px 8px;
+  }
+
+  .nav {
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .nav a {
+    min-height: 36px;
+    padding: 0 10px;
+    border-bottom: 0;
+    border-radius: 7px;
+  }
+
+  .nav a:hover {
+    background: #f1f0ec;
+  }
+
+  .nav a[aria-current="page"] {
+    background: #eceff8;
+    color: var(--accent);
+  }
+
+  .has-sidebar main {
+    max-width: none;
+    margin: 0 0 0 var(--sidebar-width);
+    padding-right: max(28px, calc((100vw - var(--sidebar-width) - var(--page-width)) / 2));
+    padding-left: max(28px, calc((100vw - var(--sidebar-width) - var(--page-width)) / 2));
+  }
+
+  .has-sidebar .footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    z-index: 7;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    width: var(--sidebar-width);
+    padding: 10px 20px 14px;
+  }
+
+  .has-sidebar .footer-name,
+  .has-sidebar .footer-dot {
+    display: none;
+  }
 }
 
 .user-button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px 3px 3px;
+  gap: 8px;
+  min-height: 40px;
+  padding: 3px 8px 3px 3px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: none;
   color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
   cursor: pointer;
+}
+
+.user-email {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 900px) {
+  .user-button {
+    border-radius: 8px;
+  }
+
+  .user-email {
+    display: block;
+  }
 }
 
 .user-button:hover,
@@ -147,11 +273,11 @@ main {
   font-size: 10px;
 }
 
-/* Popover menu, aligned with the right edge of the content column. */
+/* Popover menu: under the account button on a phone, above it in the sidebar. */
 .menu {
   inset: auto;
-  top: 52px;
-  right: calc(max(0px, (100vw - var(--page-width)) / 2) + var(--page-gutter));
+  top: 56px;
+  right: var(--page-gutter);
   min-width: 240px;
   margin: 0;
   padding: 6px;
@@ -162,6 +288,16 @@ main {
   box-shadow:
     0 8px 24px rgb(28 28 26 / 10%),
     0 1px 2px rgb(28 28 26 / 6%);
+}
+
+@media (min-width: 900px) {
+  .menu {
+    top: auto;
+    right: auto;
+    bottom: 104px;
+    left: 12px;
+    width: 280px;
+  }
 }
 
 .menu form {
@@ -317,6 +453,20 @@ h2 {
   color: var(--danger);
 }
 
+.item-meta.warning {
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #fbf3e2;
+  color: #7a5410;
+}
+
+.item-meta.warning a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .provider-icon {
   display: grid;
   place-items: center;
@@ -342,7 +492,7 @@ h2 {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--faint);
+  background: var(--deco);
 }
 
 .status.ok::before {
@@ -429,8 +579,13 @@ h2 {
   font-size: 13px;
 }
 
-.link-button.quiet:hover {
+.link-button.quiet:hover,
+.link-button.danger {
   color: var(--danger);
+}
+
+.list summary.link-button {
+  font-size: 13px;
 }
 
 /* A one-button form next to a link in a table cell. */
@@ -439,12 +594,15 @@ h2 {
   margin: 0 12px 0 0;
 }
 
+/* The destructive action of a page: filled, so that it differs from Cancel by more than text. */
 .button.danger {
-  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
 }
 
 .button.danger:hover {
-  background: #fbefee;
+  background: #982c24;
 }
 
 /* Sign-in and messages */
@@ -475,6 +633,16 @@ h2 {
 .center .button {
   justify-content: center;
   height: 40px;
+}
+
+/* Confirmations carry lists and consequences: they read from the left. */
+.center .card.confirm {
+  text-align: left;
+}
+
+.card.confirm ul {
+  margin: 12px 0;
+  padding-left: 20px;
 }
 
 .fineprint {
@@ -553,6 +721,10 @@ h2 {
   color: var(--accent);
 }
 
+.badge.repeat {
+  margin-left: 8px;
+}
+
 .badge.error {
   margin-left: 8px;
   background: #fdf1f0;
@@ -560,10 +732,6 @@ h2 {
 }
 
 @media (max-width: 560px) {
-  .topbar-inner {
-    gap: 12px;
-  }
-
   .list > li {
     flex-wrap: wrap;
   }
@@ -766,7 +934,7 @@ h2 {
 }
 
 .member:hover {
-  border-color: var(--faint);
+  border-color: var(--deco);
 }
 
 .member.out {
@@ -864,7 +1032,7 @@ details[open] > .source-head .chevron {
 /* Target rows: name, detail level and colour; under them the preview and the working hours. */
 .dest {
   display: grid;
-  grid-template-columns: 130px 1fr auto;
+  grid-template-columns: 150px 1fr auto;
   gap: 8px 14px;
   align-items: center;
   padding: 12px 16px;
@@ -957,7 +1125,7 @@ details[open] > .source-head .chevron {
 }
 
 .choice:hover:not(:disabled) {
-  border-color: var(--faint);
+  border-color: var(--deco);
   color: var(--text);
 }
 
@@ -1067,6 +1235,12 @@ details.more summary {
 
 .matrix .self {
   background: repeating-linear-gradient(45deg, #f4f3f0, #f4f3f0 6px, #efeee9 6px, #efeee9 12px);
+}
+
+/* On the darker levels the secondary line takes the text colour, to stay readable. */
+.matrix .level-title small,
+.matrix .level-full small {
+  color: var(--text);
 }
 
 .level-off {
@@ -1192,8 +1366,12 @@ details.rename summary::-webkit-details-marker {
 .rename-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: 12px;
   align-items: center;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
 .rename-actions .link-button {
@@ -1204,8 +1382,31 @@ details.rename summary::-webkit-details-marker {
 
 .dest-name {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: 0 6px;
+  min-width: 0;
+}
+
+/* A long name ends in an ellipsis and stays complete in the tooltip. */
+.dest-account {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.dest-account .account-name {
+  display: flex;
+}
+
+.dest-account .account-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dest-tag {
+  flex-basis: 100%;
+  padding-left: 18px;
 }
 
 .dest-to {
@@ -1285,7 +1486,7 @@ details.source.dirty {
 }
 
 .matrix .cell.pending small {
-  color: var(--accent);
+  color: #1c3f91;
 }
 
 .pill.pending {
@@ -1350,9 +1551,10 @@ details.source.dirty {
   font-size: 12px;
 }
 
-@media (max-width: 980px) {
+/* The overview needs 330px beside a usable editor; the sidebar takes its share of the width. */
+@media (max-width: 1179px) {
   .editor-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .overview {
@@ -1457,21 +1659,8 @@ details.source.dirty {
     --page-gutter: 12px;
   }
 
-  .topbar-inner {
-    gap: 8px;
-  }
-
-  .brand-name {
+  .nav-icon {
     display: none;
-  }
-
-  .nav {
-    gap: 0;
-  }
-
-  .nav a {
-    padding: 6px 7px;
-    font-size: 13.5px;
   }
 
   main {
@@ -1483,8 +1672,47 @@ details.source.dirty {
     flex-wrap: wrap;
   }
 
-  .card:has(> .table) {
-    overflow-x: auto;
+  .table td {
+    overflow-wrap: anywhere;
+  }
+
+  /* A row per card instead of a table wider than the phone. */
+  .table.stack thead {
+    display: none;
+  }
+
+  .table.stack tr {
+    display: block;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .table.stack tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .table.stack td {
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 8px;
+    align-items: baseline;
+    padding: 3px 0;
+    border: 0;
+  }
+
+  .table.stack td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+
+  .table.stack td:not([data-label]) {
+    display: flex;
+    gap: 16px;
+  }
+
+  .table.stack td:not([data-label])::before {
+    content: none;
   }
 
   .list li {
@@ -1661,6 +1889,65 @@ a.status.error {
   border-top: 1px solid var(--line);
 }
 
+.settings-group {
+  margin: 10px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-group + .settings-field {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+/* Single entries of a comma list: entries and the text field share one box. */
+.tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 420px;
+  margin-top: 4px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.tokens:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.token {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+  border-radius: 6px;
+  background: #eef2fb;
+  font-size: 13px;
+}
+
+.token button {
+  min-width: 26px;
+  height: 26px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.token button:hover {
+  color: var(--danger);
+}
+
 .settings-field input[type="text"] {
   max-width: 360px;
   margin-top: 4px;
@@ -1669,6 +1956,16 @@ a.status.error {
   border-radius: 8px;
   background: var(--surface);
   font: inherit;
+}
+
+.settings-field .tokens input[type="text"] {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 4px;
+  border: 0;
+  outline: 0;
 }
 
 .color-row {
@@ -1741,6 +2038,10 @@ a.status.error {
 .first-steps li.done {
   color: var(--faint);
   text-decoration: line-through;
+}
+
+.section .first-steps {
+  margin-bottom: 14px;
 }
 
 .quick-start {
@@ -1861,7 +2162,7 @@ a.status.error {
   height: 9px;
   flex: none;
   border-radius: 3px;
-  background: var(--c, var(--faint));
+  background: var(--c, var(--deco));
 }
 
 .member.out .mark {
@@ -1900,7 +2201,7 @@ details.source > .source-head .provider-icon,
   background: linear-gradient(
     135deg,
     var(--surface) calc(50% - 1px),
-    var(--faint) calc(50% - 1px) calc(50% + 1px),
+    var(--deco) calc(50% - 1px) calc(50% + 1px),
     var(--surface) calc(50% + 1px)
   );
 }
@@ -1984,12 +2285,13 @@ details.source > .source-head .provider-icon,
 
 .weekday span {
   display: inline-block;
-  min-width: 32px;
-  padding: 3px 4px;
+  min-width: 36px;
+  padding: 6px 4px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  color: var(--muted);
-  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
   text-align: center;
 }
 
@@ -2004,11 +2306,68 @@ details.source > .source-head .provider-icon,
   outline-offset: 1px;
 }
 
+.rename-form .hours-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 400;
+}
+
+.rename-form .hours-switch input[role="switch"] {
+  padding: 0;
+  border: 0;
+}
+
+/* Fields of working hours that are switched off would only look like they count. */
+.account-hours:has(input[name="workHoursOn"]:not(:checked)) .hours-fields {
+  display: none;
+}
+
+.hours-fields {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.hours-apply {
+  display: grid;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.hours-apply-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rename-form .hours-apply-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  font-weight: 400;
+}
+
 .work-time {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
+  align-items: end;
+  gap: 6px 8px;
+}
+
+.rename-form .work-time label:not(.work-midnight),
+.rename-form .work-zone-field {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.rename-form .work-zone {
+  width: 100%;
 }
 
 .rename-form .work-time input[type="time"],
@@ -2021,6 +2380,7 @@ details.source > .source-head .provider-icon,
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-height: 28px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
@@ -2160,7 +2520,7 @@ details.swatch > summary::-webkit-details-marker {
 }
 
 .swatch-button:hover {
-  border-color: var(--faint);
+  border-color: var(--deco);
 }
 
 .swatch-dot {
@@ -2174,7 +2534,7 @@ details.swatch > summary::-webkit-details-marker {
   background: linear-gradient(
     135deg,
     var(--surface) calc(50% - 1px),
-    var(--faint) calc(50% - 1px) calc(50% + 1px),
+    var(--deco) calc(50% - 1px) calc(50% + 1px),
     var(--surface) calc(50% + 1px)
   );
 }
@@ -2201,7 +2561,7 @@ details.swatch > summary::-webkit-details-marker {
 }
 
 .category-field {
-  width: 150px;
+  width: 130px;
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--line-strong);
@@ -2243,12 +2603,125 @@ details.swatch > summary::-webkit-details-marker {
   display: none;
 }
 
+/* Long names stop after two lines and stay complete in the tooltip. */
+.matrix .account-label {
+  display: -webkit-box;
+  max-width: 56px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.matrix.compact .account-label {
+  max-width: 110px;
+}
+
 @media (max-width: 560px) {
-  /* The name and colour form opens to the right of its link, inside the screen. */
+  /* The settings of an account open in the row: a popover would end at the edge of the screen. */
+  .list li details.rename {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .list li details.rename > summary {
+    margin-left: 46px;
+  }
+
   .rename-form {
-    right: auto;
-    left: 0;
-    width: min(320px, calc(100vw - 78px));
+    position: static;
+    width: auto;
+    margin-top: 8px;
+    box-shadow: none;
+  }
+
+  /* Thumbs: every control reaches 44px, through padding and not through larger text. */
+  .button,
+  .button.small,
+  .member,
+  .menu-item,
+  .segment,
+  .link-button,
+  .quiet-link,
+  .list summary.link-button,
+  .swatch-button,
+  .category-field,
+  .hours-check,
+  .buffer-edit > summary,
+  .token button,
+  .table td .inline-form .link-button,
+  .table td a.link-button {
+    min-height: 44px;
+  }
+
+  .link-button,
+  .quiet-link,
+  .segment,
+  .list summary.link-button,
+  .hours-check {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .segment {
+    justify-content: center;
+    min-width: 44px;
+  }
+
+  .dest .choices {
+    display: flex;
+    justify-self: stretch;
+  }
+
+  .dest .choice {
+    flex: 1 1 auto;
+    min-height: 44px;
+    padding: 0 6px;
+  }
+
+  .dest-account {
+    flex: none;
+    max-width: 100%;
+  }
+
+  .dest-tag {
+    flex-basis: auto;
+    padding-left: 0;
+  }
+
+  .color-row {
+    gap: 0;
+    margin-left: -10px;
+  }
+
+  .color-choice {
+    padding: 10px;
+  }
+
+  .weekday span {
+    min-width: 40px;
+    padding: 12px 4px;
+  }
+
+  .choice-radio .choice {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .rename-form input:not([type="checkbox"], [type="radio"]),
+  .settings-field input[type="text"],
+  .buffer-field input,
+  .user-button {
+    min-height: 44px;
+  }
+
+  .footer {
+    align-items: center;
+  }
+
+  .footer a {
+    padding: 12px 4px;
   }
 }
 

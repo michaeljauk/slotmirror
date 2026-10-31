@@ -34,6 +34,81 @@ document.addEventListener("change", (event) => {
   if (end) end.disabled = event.target.checked;
 });
 
+// A comma list as single entries: the visible field takes one name, the original field keeps the
+// list that the server reads. Without the script the original field stays as it is.
+for (const field of document.querySelectorAll("input[data-tokens]")) {
+  const box = document.createElement("div");
+  box.className = "tokens";
+  const entry = document.createElement("input");
+  entry.type = "text";
+  entry.placeholder = field.dataset.add;
+  entry.setAttribute("aria-label", field.dataset.add);
+  entry.maxLength = 100;
+  box.append(entry);
+  field.after(box);
+  field.type = "hidden";
+  const names = () =>
+    field.value
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+  const render = () => {
+    for (const token of box.querySelectorAll(".token")) token.remove();
+    for (const name of names()) {
+      const token = document.createElement("span");
+      token.className = "token";
+      token.textContent = name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", field.dataset.remove.replace("{name}", name));
+      remove.addEventListener("click", (event) => {
+        // The click sits inside a label, which would move the focus to the entry only by accident.
+        event.preventDefault();
+        change(names().filter((other) => other !== name));
+        entry.focus();
+      });
+      token.append(remove);
+      box.insertBefore(token, entry);
+    }
+  };
+  const change = (list) => {
+    field.value = list.join(", ");
+    render();
+    // The hidden field fires nothing by itself; the page counts this as a change.
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  /** Add what the entry holds. Matching ignores case, so one spelling per name is enough. */
+  const commit = () => {
+    const list = names();
+    const known = new Set(list.map((name) => name.toLowerCase()));
+    for (const raw of entry.value.split(",")) {
+      const name = raw.trim();
+      if (!name || known.has(name.toLowerCase())) continue;
+      known.add(name.toLowerCase());
+      list.push(name);
+    }
+    entry.value = "";
+    if (list.length !== names().length) change(list);
+  };
+  entry.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === ",") {
+      if (event.key === "," || entry.value.trim()) event.preventDefault();
+      commit();
+    } else if (event.key === "Backspace" && entry.value === "") {
+      change(names().slice(0, -1));
+    }
+  });
+  entry.addEventListener("blur", commit);
+  // A pasted list becomes entries at once.
+  entry.addEventListener("input", () => {
+    if (entry.value.includes(",")) commit();
+  });
+  // Discard resets the form; the list is back only after the event.
+  field.form?.addEventListener("reset", () => setTimeout(render));
+  render();
+}
+
 (() => {
   document.documentElement.classList.add("js");
   const bar = document.getElementById("page-bar");

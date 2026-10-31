@@ -671,6 +671,29 @@ section p.lead {
   color: var(--faint);
 }
 
+/* On a phone the whole page would shrink to unreadable text: show the editor at reading size. */
+@media (max-width: 640px) {
+  .shot {
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+  }
+
+  .shot img {
+    width: 240%;
+    max-width: none;
+    margin-left: -40%;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .shot figcaption {
+    margin: 0;
+    padding: 8px 12px;
+  }
+}
+
 .features {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

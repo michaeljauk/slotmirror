@@ -77,7 +77,9 @@ function AccountName(props: { account: EditorAccount }) {
     <span class="account-name" style={colorStyle(props.account)}>
       <i class="mark" aria-hidden="true" />
       <ProviderIcon provider={props.account.provider} size={13} />
-      {props.account.name}
+      <span class="account-label" title={props.account.name}>
+        {props.account.name}
+      </span>
     </span>
   );
 }
@@ -199,14 +201,28 @@ function SettingsCard(props: { state: EditorState }) {
           placeholder={t.editor.defaultBlockTitle}
         />
       </label>
+      <Switch
+        name="markPrivate"
+        checked={settings.markPrivate}
+        title={t.editor.markPrivateTitle}
+        hint={t.editor.markPrivateHint}
+      />
+      <h3 class="settings-group">{t.editor.skipGroupTitle}</h3>
+      {/* The script turns the comma list into single entries; the field stays what is sent. */}
       <label class="settings-field">
         <span class="switch-title">{t.editor.skipCategoriesLabel}</span>
-        <span class="switch-hint">{t.editor.skipCategoriesHint}</span>
+        <span class="switch-hint">
+          {t.editor.skipCategoriesHint}{" "}
+          <span class="nojs-only">{t.editor.skipCategoriesCommas}</span>
+        </span>
         <input
           type="text"
           name="skipCategories"
           placeholder={t.editor.skipCategoriesPlaceholder}
           value={settings.skipCategories.filter((name) => !name.startsWith("color:")).join(", ")}
+          data-tokens
+          data-add={t.editor.skipCategoriesAdd}
+          data-remove={t.editor.skipCategoriesRemove("{name}")}
         />
       </label>
       <div class="settings-field">
@@ -236,12 +252,6 @@ function SettingsCard(props: { state: EditorState }) {
         checked={settings.skipTentative}
         title={t.editor.skipTentativeTitle}
         hint={t.editor.skipTentativeHint}
-      />
-      <Switch
-        name="markPrivate"
-        checked={settings.markPrivate}
-        title={t.editor.markPrivateTitle}
-        hint={t.editor.markPrivateHint}
       />
       <button type="submit" class="button small nojs-only">
         {t.editor.save}
@@ -393,23 +403,27 @@ function WorkHoursToggle(props: {
   const on = direction.options !== null && hasWorkingHours(direction.options);
   // Rules can keep hours from before the account had any; the label then shows the rule's own.
   const hours = target.workHours ?? (on && direction.options ? direction.options : null);
+  // The account settings hold the hours; after a save they come back to this source's card.
+  const settingsHref = `/?settings=${encodeURIComponent(target.id)}&from=${encodeURIComponent(source.id)}#account-${target.id}`;
   if (!hours) {
     return (
-      <a
-        class="quiet-link"
-        href={`/?settings=${encodeURIComponent(target.id)}#account-${target.id}`}
-      >
+      <a class="quiet-link" href={settingsHref}>
         {t.editor.setWorkHours}
       </a>
     );
   }
   const form = detailsFormId(source, target);
   return (
-    <label class="hours-check" title={t.editor.onlyWorkHoursHint}>
-      <input type="hidden" name="workHoursShown" value="1" form={form} />
-      <input type="checkbox" name="workHours" value="1" form={form} checked={on} />
-      {t.editor.onlyWorkHours(target.name, workHoursText(t, hours))}
-    </label>
+    <>
+      <label class="hours-check" title={t.editor.onlyWorkHoursHint}>
+        <input type="hidden" name="workHoursShown" value="1" form={form} />
+        <input type="checkbox" name="workHours" value="1" form={form} checked={on} />
+        {t.editor.onlyWorkHours(target.name, workHoursText(t, hours))}
+      </label>
+      <a class="quiet-link" href={settingsHref}>
+        {t.editor.change}
+      </a>
+    </>
   );
 }
 
@@ -433,7 +447,9 @@ function DestinationRow(props: {
         <span class="dest-to" aria-label={t.editor.to}>
           →
         </span>
-        <AccountName account={target} />
+        <span class="dest-account">
+          <AccountName account={target} />
+        </span>
         {fromGroup ? (
           <span class="dest-tag" title={t.editor.fromGroup}>
             {t.editor.cellGroup}
@@ -491,8 +507,13 @@ function DestinationRow(props: {
             >
               <input type="hidden" name="from" value={source.id} />
               <input type="hidden" name="to" value={target.id} />
-              <button type="submit" class="link-button">
-                {t.editor.checkReal}
+              <button
+                type="submit"
+                class="link-button"
+                aria-label={t.editor.checkReal}
+                title={t.editor.checkReal}
+              >
+                {t.editor.checkShort}
               </button>
               <span class="preview-result" role="status" />
             </form>

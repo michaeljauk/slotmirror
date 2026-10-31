@@ -28,6 +28,34 @@ describe("versionLabel", () => {
   });
 });
 
+describe("sidebar", () => {
+  async function page(role: "member" | "admin"): Promise<string> {
+    const user = { id: "u", orgId: "o", email: "a.b@example.com", role };
+    const app = new Hono();
+    app.get("/", (c) =>
+      c.html(
+        <I18nProvider value={i18nFor("en")} languagePage="/">
+          <Layout title="Test" user={user as never} active="rules">
+            x
+          </Layout>
+        </I18nProvider>,
+      ),
+    );
+    return (await app.request("/")).text();
+  }
+
+  it("marks the current page and shows Admin to admins only", async () => {
+    const admin = await page("admin");
+    expect(admin).toContain('<a href="/rules" aria-current="page">');
+    expect(admin).toContain('href="/admin"');
+    expect(await page("member")).not.toContain('href="/admin"');
+  });
+
+  it("keeps the version in the footer of a signed-in page", async () => {
+    expect((await page("member")).split("<footer")[1]).toContain('class="version"');
+  });
+});
+
 describe("footer", () => {
   async function footer(): Promise<string> {
     const app = new Hono();

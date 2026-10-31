@@ -5,9 +5,10 @@
 export const en = {
   nav: {
     accounts: "Accounts",
-    rules: "Sync",
+    rules: "Rules",
     activity: "Activity",
     admin: "Admin",
+    main: "Main navigation",
     accountMenu: "Account menu",
     signOut: "Sign out",
     deleteMyData: "Delete my data",
@@ -31,8 +32,6 @@ export const en = {
   accounts: {
     title: "Accounts",
     lead: "Calendars that this app reads from and writes to.",
-    emptyTitle: "No account connected yet",
-    emptyText: "Connect at least two calendars to mirror busy times between them.",
     googleNotice: "Google will say that the app is not verified.",
     googleNoticeSteps: "Choose “Advanced”, then “Go to … (unsafe)”.",
     kindGoogle: "Google Calendar",
@@ -51,10 +50,17 @@ export const en = {
     disconnect: "Disconnect",
     rename: "Settings",
     workHoursLabel: "Working hours",
-    workHoursHint: "Applies to everything copied into this account.",
-    workHoursTitle:
-      "You turn it on per calendar in the sync settings. Without working hours the whole day counts.",
-    workHoursNone: "No working hours",
+    workHoursSwitch: "Copy only during working hours",
+    workHoursHint: "Leave both times empty for whole days.",
+    workHoursApply: "Applies to copies from",
+    workHoursNoRules:
+      "Nothing copies into this account yet. Once it does, turn working hours on in the rules.",
+    workHoursInUse: (hours: string, used: number, total: number) =>
+      `Working hours ${hours} · used by ${used} of ${total} ${total === 1 ? "direction" : "directions"}`,
+    workHoursUnused: (hours: string) => `Working hours ${hours} filter nothing yet.`,
+    workHoursChoose: "Choose directions",
+    workHoursIdle: (hours: string) =>
+      `Working hours ${hours} · nothing copies into this account yet`,
     colorLabel: "Colour",
     colorHint: "Only on these pages, not in your calendars.",
     colorAuto: "Automatic",
@@ -132,7 +138,7 @@ export const en = {
     pausedShort: "Paused",
   },
   editor: {
-    title: "Where your events go",
+    title: "Rules",
     lead: "For each calendar: where its events go and how much shows there.",
     views: "View",
     viewList: "List",
@@ -156,6 +162,7 @@ export const en = {
     exception: "Exception",
     reset: "reset",
     checkReal: "Check with real events",
+    checkShort: "Check",
     capNote: (level: string) => `This deployment's policy allows at most “${level}” here.`,
     readOnly: "slotmirror cannot write to this calendar.",
     readOnlyTurnOff:
@@ -163,7 +170,7 @@ export const en = {
     moreOptions: "More options",
     save: "Save",
     matrixCorner: "From ↓ · to →",
-    matrixHint: "Click a cell to open that calendar on the left.",
+    matrixHint: "Click a cell to open that calendar.",
     cellGroup: "group",
     cellException: "exception",
     manyTargets: (count: number) => `${count} calendars`,
@@ -172,6 +179,10 @@ export const en = {
     stepConnectFirst: "Connect your first calendar account.",
     stepConnectSecond: "Connect a second one, for example your work or your private calendar.",
     stepChoose: "Choose here where the events of each calendar go.",
+    stepChooseRules: "Choose in the rules where the events of each calendar go.",
+    openRules: "Open rules",
+    activeDirections: (count: number) =>
+      count === 1 ? "1 direction is active." : `${count} directions are active.`,
     quickStartTitle: "Quick start",
     quickStartText: (count: number) =>
       `All ${count} calendars block each other as busy. Add detail per direction later.`,
@@ -188,8 +199,13 @@ export const en = {
     blockTitleHint: "Copies at the level “As busy” carry this title.",
     defaultBlockTitle: "Busy",
     skipCategoriesLabel: "Skip events with these categories",
-    skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
+    skipCategoriesHint:
+      "Events with one of these Outlook categories are not copied. Upper and lower case do not matter.",
+    skipCategoriesCommas: "Separate names with commas.",
     skipCategoriesPlaceholder: "Private, Focus",
+    skipCategoriesAdd: "Add a category, then press Enter",
+    skipCategoriesRemove: (name: string) => `Remove ${name}`,
+    skipGroupTitle: "Do not copy",
     skipColorsLabel: "Skip Google events with these colours",
     weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
     weekdayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
@@ -323,6 +339,9 @@ export const en = {
     noTracking: "There is no tracking, no analytics and no advertising.",
   },
   admin: {
+    activityLead: (count: number) =>
+      `The last ${count} events of everyone in this deployment. Metadata only.`,
+    activityAll: "Show all",
     title: "Users",
     lead: "Everyone who signed in to this deployment. Calendar contents stay private to each user.",
     email: "Email",
@@ -386,6 +405,7 @@ export const en = {
     lead: "Your last 100 events: sign-ins, changes and sync runs. Event contents are never logged.",
     orgLead: "The last 100 events of everyone in this deployment. Metadata only.",
     time: "Time",
+    account: "Account",
     event: "Event",
     details: "Details",
     empty: "Nothing happened yet.",
@@ -426,7 +446,7 @@ export const en = {
       feed_deleted: "Free/busy feed deleted",
     },
     changes: (create: number, update: number, remove: number) =>
-      `+${create} / ~${update} / −${remove}`,
+      `${create} new, ${update} changed, ${remove} removed`,
     preview: (changes: string) => `Preview ${changes}`,
     failedCount: (count: number) => `${count} failed`,
     throttledCount: (count: number) => `${count} throttled, retried after the wait`,
@@ -479,7 +499,7 @@ export const en = {
     lead: "A secret calendar address for people outside this deployment. It shows when you are busy, never what you do.",
     empty: "No feed yet.",
     noCalendars:
-      "Your calendars are listed here once you open the sync settings after connecting an account.",
+      "Your calendars are listed here once you open the rules after connecting an account.",
     feedTitle: (date: string) => `Feed from ${date}`,
     renewedOn: (date: string) => `new address ${date}`,
     daysAhead: (count: number) => `${count} days ahead`,

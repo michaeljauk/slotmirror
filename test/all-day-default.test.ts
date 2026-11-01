@@ -289,7 +289,7 @@ describe("planner and comparison in the modelled calendar", () => {
       workEnd: "17:00",
       workTimeZone: "Europe/Vienna",
     },
-    note: { showOrigin: true, linkOrigin: true, detailLevel: "title" },
+    title: { detailLevel: "title" },
   };
   const ZONES = [-12, -8, 0, 1, 14];
 

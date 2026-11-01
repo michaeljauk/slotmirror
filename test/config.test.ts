@@ -20,17 +20,17 @@ describe("parseRuleOptions", () => {
       blockColor: "",
       bufferBefore: 0,
       bufferAfter: 0,
-      showOrigin: false,
-      linkOrigin: false,
     });
   });
 
-  it("keeps the origin note options", () => {
-    expect(parseRuleOptions('{"showOrigin": true, "originLocale": "de"}')).toMatchObject({
-      showOrigin: true,
-      linkOrigin: false,
-      originLocale: "de",
-    });
+  it("drops the removed origin note options of a stored rule", () => {
+    const stored =
+      '{"detailLevel": "title", "showOrigin": true, "linkOrigin": true, "originLocale": "de"}';
+    const options = parseRuleOptions(stored);
+    expect(options.detailLevel).toBe("title");
+    expect(Object.keys(options)).not.toEqual(
+      expect.arrayContaining(["showOrigin", "linkOrigin", "originLocale"]),
+    );
   });
 
   it("accepts buffers from 0 to 240 whole minutes", () => {

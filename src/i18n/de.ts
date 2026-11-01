@@ -695,12 +695,6 @@ export const de: Messages = {
     alreadyConnectedText: (email) =>
       `${email} ist bereits von einem anderen Nutzer dieser Installation verbunden.`,
   },
-  mirror: {
-    origin: (account, provider) => `Aus: ${account} (${provider})`,
-    originAccount: (provider) => `Aus: ${provider}-Konto`,
-    microsoft: "Microsoft",
-    google: "Google",
-  },
   alerts: {
     test: (url) =>
       `slotmirror: Dies ist ein Test-Alarm von der Verwaltungsseite. Der Webhook funktioniert.${url ? ` ${url}` : ""}`,

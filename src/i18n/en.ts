@@ -332,7 +332,7 @@ export const en = {
       "On Cloudflare Workers, D1 and Durable Objects in the operator's Cloudflare account, and at Microsoft and Google when calendars are read and written.",
     deleteTitle: "How to delete your data",
     delete:
-      "Disconnecting an account deletes the blocks slotmirror wrote for it, then its tokens. To delete your user and all its data, use “Delete my data” in the account menu.",
+      "Disconnecting an account deletes the blocks slotmirror wrote for it, then its tokens. If blocks cannot be removed, the calendar name, the calendar ID, the block title, the block count, the period and the marker stay for 90 days, so that you can delete them by hand. The calendar ID of a primary Google calendar is your email address. To delete your user and all its data, use “Delete my data” in the account menu.",
     googleTitle: "Google user data",
     google:
       "slotmirror's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",
@@ -459,14 +459,21 @@ export const en = {
       check_blind: "The hourly rule check could not look at the rules",
       compare_deviation: "A comparison confirmed deviations",
     },
-    disconnectFailedDetail: "The blocks could not be queued for removal. Nothing changed.",
+    disconnectFailedDetail:
+      "The disconnect failed and the account stays. Its rules run again and write back any block that was removed.",
     cleanupRemoved: (count: number) =>
       count === 1 ? "1 block removed" : `${count} blocks removed`,
     cleanupLeft: (count: number) => (count === 1 ? "1 block left" : `${count} blocks left`),
+    cleanupAbout: (count: number) =>
+      count === 1 ? "about 1 block left" : `about ${count} blocks left`,
     cleanupReasons: {
       incomplete: "the provider kept failing, delete the rest by hand",
       token_refused: "the provider refused the tokens, delete the rest by hand",
       no_tokens: "the account has no tokens, delete the rest by hand",
+      deadline: "the account was not reconnected in time, delete the rest by hand",
+      not_started:
+        "the state of the removal is not known, a reconnect can still finish it, otherwise delete the rest by hand",
+      kept: "the removal could not start, and the rule keeps its blocks",
     },
     pausedDetail: (code: string) => `Waits for a reconnect (${code})`,
     resumedDetail: "Syncs again",
@@ -493,6 +500,50 @@ export const en = {
       timeout: "The comparison did not end within a day",
       superseded: "A comparison of the whole window replaced this one",
     },
+  },
+  cleanup: {
+    title: "Blocks left in calendars",
+    lead: "slotmirror could not confirm the removal of these blocks after an account or a user went. Delete what is left by hand in the calendar.",
+    reconnectDoesNotHelp:
+      "Connecting the account again removes them only if the entry says that it can.",
+    runningTitle: "Removals in progress",
+    runningLead: "slotmirror is still removing these blocks.",
+    running: (date: string) => `If the account waits for a reconnect, it ends around ${date}.`,
+    runningNotice: (count: number) =>
+      count === 1
+        ? "slotmirror is still removing blocks from 1 calendar."
+        : `slotmirror is still removing blocks from ${count} calendars.`,
+    othersTitle: "Deactivated and deleted users",
+    othersLead:
+      "These users cannot see this page. Their blocks stay in their calendars until someone deletes them.",
+    empty: "No blocks are left.",
+    unnamedCalendar: "A calendar without a stored name",
+    count: (count: number) => (count === 1 ? "1 block left" : `${count} blocks left`),
+    aboutCount: (count: number) =>
+      count === 1
+        ? "About 1 block left, from the last sync"
+        : `About ${count} blocks left, from the last sync`,
+    unknownCount: "The number of blocks is not known",
+    period: (from: string, to: string) => `Between ${from} and ${to}`,
+    marker: (tag: string, title: string) => `Title “${title}”, marker ${tag}`,
+    markerOnly: (tag: string) => `Marker ${tag}`,
+    markerHelp:
+      "The marker is a hidden property of each block. Calendar apps do not show it, but the provider's API returns it. Past blocks stay as a record.",
+    reasons: {
+      incomplete: "The provider kept failing.",
+      token_refused: "The provider refused the tokens.",
+      no_tokens: "The account has no tokens.",
+      deadline: "The account was not reconnected in time.",
+      not_started:
+        "The state of this removal is not known. Blocks may be left. Connecting the account again can still finish the removal. Otherwise delete them by hand.",
+    },
+    notice: (count: number) =>
+      count === 1 ? "Blocks are left in 1 calendar." : `Blocks are left in ${count} calendars.`,
+    show: "Show them",
+    adminLink: (count: number) =>
+      count === 1
+        ? "Blocks of a deactivated or deleted user are left in 1 calendar"
+        : `Blocks of deactivated or deleted users are left in ${count} calendars`,
   },
   feeds: {
     title: "Free/busy feed",

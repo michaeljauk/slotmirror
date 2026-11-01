@@ -9,9 +9,17 @@ import {
   runsWithOutcome,
   type AuditEvent,
   type AuditKind,
+  type CleanupDetail,
   type CleanupResult,
   type SyncRunDetail,
 } from "./audit";
+import {
+  CLEANUP_DEADLINE_MS,
+  closeTombstone,
+  noteTombstoneJob,
+  lastRunBlocks,
+  noteTombstoneProgress,
+} from "./cleanup";
 import type { Provider } from "./config";
 import {
   calendarClient,
@@ -530,12 +538,34 @@ interface Removal {
 export interface OffboardingOwner {
   orgId: string;
   userId: string;
+  /**
+   * The account that holds the job. The job may outlive the tokens, which hold this ID too, and
+   * `ctx.id.name` can be missing. Jobs stored before this field have none.
+   */
+  accountId?: string;
 }
 
 interface OffboardingProgress extends OffboardingOwner {
   /** Blocks removed over all steps of the job. */
   removed: number;
   /** Blocks left after the last step that could count them. */
+  left?: number;
+  /** When the offboarding queued the job. Jobs stored before this field count from the pause. */
+  since?: number;
+}
+
+/**
+ * Durable Object storage key: results of ended offboarding jobs that D1 does not hold yet. Until
+ * then the account keeps its tokens, see `finishRetirement()`, and an alarm keeps trying.
+ */
+const CLEANUP_REPORTS_KEY = "cleanupReports";
+
+interface CleanupReport extends OffboardingOwner {
+  id: string;
+  ruleId: string;
+  remoteCalendarId: string;
+  result: CleanupResult;
+  removed: number;
   left?: number;
 }
 
@@ -1285,6 +1315,8 @@ export class AccountSync extends DurableObject<Env> {
 
   /** The alarm's and the tick's work while paused: finish the pause, and probe once a day. */
   private async whilePaused(accountId: string, pause: Pause): Promise<void> {
+    await this.writeCleanupReports();
+    await this.endOverdueRemovals(pause);
     await this.finishPause(accountId, pause.since);
     await this.probe(pause.since);
   }
@@ -2169,14 +2201,17 @@ export class AccountSync extends DurableObject<Env> {
    * many rules makes one Durable Object call per account. Same rules as `queueRemoval`; a job
    * that is queued already, or repeated in `rules`, is not added twice. With `offboarding`, a job
    * reports its result to that owner, also a job that was queued already. A job that was queued
-   * already counts this call, see `Removal.requeued`.
+   * already counts this call, see `Removal.requeued`. The tombstone learns of the job last, so that
+   * a failed D1 step leaves a job with its alarm, and the request fails.
    */
   async queueRemovals(
     rules: { ruleId: string; remoteCalendarId: string }[],
     { trim = false, offboarding }: { trim?: boolean; offboarding?: OffboardingOwner } = {},
   ): Promise<void> {
     if (rules.length === 0) return;
-    const progress = offboarding ? { offboarding: { ...offboarding, removed: 0 } } : {};
+    const progress = offboarding
+      ? { offboarding: { ...offboarding, removed: 0, since: Date.now() } }
+      : {};
     const jobs: Removal[] = rules.map(({ ruleId, remoteCalendarId }) => ({
       ruleId,
       remoteCalendarId,
@@ -2202,6 +2237,11 @@ export class AccountSync extends DurableObject<Env> {
     const pending = await this.ctx.storage.getAlarm();
     const soon = Date.now() + this.delays().nextRun;
     if (pending === null || pending > soon) await this.setSyncAlarm(soon);
+    if (offboarding?.accountId) {
+      const deadlineAt = new Date(Date.now() + CLEANUP_DEADLINE_MS).toISOString();
+      const ruleIds = rules.map(({ ruleId }) => ruleId);
+      await noteTombstoneJob(this.env.DB, offboarding.accountId, ruleIds, deadlineAt).run();
+    }
   }
 
   /**
@@ -2287,7 +2327,8 @@ export class AccountSync extends DurableObject<Env> {
    * comes first, so that no failure leaves a row without tokens and without the flag. If D1 fails,
    * this throws, and `alarm()` sets the next alarm. A retirement that ended during this call keeps
    * its tokens, and a tick clears the flag through a probe. A removal that was queued during this
-   * call needs the tokens: its alarm runs first, and the next alarm comes back here.
+   * call needs the tokens: its alarm runs first, and the next alarm comes back here. A result that
+   * D1 does not hold yet goes with the storage, so it holds the tokens too.
    */
   private async finishRetirement(accountId: string): Promise<void> {
     await this.env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
@@ -2295,36 +2336,136 @@ export class AccountSync extends DurableObject<Env> {
       .run();
     await this.stopWatches();
     const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
-    if (queue.length === 0 && (await this.retiring())) await this.wipe();
+    if (queue.length > 0 || (await this.reportsPending())) return;
+    if (await this.retiring()) await this.wipe();
   }
 
   /**
-   * Write the result of ended offboarding jobs into the audit log, in one D1 call. It runs before
-   * the jobs leave the queue, so that the result is there before the account forgets its tokens.
-   * If D1 fails, the log loses the result and the job still ends: it cannot hold the account.
+   * Store the result of ended offboarding jobs, then write it to D1. It stays in storage before the
+   * jobs leave the queue, so that a failed write loses nothing.
    */
   private async reportCleanup(jobs: Removal[], result: CleanupResult): Promise<void> {
-    const accountId = this.accountIdOrNull() ?? this.ctx.id.name ?? null;
-    const statements = jobs.flatMap(({ ruleId, offboarding }) => {
+    const reports = jobs.flatMap(({ ruleId, remoteCalendarId, offboarding }): CleanupReport[] => {
       if (!offboarding) return [];
-      const { orgId, userId, removed, left } = offboarding;
-      const detail = { result, removed, ...(left ? { left } : {}) };
-      const event: AuditEvent = {
-        orgId,
-        userId,
-        accountId,
-        ruleId,
-        kind: "cleanup_finished",
-        detail,
-      };
-      return [auditStatement(this.env.DB, event)];
+      const { orgId, userId, accountId, removed, left } = offboarding;
+      const id = crypto.randomUUID();
+      const count = left === undefined ? {} : { left };
+      const account = accountId === undefined ? {} : { accountId };
+      return [
+        { id, orgId, userId, ruleId, remoteCalendarId, result, removed, ...account, ...count },
+      ];
     });
-    if (statements.length === 0) return;
+    if (reports.length === 0) return;
+    await this.updateQueue<CleanupReport>(CLEANUP_REPORTS_KEY, (queue) => [...queue, ...reports]);
+    await this.writeCleanupReports();
+  }
+
+  private async reportsPending(): Promise<boolean> {
+    return (await this.ctx.storage.get(CLEANUP_REPORTS_KEY)) !== undefined;
+  }
+
+  /**
+   * Write the stored results into the tombstones and the audit log, in one D1 step. If D1 fails, they
+   * stay stored, and the next alarm or tick tries again. A job that never counted its blocks takes
+   * the count of the rule's last run, which this call marks as an estimate. The `id` of a report
+   * makes its event unique: if the answer of a step that worked gets lost, the step runs again and
+   * adds no event. A job that outlived the cron's end of its row has no event of its own, but the
+   * row takes its result. The account comes from the job. Only a job stored before that field, in an
+   * object that lost its tokens and does not know its name, writes a row of its own under the
+   * object's ID, as nothing here knows the account any more.
+   */
+  private async writeCleanupReports(): Promise<void> {
+    const reports = (await this.ctx.storage.get<CleanupReport[]>(CLEANUP_REPORTS_KEY)) ?? [];
+    if (reports.length === 0) return;
+    const accountId =
+      reports.find((report) => report.accountId !== undefined)?.accountId ??
+      this.accountIdOrNull() ??
+      this.ctx.id.name ??
+      this.ctx.id.toString();
     try {
-      await this.env.DB.batch(statements);
+      const uncounted = reports.filter((report) => report.left === undefined);
+      const runs = await lastRunBlocks(
+        this.env.DB,
+        accountId,
+        uncounted.map((report) => report.ruleId),
+      );
+      const statements = await Promise.all(
+        reports.map(async (report) => {
+          const { id, orgId, userId, ruleId, remoteCalendarId, result, removed } = report;
+          const known = runs.get(ruleId);
+          const estimated = known !== undefined;
+          const left = estimated ? Math.max(0, known - removed) : report.left;
+          const stone = closeTombstone(this.env.DB, {
+            accountId,
+            remoteCalendarId,
+            ruleId,
+            orgId,
+            userId,
+            ruleTag: await ruleTagFor(ruleId),
+            state: result,
+            removed,
+            left: left ?? null,
+            estimated,
+          });
+          const detail: CleanupDetail = {
+            result,
+            removed,
+            ...(left ? { left } : {}),
+            ...(estimated ? { estimated } : {}),
+          };
+          const kind = "cleanup_finished";
+          const event = {
+            orgId,
+            userId,
+            accountId,
+            ruleId,
+            kind,
+            detail,
+            reportId: id,
+          } satisfies AuditEvent;
+          // The event reads the state that the row had before this end.
+          return [auditStatement(this.env.DB, event, "tombstone_not_ended"), stone];
+        }),
+      );
+      await this.env.DB.batch(statements.flat());
     } catch (error) {
       console.error("Writing a cleanup result failed", ...errorLogFields(error));
+      return;
     }
+    const written = new Set(reports.map((report) => report.id));
+    await this.updateQueue<CleanupReport>(CLEANUP_REPORTS_KEY, (queue) =>
+      queue.filter((report) => !written.has(report.id)),
+    );
+  }
+
+  /** Note the progress of a job that goes on. The end of the job writes it again, so this may fail. */
+  private async noteCleanupProgress(job: Removal): Promise<void> {
+    if (!job.offboarding) return;
+    const { ruleId } = job;
+    const accountId = this.accountId();
+    const { removed, left } = job.offboarding;
+    try {
+      await noteTombstoneProgress(this.env.DB, { accountId, ruleId }, removed, left ?? null).run();
+    } catch (error) {
+      console.error("Noting the progress of a cleanup failed", ...errorLogFields(error));
+    }
+  }
+
+  /**
+   * End the offboarding jobs that waited too long for new tokens, with what is known of their blocks.
+   * The owner may never reconnect: a deactivated user cannot. A later reconnect removes nothing.
+   */
+  private async endOverdueRemovals(pause: Pause): Promise<void> {
+    const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
+    const overdue = queue.filter(({ offboarding }) => {
+      if (!offboarding) return false;
+      return Date.now() - (offboarding.since ?? pause.since) >= CLEANUP_DEADLINE_MS;
+    });
+    if (overdue.length === 0) return;
+    await this.reportCleanup(overdue, "deadline");
+    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (current) =>
+      current.filter((queued) => !overdue.some((job) => sameRemoval(job, queued))),
+    );
   }
 
   /** True if the removal's rule writes into its calendar again. If D1 fails, the removal goes on. */
@@ -2368,13 +2509,15 @@ export class AccountSync extends DurableObject<Env> {
     // A later attempt can come hours later. If the rule runs again by then, for example after a
     // group direction went back to busy with the same rule ID, its blocks are wanted again. Only
     // the first attempt skips this check: it runs right after the request that queued it, which
-    // may still be changing the rule. An offboarding stops its rules before it queues the job, so
-    // there a rule that runs means a failed request, and the check holds from the first attempt.
-    // A retiring account skips it: its rules may still be enabled until the request deletes them,
-    // and its blocks must go. A trim's rule writes on; the trim reads its window at every attempt.
+    // may still be changing the rule. A job of an offboarding never ends here. Its rule can run
+    // because of another request, and that job ends only with its result. Blocks of a rule that
+    // runs after all come back with the next full cycle. A retiring account skips the check too:
+    // its rules may still be enabled until the request deletes them, and its blocks must go. A
+    // trim's rule writes on; the trim reads its window at every attempt.
     if (
       !job.trim &&
-      (job.offboarding !== undefined || job.started === true || job.attempts > 0) &&
+      job.offboarding === undefined &&
+      (job.started === true || job.attempts > 0) &&
       !(await this.retiring()) &&
       (await this.ruleWritesAgain(job))
     ) {
@@ -2450,8 +2593,7 @@ export class AccountSync extends DurableObject<Env> {
       ...(offboarding
         ? {
             offboarding: {
-              orgId: offboarding.orgId,
-              userId: offboarding.userId,
+              ...offboarding,
               removed: offboarding.removed + removed,
               ...(left === undefined ? {} : { left }),
             },
@@ -2476,6 +2618,8 @@ export class AccountSync extends DurableObject<Env> {
       if (outcome === "failed" && attempts < MAX_REMOVAL_ATTEMPTS) return [...others, next];
       return others;
     });
+    if (!ended && (progress || left !== job.offboarding?.left))
+      await this.noteCleanupProgress(next);
     // After a failed attempt, `keepRemovalAlarm()` sets the next alarm, unless rules or a requested
     // full cycle wait.
     const syncWaits =
@@ -2515,9 +2659,16 @@ export class AccountSync extends DurableObject<Env> {
     }
     const pending = await this.ctx.storage.getAlarm();
     const retryAt = Date.now() + RETIREMENT_RETRY_MS;
+    // `writeCleanupReports()` logs its failure, so a report that stayed is the only sign of it.
+    const reportStayed = await this.reportsPending();
     if (pending === null) {
       if (await this.retirementOpen()) await this.setSyncAlarm(retryAt);
-    } else if (failed && pending < retryAt) {
+      else if (reportStayed) {
+        // The mark keeps this alarm from going on to a full cycle.
+        await this.ctx.storage.put(FEED_ONLY_ALARM_KEY, REMOVAL_ALARM);
+        await this.ctx.storage.setAlarm(retryAt);
+      }
+    } else if ((failed || reportStayed) && pending < retryAt) {
       // The alarms above can be due at once, and every run would fail until D1 answers. The mark of
       // the alarm stays, because the work it waits for stays.
       await this.ctx.storage.setAlarm(retryAt);
@@ -2525,6 +2676,13 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   private async runAlarm(): Promise<void> {
+    // A step of its own, so that a removal or a rule keeps the budget of its alarm.
+    if (await this.reportsPending()) {
+      await this.writeCleanupReports();
+      if (!(await this.reportsPending()))
+        await this.setSyncAlarm(Date.now() + this.delays().nextRun);
+      return;
+    }
     const accountId = this.accountIdOrNull();
     if (!accountId) {
       // Without tokens no removal can run, for example after `forget()` or a new jurisdiction.

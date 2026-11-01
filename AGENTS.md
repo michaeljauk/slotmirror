@@ -30,6 +30,8 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `src/index.tsx`                 | Hono app: middleware, pages, webhooks, cron handler                               |
 | `src/routes/`                   | Route groups (OAuth in `auth.tsx`)                                                |
 | `src/account-sync.ts`           | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
+| `src/offboarding.ts`            | Removing accounts and users: rule holds, jobs, retirement                         |
+| `src/cleanup.ts`                | Tombstones of offboarding jobs: end state and the blocks left per calendar        |
 | `src/providers/`                | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
 | `src/access.ts`, `src/users.ts` | Orgs, users, roles, access policy                                                 |
 | `src/feeds.ts`, `src/ics.ts`    | Private free/busy ICS feeds: tokens, access checks, busy events, ICS writer       |

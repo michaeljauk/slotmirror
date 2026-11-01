@@ -47,6 +47,12 @@ account is disconnected.
 
 - Each user can delete their own data under **Delete my data** in the account menu.
 - Admins can delete other users on the admin page.
+- If blocks cannot be removed, the calendar name, the calendar ID, the block title, the block
+  count, the period and the marker stay for 90 days, so that someone can delete the blocks by hand.
+  The calendar ID of a primary Google calendar is the mail address of the account. See
+  [Blocks left after a disconnect](../troubleshooting/#blocks-left-after-a-disconnect).
+- If all blocks of a rule are removed, the calendar name, the calendar ID and the block title go at
+  once. The record of the removal stays for 90 days without them.
 
 Both remove the accounts with their tokens, the rules, and the blocks those rules wrote from
 today on. Past blocks stay in the calendars. Activity entries stay until the retention period

@@ -10,7 +10,13 @@ import {
   silenceCheckCost,
   TEST_ALERT_OUTCOMES,
 } from "./alerts";
-import { accountsToTick, CRON_FIXED_SUBREQUESTS, MAX_CRON_SUBREQUESTS } from "./cron";
+import { cleanupsOfOthers, NO_CLEANUPS, ownCleanups } from "./cleanup";
+import {
+  accountsToTick,
+  CRON_FIXED_SUBREQUESTS,
+  MAX_CRON_SUBREQUESTS,
+  spareSubrequests,
+} from "./cron";
 import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
@@ -27,6 +33,7 @@ import { operatorNotice } from "./operator-notice";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage, OrgActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
+import { CleanupPage } from "./pages/cleanup";
 import { DeleteUserPage } from "./pages/delete-user";
 import { DisconnectPage } from "./pages/disconnect";
 import { HomePage, SignInPage, type AccountRow, type AccountSettingsDraft } from "./pages/home";
@@ -55,7 +62,13 @@ import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
 import { isValidToken, notifyChange } from "./webhooks";
-import { deleteUser, removeAccounts } from "./offboarding";
+import {
+  deleteUser,
+  heldRulesStatement,
+  releaseHeldRules,
+  removeAccounts,
+  type HeldRule,
+} from "./offboarding";
 import { scim } from "./routes/scim";
 import { crossSiteGuard, securityHeaders } from "./request-guard";
 import { feeds } from "./routes/feeds";
@@ -217,11 +230,12 @@ async function renderHome(
   )
     .bind(user.id)
     .all<AccountRow>();
-  const [outcomes, editor, userFeeds, calendars] = await Promise.all([
+  const [outcomes, editor, userFeeds, calendars, cleanups] = await Promise.all([
     latestRuleOutcomes(c.env.DB, user.id),
     loadEditorState(c.env, user.id),
     listFeeds(c.env.DB, user.id),
     userCalendars(c.env.DB, user.id),
+    ownCleanups(c.env.DB, user.id),
   ]);
   return render(
     c,
@@ -234,6 +248,8 @@ async function renderHome(
       editor={editor}
       feeds={userFeeds}
       calendars={calendars}
+      cleanups={cleanups.left.length}
+      cleanupsRunning={cleanups.running.length}
       notice={options.notice}
       openSettings={options.openSettings}
       draft={options.draft}
@@ -472,6 +488,17 @@ app.post("/admin/users/:id/reset-sign-in", async (c) => {
   return c.redirect("/admin");
 });
 
+// What an offboarding could not remove. An admin also sees the rest of users who cannot sign in.
+app.get("/cleanup", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  const [own, others] = await Promise.all([
+    ownCleanups(c.env.DB, user.id),
+    user.role === "admin" ? cleanupsOfOthers(c.env.DB, user.orgId) : NO_CLEANUPS,
+  ]);
+  return render(c, <CleanupPage user={user} own={own} others={others} />);
+});
+
 app.get("/activity", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
@@ -503,11 +530,13 @@ app.get("/admin", async (c) => {
     .all<AdminUserRow>();
   const activity = await orgActivity(c.env.DB, user.orgId);
   const compares = await latestCompares(c.env.DB, user.orgId);
+  const cleanups = await cleanupsOfOthers(c.env.DB, user.orgId);
   return render(
     c,
     <AdminPage
       user={user}
       users={results}
+      cleanups={cleanups.left.length}
       activity={activity}
       compares={compares}
       compareStart={
@@ -607,19 +636,29 @@ async function scheduled(controller: ScheduledController, env: Env): Promise<voi
   if (results.length > tickLimit) {
     console.error("Cron ticks rotate at the subrequest limit", tickLimit, results.length);
   }
+  const spare = spareSubrequests(results.length, tickLimit);
+  let held: HeldRule[] = [];
+  try {
+    const now = controller.scheduledTime;
+    held = await purgeAuditEvents<HeldRule>(env.DB, heldRulesStatement(env, now, spare), now);
+  } catch (error) {
+    console.error("Audit purge failed", errorCode(error));
+  }
+  let holdsCost = 0;
+  try {
+    holdsCost = await releaseHeldRules(env, held, controller.scheduledTime, spare);
+  } catch (error) {
+    holdsCost = spare;
+    console.error("Releasing held rules failed", errorCode(error));
+  }
   const ids = results.map(({ id }) => id);
-  for (const id of accountsToTick(ids, controller.scheduledTime, tickLimit)) {
+  for (const id of accountsToTick(ids, controller.scheduledTime, tickLimit - holdsCost)) {
     // One failing account must not stop the ticks of the others.
     try {
       await accountSync(env, id).tick();
     } catch (error) {
       console.error("Cron tick failed", id, errorCode(error));
     }
-  }
-  try {
-    await purgeAuditEvents(env.DB);
-  } catch (error) {
-    console.error("Audit purge failed", errorCode(error));
   }
 }
 

@@ -11,7 +11,7 @@ import {
   MAX_FEED_EVENTS,
   tokenMatches,
 } from "../src/feeds";
-import { deleteUser, removeAccounts, setUserActive } from "../src/offboarding";
+import { deleteUser, removeAccounts } from "../src/offboarding";
 import { addFakeEvent } from "../src/providers/fake-calendar";
 import fixture from "./fixtures/graph/calendar-view.json";
 import { BASE, noFakeNetwork, signIn } from "./helpers";
@@ -348,24 +348,6 @@ describe("feed authorization", () => {
       expect(response.status).toBe(404);
     }
     expect((await exports.default.fetch(url)).status).toBe(200);
-  });
-
-  it("deletes the feeds of a deactivated user, so that a reactivation does not revive them", async () => {
-    fakeGraph();
-    const { cookie, calendarId, user } = await setup("deact");
-    const url = await feedUrlFrom(await createFeed(cookie, [calendarId]));
-    expect((await exports.default.fetch(url)).status).toBe(200);
-    await setUserActive(env, user, false, "scim");
-    expect(await feedRow(parts(url).feedId)).toBeNull();
-    expect((await exports.default.fetch(url)).status).toBe(404);
-    await setUserActive(env, user, true, "scim");
-    expect((await exports.default.fetch(url)).status).toBe(404);
-    const audit = await env.DB.prepare(
-      "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'feed_deleted'",
-    )
-      .bind(user.id)
-      .first<{ detail: string }>();
-    expect(JSON.parse(audit?.detail ?? "{}")).toMatchObject({ by: "user_deactivated" });
   });
 
   it("deletes the feeds of a user the access policy no longer admits, at their next fetch", async () => {

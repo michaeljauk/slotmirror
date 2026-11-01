@@ -47,5 +47,5 @@ A personal Microsoft account approves for itself.
    clone, you can run `pnpm wrangler secret put <NAME>` instead.
 
 Set `ALLOWED_TENANT_IDS` to restrict Microsoft sign-in to your tenants. For a team on Microsoft
-365, also see [Organisations](../organisations/): it explains `ALLOWED_TENANT_IDS`,
-`SIGN_IN_PROVIDERS` and SCIM.
+365, also see [Organisations](../organisations/): it explains `ALLOWED_TENANT_IDS` and
+`SIGN_IN_PROVIDERS`.

@@ -38,7 +38,6 @@ secrets and a sign-in provider are present, every page shows a checklist of what
 | `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`            |
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                          |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                           |
-| `SCIM_TOKEN`                      | secret   | Optional. Bearer token for user provisioning from Entra over SCIM.                            |
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See [Alerts](#alerts).                        |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last
@@ -91,10 +90,9 @@ no work open. The alert lists rules without a run apart from rules with failed r
   fails every time alerts too.
 - A rule that is turned off does not alert.
 - A rule does not alert while its source account or its target account needs reconnecting.
-- A rule does not alert if its user is deactivated or no longer passes the access settings.
+- A rule does not alert if its user no longer passes the access settings.
 - A rule has 3 hours to run after you create it, change it or turn it on.
-- A rule has 3 hours to run after you connect one of its accounts again, and after its user
-  is active again.
+- A rule has 3 hours to run after you connect one of its accounts again.
 
 The next cron tick or alarm of the account reports an aborted run, because a run that the platform
 stopped cannot send anything. The next run can repair the blocks by itself.

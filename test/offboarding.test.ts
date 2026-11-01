@@ -14,7 +14,6 @@ import {
   HOLD_LEASE_MS,
   JOBLESS_TOMBSTONE_MS,
   noteTombstoneProgress,
-  ownCleanups,
 } from "../src/cleanup";
 import { de } from "../src/i18n/de";
 import { en } from "../src/i18n/en";
@@ -27,7 +26,6 @@ import {
   releaseHeldRules,
   type HeldRule,
   removeAccounts,
-  setUserActive,
 } from "../src/offboarding";
 import { ruleTagFor } from "../src/sync/plan";
 import { syncWindow } from "../src/sync/rules";
@@ -251,29 +249,6 @@ async function addFeed(userId: string, feedId: string, calendarId: string): Prom
 
 async function feedExists(feedId: string): Promise<boolean> {
   return (await env.DB.prepare("SELECT 1 FROM feeds WHERE id = ?").bind(feedId).first()) !== null;
-}
-
-async function userEvents(userId: string, kind: string): Promise<number> {
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM audit_events WHERE user_id = ? AND kind = ?",
-  )
-    .bind(userId, kind)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
-}
-
-function patchActive(userId: string, value: boolean) {
-  return exports.default.fetch(`${BASE}/scim/v2/Users/${userId}`, {
-    method: "PATCH",
-    headers: {
-      authorization: "Bearer test-scim-token",
-      "content-type": "application/scim+json",
-    },
-    body: JSON.stringify({
-      schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-      Operations: [{ op: "replace", path: "active", value }],
-    }),
-  });
 }
 
 /** Run the alarms of a waiting removal up to its end. */
@@ -711,19 +686,6 @@ describe("a removal that cannot be queued", () => {
     expect(await rowExists("users", user.id)).toBe(true);
     expect(await rowExists("accounts", sourceId)).toBe(true);
     expect(response.headers.get("set-cookie") ?? "").not.toContain("Max-Age=0");
-  });
-
-  it("tells a SCIM client to try again", async () => {
-    const { user } = await setup("no-queue-scim");
-    queueingFails();
-
-    const response = await exports.default.fetch(`${BASE}/scim/v2/Users/${user.id}`, {
-      method: "DELETE",
-      headers: { authorization: "Bearer test-scim-token" },
-    });
-
-    expect(response.status).toBe(500);
-    expect(await rowExists("users", user.id)).toBe(true);
   });
 });
 
@@ -1645,69 +1607,6 @@ describe("a failure while the rules start again", () => {
   });
 });
 
-describe("a deactivation whose removal keeps failing", () => {
-  it("reports the result after the last attempt", async () => {
-    const { user, target, targetId, ruleId } = await setup("deactivate-fail", "fail@org.example");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    await target.injectFakeFault({ kind: "reads_fail", error: "server", count: 5 });
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    await runAttempts(target, 5);
-
-    expect(await removalsOf(target)).toBeUndefined();
-    expect(await eventsOf(targetId, "cleanup_finished")).toEqual([
-      {
-        user_id: user.id,
-        account_id: targetId,
-        rule_id: ruleId,
-        detail: { result: "incomplete", removed: 0, left: 1, estimated: true },
-      },
-    ]);
-  });
-});
-
-describe("a deactivation whose removal cannot be queued", () => {
-  function queueingFails() {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    return vi
-      .spyOn(AccountSync.prototype, "queueRemovals")
-      .mockRejectedValueOnce(new Error("Network connection lost."));
-  }
-
-  it("tells a SCIM client to try again, and the retry queues the removal", async () => {
-    const { user, target, targetId, ruleId } = await setup("deactivate", "deactivate@org.example");
-    await addFeed(user.id, "deactivate-feed", `${targetId}-main`);
-    queueingFails();
-
-    expect((await patchActive(user.id, false)).status).toBe(500);
-    expect(await removalsOf(target)).toBeUndefined();
-    expect(await feedExists("deactivate-feed")).toBe(false);
-    expect(await userEvents(user.id, "user_deactivated")).toBe(1);
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    expect(await removalsOf(target)).toEqual([expect.objectContaining({ ruleId })]);
-    expect(await userEvents(user.id, "user_deactivated")).toBe(1);
-    await runDurableObjectAlarm(target);
-    expect(await blocksIn(target)).toBe(0);
-  });
-
-  it("throws the error of a removal that was not queued", async () => {
-    const { user } = await setup("deactivate-throw", "deactivate-throw@org.example");
-    queueingFails();
-    await expect(setUserActive(env, user, false, "scim")).rejects.toBeInstanceOf(CleanupNotQueued);
-  });
-
-  it("does not revive a user that is active already", async () => {
-    const { user } = await setup("deactivate-active");
-    const sync = vi.spyOn(AccountSync.prototype, "requestSync");
-
-    await setUserActive(env, user, true, "scim");
-
-    expect(sync).not.toHaveBeenCalled();
-    expect(await userEvents(user.id, "user_reactivated")).toBe(0);
-  });
-});
-
 describe("a comparison on a retiring account", () => {
   it("does not replace the wait of a removal", async () => {
     const { cookie, target, targetId } = await setup("compare");
@@ -2050,9 +1949,10 @@ describe("a tombstone", () => {
   });
 
   it("keeps its progress if a retry of the request finds it open", async () => {
-    const { user, target, targetId } = await setup("stone-retry", "stone-retry@org.example");
+    const { cookie, target, sourceId, targetId } = await setup("stone-retry");
     vi.spyOn(console, "error").mockImplementation(() => {});
-    await setUserActive(env, user, false, "scim");
+    vi.spyOn(AccountSync.prototype, "retire").mockRejectedValueOnce(new Error("lost"));
+    await post(`/accounts/${sourceId}/disconnect`, cookie);
     const steps = AccountSync.prototype as unknown as { removeRuleBlocks: Method };
     vi.spyOn(steps, "removeRuleBlocks").mockResolvedValueOnce({
       removed: 2,
@@ -2062,7 +1962,7 @@ describe("a tombstone", () => {
     });
     await runDurableObjectAlarm(target);
 
-    await setUserActive(env, user, false, "scim");
+    await post(`/accounts/${sourceId}/disconnect`, cookie);
 
     expect(await tombstoneOf(targetId)).toMatchObject({
       state: "open",
@@ -2099,19 +1999,8 @@ describe("a tombstone", () => {
   });
 
   it("starts again for a new offboarding after an end state", async () => {
-    const { user, target, targetId, ruleId } = await setup(
-      "stone-again",
-      "stone-again@org.example",
-    );
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    await target.injectFakeFault({ kind: "reads_fail", error: "server", count: 5 });
-    await setUserActive(env, user, false, "scim");
-    await runAttempts(target, 5);
-    expect((await tombstoneOf(targetId))?.state).toBe("incomplete");
+    const { user, targetId } = await failedRequestLeavesRest("stone-again");
 
-    await target.queueRemovals([{ ruleId, remoteCalendarId: CALENDAR }], {
-      offboarding: { orgId: user.orgId, userId: user.id },
-    });
     await removeAccounts(env, user, [targetId]);
 
     expect(await tombstoneOf(targetId)).toMatchObject({
@@ -2355,23 +2244,6 @@ describe("a job on a paused account", () => {
     expect((await tombstoneOf(targetId))?.state).toBe("deadline");
     const { cookie: later } = await signIn("owner@example.com");
     expect(await page("/cleanup", later)).toContain(await ruleTagFor(ruleId));
-  });
-
-  it("ends for a deactivated user, and an admin sees the rest", async () => {
-    const { user, target, targetId, ruleId } = await waiting(
-      "deadline-user",
-      "deadline-user@org.example",
-    );
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    expect(await removalsOf(target)).toHaveLength(1);
-    advance(CLEANUP_DEADLINE_MS);
-    await target.tick();
-
-    expect((await tombstoneOf(targetId))?.state).toBe("deadline");
-    const admin = await signIn("admin@example.com");
-    expect(await page("/cleanup", admin.cookie)).toContain(await ruleTagFor(ruleId));
-    expect(await page("/admin", admin.cookie)).toContain('href="/cleanup"');
   });
 });
 
@@ -2832,21 +2704,6 @@ describe("overlapping requests", () => {
   });
 });
 
-describe("a reactivation while a job waits", () => {
-  it("lets the job end, and the rule writes the blocks back", async () => {
-    const { user, target, targetId } = await setup("reactivate", "reactivate@org.example");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    expect((await patchActive(user.id, true)).status).toBe(200);
-
-    await runDurableObjectAlarm(target);
-    expect((await tombstoneOf(targetId))?.state).toBe("removed");
-    await runDurableObjectAlarm(target);
-
-    expect(await blocksIn(target)).toBe(1);
-  });
-});
-
 describe("the job of a failed request", () => {
   it("runs to its end, and the rule that runs again writes the blocks back", async () => {
     const { cookie, target, sourceId, targetId, ruleId } = await setup("failed-job");
@@ -3066,7 +2923,7 @@ describe("a removal that still runs", () => {
     const link = (text: string) => /[^>]*left in \d+ calendars?/.exec(text)?.[0];
 
     await removeAccounts(env, user, [sourceId]);
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id).run();
+    await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
 
     expect(link(await page("/admin", admin.cookie))).toBe(link(before));
   });
@@ -3111,37 +2968,6 @@ describe("a tombstone without a job", () => {
     expect(text).toContain(en.cleanup.reasons.not_started);
     expect(text).toContain(en.cleanup.unknownCount);
     expect(text).not.toContain(en.cleanup.runningTitle);
-  });
-
-  it("of a deactivation closes soon, and asks for the removal by hand", async () => {
-    const { user, targetId } = await setup("ghost-user", "ghost-user@org.example");
-    queueingFails();
-    expect((await patchActive(user.id, false)).status).toBe(500);
-    expect((await tombstoneOf(targetId))?.state).toBe("open");
-
-    advance(closes);
-    await runCron();
-
-    expect((await tombstoneOf(targetId))?.state).toBe("not_started");
-  });
-
-  it("lets a repeated deactivation start the job that never started", async () => {
-    const { user, target, targetId } = await setup("ghost-again", "ghost-again@org.example");
-    queueingFails();
-    expect((await patchActive(user.id, false)).status).toBe(500);
-    advance(closes);
-    await runCron();
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    expect(await removalsOf(target)).toHaveLength(1);
-    expect((await tombstoneOf(targetId))?.state).toBe("open");
-    await runDurableObjectAlarm(target);
-
-    expect(await blocksIn(target)).toBe(0);
-    expect((await eventsOf(targetId, "cleanup_finished")).map((event) => event.detail)).toEqual([
-      { result: "not_started", removed: 0 },
-      { result: "removed", removed: 1 },
-    ]);
   });
 
   it("stays open for the time a request needs, and is once only in the log", async () => {
@@ -3192,20 +3018,6 @@ describe("a tombstone without a job", () => {
     expect(activity).toContain(en.activity.cleanupReasons.kept);
     expect(activity).not.toContain(en.activity.cleanupReasons.not_started);
     expect(await page("/cleanup", again.cookie)).toContain(en.cleanup.empty);
-  });
-
-  it("that closed as kept shows no rest if the rule stops later", async () => {
-    const email = "ghost-kept-off@org.example";
-    const { user, cookie, sourceId, targetId, ruleId } = await setup("ghost-kept-off", email);
-    queueingFails();
-    await post(`/accounts/${sourceId}/disconnect`, cookie);
-    advance(closes);
-    await runCron();
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id).run();
-    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
-
-    expect((await tombstoneOf(targetId))?.state).toBe("kept");
-    expect(await ownCleanups(env.DB, user.id)).toEqual({ left: [], running: [] });
   });
 
   it("gets the full time again from a new request that fails", async () => {
@@ -3317,20 +3129,6 @@ describe("a tombstone without a job", () => {
     queueingFails();
     await post(`/accounts/${sourceId}/disconnect`, cookie);
     await holdRule(ruleId, Date.now() + 10 * DAY);
-
-    advance(closes);
-    await runCron();
-
-    expect((await tombstoneOf(targetId))?.state).toBe("not_started");
-  });
-
-  it("of a rule that stopped for a deactivated user closes with a doubt", async () => {
-    const name = "ghost-stopped-user";
-    const { user, cookie, sourceId, targetId, ruleId } = await setup(name, `${name}@org.example`);
-    queueingFails();
-    await post(`/accounts/${sourceId}/disconnect`, cookie);
-    await post(`/rules/${ruleId}/pause`, cookie);
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id).run();
 
     advance(closes);
     await runCron();
@@ -3527,15 +3325,16 @@ describe("a tombstone with a job", () => {
   });
 
   it("gets a new deadline from a new offboarding after the old one ended", async () => {
-    const { user, target, targetId, ruleId } = await waiting("job-second");
-    await patchActive(user.id, false);
+    const { user, cookie, target, sourceId, targetId, ruleId } = await waiting("job-second");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(AccountSync.prototype, "retire").mockRejectedValueOnce(new Error("lost"));
+    await post(`/accounts/${sourceId}/disconnect`, cookie);
     advance(CLEANUP_DEADLINE_MS);
     await target.tick();
     expect((await tombstoneOf(targetId))?.state).toBe("deadline");
-    await patchActive(user.id, true);
     expect(await ruleEnabled(ruleId)).toBe(1);
 
-    await patchActive(user.id, false);
+    await removeAccounts(env, user, [sourceId]);
 
     expect(await tombstoneOf(targetId)).toMatchObject({
       state: "open",
@@ -3875,79 +3674,6 @@ describe("rules that wait in the sweep", () => {
   });
 });
 
-describe("a repeated deactivation", () => {
-  it("leaves an ended tombstone alone and queues no job", async () => {
-    const { user, target, targetId } = await setup("repeat", "repeat@org.example");
-    await pause(target);
-    await flagReconnect(targetId);
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    advance(CLEANUP_DEADLINE_MS);
-    await target.tick();
-    const before = await tombstoneOf(targetId);
-    expect(before?.state).toBe("deadline");
-
-    advance(DAY);
-    expect((await patchActive(user.id, false)).status).toBe(200);
-
-    expect(await tombstoneOf(targetId)).toEqual(before);
-    expect(await removalsOf(target)).toBeUndefined();
-  });
-
-  it("leaves a removed tombstone alone and queues no job", async () => {
-    const { user, target, targetId } = await setup("repeat-done", "repeat-done@org.example");
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    await runDurableObjectAlarm(target);
-    const before = await tombstoneOf(targetId);
-    expect(before?.state).toBe("removed");
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-
-    expect(await tombstoneOf(targetId)).toEqual(before);
-    expect(await removalsOf(target)).toBeUndefined();
-  });
-
-  it("still queues a job whose tombstone is open", async () => {
-    const { user, target, targetId } = await setup("repeat-open", "repeat-open@org.example");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(AccountSync.prototype, "queueRemovals").mockRejectedValueOnce(new Error("lost"));
-    expect((await patchActive(user.id, false)).status).toBe(500);
-    expect(await removalsOf(target)).toBeUndefined();
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-
-    expect(await removalsOf(target)).toHaveLength(1);
-    expect((await tombstoneOf(targetId))?.state).toBe("open");
-  });
-
-  it("opens a new offboarding after a reactivation", async () => {
-    const { user, target, targetId } = await setup("repeat-new", "repeat-new@org.example");
-    expect((await patchActive(user.id, false)).status).toBe(200);
-    await runDurableObjectAlarm(target);
-    expect((await tombstoneOf(targetId))?.state).toBe("removed");
-    expect((await patchActive(user.id, true)).status).toBe(200);
-
-    expect((await patchActive(user.id, false)).status).toBe(200);
-
-    expect((await tombstoneOf(targetId))?.state).toBe("open");
-    expect(await removalsOf(target)).toHaveLength(1);
-  });
-
-  it("changes nothing if the tombstones cannot be written", async () => {
-    const { user, target, targetId } = await setup("repeat-step", "repeat-step@org.example");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const refusing = envWithRefusal((query) => query.includes("INTO cleanup_tombstones"));
-
-    await expect(setUserActive(refusing, user, false, "scim")).rejects.toThrow();
-
-    expect(await tombstoneOf(targetId)).toBeNull();
-    const row = await env.DB.prepare("SELECT active FROM users WHERE id = ?")
-      .bind(user.id)
-      .first<{ active: number }>();
-    expect(row?.active).toBe(1);
-    expect(await removalsOf(target)).toBeUndefined();
-  });
-});
-
 describe("the sweep and a newer request", () => {
   beforeEach(async () => {
     await env.DB.prepare("DELETE FROM rule_holds").run();
@@ -4013,16 +3739,6 @@ describe("the rest of a rule that ran again", () => {
     expect(await tombstoneOf(targetId)).toBeNull();
   });
 
-  it("stays for a deactivated user whose rule goes off", async () => {
-    const { user, targetId, ruleId } = await failedRequestLeavesRest("again-gone");
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id).run();
-
-    await env.DB.prepare("UPDATE rules SET enabled = 0 WHERE id = ?").bind(ruleId).run();
-
-    expect((await tombstoneOf(targetId))?.state).toBe("incomplete");
-    await env.DB.prepare("UPDATE users SET active = 1 WHERE id = ?").bind(user.id).run();
-  });
-
   it("keeps an open tombstone: its job still reports", async () => {
     const { cookie, target, sourceId, targetId, ruleId } = await setup("again-open");
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -4068,7 +3784,7 @@ describe("two entries with the same calendar name", () => {
     await env.DB.prepare("DELETE FROM accounts WHERE id = ?").bind(targetId).run();
     expect(await page("/cleanup", cookie)).not.toContain(`${targetId}@example.com`);
 
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id).run();
+    await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
     const admin = await signIn("admin@example.com");
     expect(await page("/cleanup", admin.cookie)).not.toContain(`${secondId}@example.com`);
   });

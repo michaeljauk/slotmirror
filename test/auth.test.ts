@@ -581,22 +581,16 @@ describe("Microsoft identity binding", () => {
     expect(await userRow("personal@org.example")).toMatchObject({ ms_object_id: null });
   });
 
-  it("refuses another person's sign-in after SCIM moved a bound user to their address", async () => {
+  it("refuses another person's sign-in after a bound user moved to their address", async () => {
     await microsoftSignIn({
       tid: TENANT_A,
       oid: "oid-carl",
       preferred_username: "carl@org.example",
     });
     const carl = await userRow("carl@org.example");
-    const rename = await exports.default.fetch(`${BASE}/scim/v2/Users/${carl?.id}`, {
-      method: "PATCH",
-      headers: { authorization: "Bearer test-scim-token", "content-type": "application/scim+json" },
-      body: JSON.stringify({
-        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-        Operations: [{ op: "replace", path: "userName", value: "mallory@org.example" }],
-      }),
-    });
-    expect(rename.status).toBe(200);
+    await env.DB.prepare("UPDATE users SET email = 'mallory@org.example' WHERE id = ?")
+      .bind(carl?.id)
+      .run();
 
     const mallory = await microsoftSignIn({
       tid: TENANT_A,

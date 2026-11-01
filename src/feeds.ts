@@ -294,14 +294,9 @@ export async function removeFeedCalendar(
 
 /**
  * Why a feed went: its user deleted it, its last calendar left with an account or by the user's
- * choice, or its user was deactivated or is no longer admitted by the access policy.
+ * choice, or its user is no longer admitted by the access policy.
  */
-type FeedDeletedBy =
-  | "self"
-  | "account_removed"
-  | "calendar_removed"
-  | "user_deactivated"
-  | "user_not_admitted";
+type FeedDeletedBy = "self" | "account_removed" | "calendar_removed" | "user_not_admitted";
 
 /** Delete a feed of the user. Returns false if the user has no such feed. */
 export async function deleteFeed(
@@ -325,12 +320,12 @@ export async function deleteFeed(
 
 /**
  * Delete every feed of a user who lost access. A feed is a standing grant to people outside the
- * deployment, so it ends with the access; a reactivation does not bring it back.
+ * deployment, so it ends with the access.
  */
 export async function revokeFeeds(
   env: Env,
   user: { id: string; orgId: string },
-  by: "user_deactivated" | "user_not_admitted",
+  by: "user_not_admitted",
 ): Promise<void> {
   const { results } = await env.DB.prepare("SELECT id FROM feeds WHERE user_id = ?")
     .bind(user.id)
@@ -383,7 +378,6 @@ interface FeedRow {
   orgId: string;
   email: string;
   tenantId: string | null;
-  active: number;
   policy: string;
   /** JSON array of FeedCalendar: the chosen calendars of the user's accounts. */
   calendars: string;
@@ -395,7 +389,7 @@ const FEED_SELECT = `
          f.last_body AS lastBody, f.last_rendered_at AS lastRenderedAt, f.last_key AS lastKey,
          f.error_calendar_id AS errorCalendarId, f.error_until AS errorUntil,
          f.lease_until AS leaseUntil,
-         u.org_id AS orgId, u.email, u.tenant_id AS tenantId, u.active, o.policy,
+         u.org_id AS orgId, u.email, u.tenant_id AS tenantId, o.policy,
          (SELECT json_group_array(json_object('id', c.id, 'accountId', c.account_id,
                                               'remoteId', c.remote_id,
                                               'needsReconnect', a.needs_reconnect,
@@ -477,24 +471,18 @@ export async function feedResponse(
   if (!feed || !matches) return notFound();
 
   // The same checks as a session. Losing access ends the feed for good.
-  const admitted =
-    feed.active === 1 &&
-    admittedUser(env, {
-      id: feed.userId,
-      orgId: feed.orgId,
-      email: feed.email,
-      tenantId: feed.tenantId,
-      policy: feed.policy,
-    });
+  const admitted = admittedUser(env, {
+    id: feed.userId,
+    orgId: feed.orgId,
+    email: feed.email,
+    tenantId: feed.tenantId,
+    policy: feed.policy,
+  });
   if (!admitted) {
     // A policy that admits nobody is a broken setup, e.g. a redeploy with empty ALLOWED_* values.
     // It must not delete every feed; the feeds wait until the setup is whole again.
-    if (feed.active === 1 && !policyAdmitsSomeone(env, feed)) return unavailable();
-    await revokeFeeds(
-      env,
-      { id: feed.userId, orgId: feed.orgId },
-      feed.active === 1 ? "user_not_admitted" : "user_deactivated",
-    );
+    if (!policyAdmitsSomeone(env, feed)) return unavailable();
+    await revokeFeeds(env, { id: feed.userId, orgId: feed.orgId }, "user_not_admitted");
     return notFound();
   }
   const calendars = (JSON.parse(feed.calendars) as FeedCalendar[])

@@ -14,8 +14,6 @@ const ADMIN_ACTIVITY_ROWS = 10;
 export interface AdminUserRow {
   id: string;
   email: string;
-  /** 0 if Entra deactivated the user over SCIM. */
-  active: number;
   role: Role;
   lastSignInAt: string | null;
   accounts: number;
@@ -27,7 +25,7 @@ export interface AdminUserRow {
 export function AdminPage(props: {
   user: CurrentUser;
   users: AdminUserRow[];
-  /** Calendars with blocks of deactivated and deleted users. */
+  /** Calendars with blocks of deleted users. */
   cleanups: number;
   activity: ActivityRow[];
   /** The latest comparison per calendar and mode. */
@@ -97,7 +95,6 @@ export function AdminPage(props: {
                       <span class={row.role === "admin" ? "badge admin" : "badge"}>
                         {t.roles[row.role]}
                       </span>
-                      {row.active === 0 ? <span class="badge">{t.admin.inactive}</span> : null}
                     </span>
                   </td>
                   <td data-label={t.admin.accounts}>

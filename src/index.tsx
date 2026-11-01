@@ -69,7 +69,6 @@ import {
   removeAccounts,
   type HeldRule,
 } from "./offboarding";
-import { scim } from "./routes/scim";
 import { crossSiteGuard, securityHeaders } from "./request-guard";
 import { feeds } from "./routes/feeds";
 import { feedResponse, listFeeds } from "./feeds";
@@ -165,11 +164,8 @@ app.use(
 );
 
 // After the language, so that a refusal speaks it. The webhooks above answer before this runs,
-// and the guard exempts them and SCIM by path as well.
+// and the guard exempts them by path as well.
 app.use("*", crossSiteGuard);
-
-// SCIM provisioning from Entra: its own bearer token, independent of sessions and the setup.
-app.route("/scim/v2", scim);
 
 // Public, also before the setup is finished: Google requires a reachable privacy statement.
 app.get("/privacy", (c) =>
@@ -518,7 +514,7 @@ app.get("/admin", async (c) => {
   }
   // Metadata only: no calendar contents, no tokens.
   const { results } = await c.env.DB.prepare(
-    `SELECT u.id, u.email, u.role, u.active, u.last_sign_in_at AS lastSignInAt,
+    `SELECT u.id, u.email, u.role, u.last_sign_in_at AS lastSignInAt,
             COUNT(a.id) AS accounts,
             COALESCE(SUM(a.needs_reconnect), 0) AS needsReconnect
      FROM users u LEFT JOIN accounts a ON a.user_id = u.id

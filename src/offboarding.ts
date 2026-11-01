@@ -3,7 +3,7 @@ import { auditStatement, errorLogFields, recordAudit } from "./audit";
 import { HOLD_LEASE_MS, openTombstone } from "./cleanup";
 import { parseRuleOptions } from "./config";
 import { accountSync } from "./durable";
-import { deleteEmptyFeeds, revokeFeeds } from "./feeds";
+import { deleteEmptyFeeds } from "./feeds";
 import { ruleTagFor } from "./sync/plan";
 import { syncWindow } from "./sync/rules";
 
@@ -111,27 +111,22 @@ function tombstoneStatements(
   env: Env,
   rules: OwnedRule[],
   owner: OffboardingOwner,
-  options?: { whileUserActive: boolean },
 ): Promise<D1PreparedStatement[]> {
   const now = Date.now();
   return Promise.all(
     rules.map(async (rule) =>
-      openTombstone(
-        env.DB,
-        {
-          accountId: rule.targetAccountId,
-          remoteCalendarId: rule.remoteCalendarId,
-          ruleId: rule.ruleId,
-          orgId: owner.orgId,
-          userId: owner.userId,
-          calendarName: rule.calendarName,
-          ruleTag: await ruleTagFor(rule.ruleId),
-          openedAt: new Date(now).toISOString(),
-          ruleWasOff: rule.enabled !== 1 && rule.held !== 1,
-          ...blocksOf(rule, now),
-        },
-        options,
-      ),
+      openTombstone(env.DB, {
+        accountId: rule.targetAccountId,
+        remoteCalendarId: rule.remoteCalendarId,
+        ruleId: rule.ruleId,
+        orgId: owner.orgId,
+        userId: owner.userId,
+        calendarName: rule.calendarName,
+        ruleTag: await ruleTagFor(rule.ruleId),
+        openedAt: new Date(now).toISOString(),
+        ruleWasOff: rule.enabled !== 1 && rule.held !== 1,
+        ...blocksOf(rule, now),
+      }),
     ),
   );
 }
@@ -336,7 +331,7 @@ async function deleteFeedsAfterFailure(
 }
 
 /** Who started a deletion or a change of state; recorded without names. */
-export type Actor = "self" | "admin" | "scim";
+export type Actor = "self" | "admin";
 
 /**
  * Delete a user with every account, rule, feed and block. Activity entries stay until retention.
@@ -358,73 +353,6 @@ export async function deleteUser(
   await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id).run();
   // The user is gone, so the entry belongs to the org only. It says who acted, not who went.
   await recordAudit(env.DB, { orgId: user.orgId, kind: "user_deleted", detail: { by } });
-}
-
-/** The rules whose tombstone is open. A job of an ended tombstone is over. */
-async function rulesWithOpenTombstone(env: Env, rules: OwnedRule[]): Promise<OwnedRule[]> {
-  if (rules.length === 0) return [];
-  const { results } = await env.DB.prepare(
-    `SELECT rule_id AS ruleId FROM cleanup_tombstones
-     WHERE state = 'open' AND rule_id IN (SELECT value FROM json_each(?))`,
-  )
-    .bind(ids(rules))
-    .all<{ ruleId: string }>();
-  const open = new Set(results.map((row) => row.ruleId));
-  return rules.filter((rule) => open.has(rule.ruleId));
-}
-
-/**
- * Deactivate or reactivate a user. Deactivated: sign-in and sessions stop, rules no longer run
- * and their blocks are removed; accounts and rules stay for a reactivation, which syncs again.
- * Free/busy feeds are deleted: a reactivation does not publish them again. The tombstones open in
- * the D1 step of the deactivation. If that step fails, nothing changed, and this throws. If a
- * removal cannot be queued, the user stays deactivated and this throws `CleanupNotQueued`. The same
- * request then queues the removals again. A request for a user who is deactivated already is no new
- * offboarding: it queues only the removals of open tombstones, and an ended tombstone stays ended,
- * unless its removal never started.
- */
-export async function setUserActive(
-  env: Env,
-  user: { id: string; orgId: string },
-  active: boolean,
-  by: Actor,
-): Promise<void> {
-  const { results: accounts } = await env.DB.prepare("SELECT id FROM accounts WHERE user_id = ?")
-    .bind(user.id)
-    .all<{ id: string }>();
-  const accountIds = accounts.map((row) => row.id);
-  const owner = { orgId: user.orgId, userId: user.id };
-  const rules = active ? [] : await rulesOfAccounts(env, accountIds);
-  const tombstones = await tombstoneStatements(env, rules, owner, { whileUserActive: true });
-  // The tombstones come first: they read whether the user is active. A deactivation also ends the
-  // sessions for good: a reactivation must not revive them.
-  const answers = await env.DB.batch([
-    ...tombstones,
-    env.DB.prepare(
-      `UPDATE users SET active = ?, session_version = session_version + ?
-       WHERE id = ? AND active <> ?`,
-    ).bind(active ? 1 : 0, active ? 0 : 1, user.id, active ? 1 : 0),
-  ]);
-  const changed = (answers.at(-1)?.meta.changes ?? 0) > 0;
-  if (active && !changed) return;
-  let failed = 0;
-  if (active) {
-    for (const id of accountIds) await accountSync(env, id).requestSync();
-  } else {
-    const jobs = changed ? rules : await rulesWithOpenTombstone(env, rules);
-    failed = await queueRemovals(env, jobs, owner);
-  }
-  if (changed) {
-    // A feed is a grant to people outside the deployment; it ends with the user's access.
-    if (!active) await revokeFeeds(env, user, "user_deactivated");
-    await recordAudit(env.DB, {
-      orgId: user.orgId,
-      userId: user.id,
-      kind: active ? "user_reactivated" : "user_deactivated",
-      detail: { by },
-    });
-  }
-  if (failed > 0) throw new CleanupNotQueued(failed);
 }
 
 /** Held rules that one cron invocation reads. */

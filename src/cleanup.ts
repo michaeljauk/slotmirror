@@ -13,7 +13,7 @@ import type { CleanupResult } from "./audit";
 
 /**
  * A job on a paused account ends this long after its offboarding queued it. The account may never
- * come back: a deactivated user does not reconnect, and nothing else ends the wait.
+ * come back: nothing else ends the wait.
  */
 export const CLEANUP_DEADLINE_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -65,21 +65,14 @@ export interface TombstoneResult extends TombstoneOwner {
 
 /**
  * Open the tombstone of a job. An open tombstone stays as it is: a retry of the request takes its
- * job over, or starts the job that it never got. An end state makes room for the new job. With
- * `whileUserActive`, it does so only while the user is active: a second deactivation is no new
- * offboarding, and what ended stays ended. The exception is `not_started`: nothing ran, and a repeated
- * deactivation is the retry of its request.
+ * job over, or starts the job that it never got. An end state makes room for the new job.
  */
-export function openTombstone(
-  db: D1Database,
-  stone: NewTombstone,
-  { whileUserActive = false }: { whileUserActive?: boolean } = {},
-): D1PreparedStatement {
+export function openTombstone(db: D1Database, stone: NewTombstone): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO cleanup_tombstones (account_id, remote_calendar_id, rule_id, org_id, user_id,
          calendar_name, rule_tag, block_title, window_start, window_end, rule_was_off, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?13)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
        ON CONFLICT (account_id, rule_id) DO UPDATE SET
          remote_calendar_id = excluded.remote_calendar_id,
          org_id = excluded.org_id, user_id = excluded.user_id,
@@ -89,9 +82,7 @@ export function openTombstone(
          state = 'open', removed = 0, blocks_left = NULL, left_estimated = 0, finished_at = NULL,
          created_at = excluded.created_at,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE cleanup_tombstones.state <> 'open'
-         AND (?12 = 0 OR cleanup_tombstones.state = 'not_started'
-           OR EXISTS (SELECT 1 FROM users u WHERE u.id = ?5 AND u.active = 1))`,
+       WHERE cleanup_tombstones.state <> 'open'`,
     )
     .bind(
       stone.accountId,
@@ -105,7 +96,6 @@ export function openTombstone(
       stone.windowStart,
       stone.windowEnd,
       stone.ruleWasOff ? 1 : 0,
-      whileUserActive ? 1 : 0,
       stone.openedAt,
     );
 }
@@ -185,22 +175,21 @@ export function noteTombstoneProgress(
 
 /** The tombstone's rule runs, so it owns its blocks. */
 function ruleRuns(tombstone: string): string {
-  return `EXISTS (SELECT 1 FROM rules r JOIN users u ON u.id = r.user_id
-    WHERE r.id = ${tombstone}.rule_id AND r.enabled = 1 AND u.active = 1)`;
+  return `EXISTS (SELECT 1 FROM rules r WHERE r.id = ${tombstone}.rule_id AND r.enabled = 1)`;
 }
 
 /**
  * The owner ended the tombstone's rule after the failed offboarding. Only an offboarding with a job
  * takes a rule with its account or user, so a rule that went without a deadline on the row went
  * through a delete, which queues its own removal. A rule that ran at the offboarding and stopped
- * without a hold was stopped by its active user. The triggers in `migrations/0019` treat an ended
- * row the same way.
+ * without a hold was stopped by its user. The triggers in `migrations/0020` treat an ended row the
+ * same way.
  */
 function ownerEndedRule(tombstone: string): string {
   return `(NOT EXISTS (SELECT 1 FROM rules r WHERE r.id = ${tombstone}.rule_id)
     OR (${tombstone}.rule_was_off = 0 AND EXISTS (
-      SELECT 1 FROM rules r JOIN users u ON u.id = r.user_id
-      WHERE r.id = ${tombstone}.rule_id AND r.enabled = 0 AND u.active = 1
+      SELECT 1 FROM rules r
+      WHERE r.id = ${tombstone}.rule_id AND r.enabled = 0
         AND NOT EXISTS (SELECT 1 FROM rule_holds h WHERE h.rule_id = r.id))))`;
 }
 
@@ -331,14 +320,13 @@ const TOMBSTONE_COLUMNS = `t.account_id AS accountId, t.remote_calendar_id AS re
 
 /**
  * Tombstones with a rest or a job that runs. A rule that runs again owns its blocks: a failed
- * request leaves such a job, and a reactivation ends the need for one. The row goes once the rule
- * stops, see the triggers in `migrations/0019`.
+ * request leaves such a job. The row goes once the rule stops, see the triggers in
+ * `migrations/0020`.
  */
 const WITH_REST = `t.state NOT IN ('removed', 'kept') AND NOT ${ruleRuns("t")}`;
 
 /** Users of the org who can no longer see their own rest. */
-const OWNER_GONE = `t.org_id = ? AND NOT EXISTS (
-  SELECT 1 FROM users u WHERE u.id = t.user_id AND u.active = 1)`;
+const OWNER_GONE = `t.org_id = ? AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = t.user_id)`;
 
 function earliest(values: (string | null)[]): string | null {
   return values.reduce<string | null>(
@@ -401,7 +389,7 @@ export async function ownCleanups(db: D1Database, userId: string): Promise<Clean
   return cleanupsOf(results);
 }
 
-/** What the org's deactivated and deleted users left, for an admin, without their accounts. */
+/** What the org's deleted users left, for an admin, without their accounts. */
 export async function cleanupsOfOthers(db: D1Database, orgId: string): Promise<Cleanups> {
   const { results } = await db
     .prepare(

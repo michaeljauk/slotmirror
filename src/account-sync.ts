@@ -746,7 +746,7 @@ export class AccountSync extends DurableObject<Env> {
        JOIN calendars tc ON tc.id = r.target_calendar_id
        JOIN users u ON u.id = r.user_id
        JOIN orgs o ON o.id = u.org_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
+       WHERE tc.account_id = ? AND r.enabled = 1 AND sa.needs_reconnect = 0
          AND (sc.watched_until IS NULL OR sc.watched_until < ?
               OR tc.watched_until IS NULL OR tc.watched_until < ?)
        ORDER BY r.id`,
@@ -1802,7 +1802,7 @@ export class AccountSync extends DurableObject<Env> {
       throw new Error("A rule runs in the instance of its target account");
     }
     if (!ownerMayRun(this.env, rule)) {
-      throw new Error("The rule's owner is deactivated or no longer admitted");
+      throw new Error("The rule's owner is no longer admitted");
     }
     // The rule was queued before its source account needed reconnecting. Its read would only
     // fail; it runs again in the full cycle after the reconnect. No audit entry.
@@ -2424,7 +2424,7 @@ export class AccountSync extends DurableObject<Env> {
 
   /**
    * End the offboarding jobs that waited too long for new tokens, with what is known of their blocks.
-   * The owner may never reconnect: a deactivated user cannot. A later reconnect removes nothing.
+   * The owner may never reconnect. A later reconnect removes nothing.
    */
   private async endOverdueRemovals(pause: Pause): Promise<void> {
     const queue = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
@@ -2738,9 +2738,9 @@ export class AccountSync extends DurableObject<Env> {
     const notBefore =
       (await this.ctx.storage.get<Record<string, number>>(RULE_NOT_BEFORE_KEY)) ?? {};
     const due = queue.find((id) => (notBefore[id] ?? 0) <= Date.now());
-    // A rule disabled or removed while queued, or one whose owner was deactivated or left the
-    // access policy, leaves the queue without a run and without an audit event. Its removal may be
-    // queued already, and a run would write its blocks again.
+    // A rule disabled or removed while queued, or one whose owner left the access policy, leaves
+    // the queue without a run and without an audit event. Its removal may be queued already, and a
+    // run would write its blocks again.
     const running = await this.rulesRunningFromAlarm(due === undefined ? queue : [due]);
     if (!running) return;
     // If every queued rule waits, a stopped one leaves the queue now instead of at its wait's end.
@@ -3227,7 +3227,7 @@ export class AccountSync extends DurableObject<Env> {
        JOIN rules r ON (r.source_calendar_id = c.id OR r.target_calendar_id = c.id)
        JOIN users u ON u.id = r.user_id
        JOIN orgs o ON o.id = u.org_id
-       WHERE c.account_id = ? AND r.enabled = 1 AND u.active = 1`,
+       WHERE c.account_id = ? AND r.enabled = 1`,
     )
       .bind(accountId)
       .all<{ remoteId: string } & OwnerColumns>();

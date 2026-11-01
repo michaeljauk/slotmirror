@@ -6,7 +6,6 @@ export const TEST_BINDINGS = {
   ALLOWED_TENANT_IDS: "",
   ADMIN_EMAILS: "admin@example.com",
   SIGN_IN_PROVIDERS: "",
-  SCIM_TOKEN: "test-scim-token",
   PUBLIC_URL: "https://slotmirror.example.workers.dev",
   ALERT_WEBHOOK_URL: "https://alerts.example.com/hook",
   // Alarms fire by themselves once due; long delays keep them under the tests' control.

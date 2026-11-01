@@ -116,25 +116,6 @@ describe("server-to-server endpoints", () => {
     });
     expect(response.status).toBe(200);
   });
-
-  it("still serves SCIM, which authenticates with its bearer token", async () => {
-    const response = await exports.default.fetch(`${BASE}/scim/v2/Users`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer test-scim-token",
-        "content-type": "application/scim+json",
-        origin: "https://entra.example",
-        "sec-fetch-site": "cross-site",
-      },
-      body: JSON.stringify({
-        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
-        externalId: "ext-guard",
-        userName: "guard@org.example",
-        active: true,
-      }),
-    });
-    expect(response.status).toBe(201);
-  });
 });
 
 describe("form-action 'self'", () => {

@@ -1,6 +1,6 @@
 ---
 title: Organisations
-description: Run slotmirror for a team, with sign-in limited to your tenant, detail caps and SCIM provisioning.
+description: Run slotmirror for a team, with sign-in limited to your tenant and detail caps.
 ---
 
 A deployment can serve a team. Each member connects their work calendar and, if they want, their
@@ -37,26 +37,11 @@ Values: `busy`, `title`, `title_location`.
 - An invalid value counts as `busy`.
 - In the editor, a capped choice shows the note "This deployment's policy allows at most …".
 
-## Provision users with SCIM
+## Offboarding
 
-Entra can manage users over SCIM 2.0. It creates them before their first sign-in, deactivates
-them when they leave, and deletes them.
-
-- A deactivated user cannot sign in. An open session ends at the next request.
-- Their rules stop and their blocks are removed. Accounts and rules stay, so a reactivation syncs
-  again.
-
-To set it up:
-
-1. Set a long random secret: `wrangler secret put SCIM_TOKEN`, for example from
-   `openssl rand -base64 48`. Without it, `/scim/v2` does not exist.
-2. In the Entra admin center, create an enterprise application: "Create your own application",
-   then "Integrate any other application you don't find in the gallery".
-3. Under **Provisioning**, choose "Automatic". Set the tenant URL to
-   `https://<your deployment>/scim/v2` and the secret token to `SCIM_TOKEN`. Test the connection.
-4. Under **Attribute mapping**, keep the users mapping and turn off groups. slotmirror stores
-   `userName` (the sign-in address), `externalId` and `active`, and ignores the rest.
-5. Assign the users or groups who use slotmirror, then start provisioning.
+If Entra requires an assignment for the app, removing a user there stops their next sign-in. It
+deletes nothing in slotmirror: an open session stays until it expires, and the user's rules keep
+running. To remove a user with their accounts, rules and blocks, delete them under `/admin`.
 
 ## Quotas for a team
 

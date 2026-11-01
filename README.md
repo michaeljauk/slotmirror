@@ -151,7 +151,6 @@ locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy k
 | `TOKEN_ENCRYPTION_KEY`            | secret   | Base64-encoded 32-byte key for AES-GCM token encryption. `openssl rand -base64 32`                                                                          |
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                                                                                        |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                                                                                         |
-| `SCIM_TOKEN`                      | secret   | Optional. Bearer token for user provisioning from Entra over SCIM.                                                                                          |
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See below.                                                                                                  |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last 12
@@ -226,29 +225,6 @@ pnpm wrangler d1 execute DB --remote --command "UPDATE users SET refused_subject
   rebind_until = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+24 hours')
   WHERE email = 'user@example.com'"
 ```
-
-For a team on Microsoft 365, Entra can manage users over SCIM 2.0: it creates them before their
-first sign-in, deactivates them when they leave, and deletes them. A deactivated user cannot sign
-in, and any open session ends at the next request. Their rules stop and their blocks are removed;
-accounts and rules stay, so a reactivation syncs again.
-
-To set it up:
-
-1. Set a long random secret: `wrangler secret put SCIM_TOKEN` (for example from
-   `openssl rand -base64 48`). Without it, `/scim/v2` does not exist.
-2. In the Entra admin center, create an enterprise application ("Create your own application",
-   "Integrate any other application you don't find in the gallery").
-3. Under **Provisioning**, choose "Automatic", set the tenant URL to
-   `https://<your deployment>/scim/v2` and the secret token to `SCIM_TOKEN`, and test the
-   connection.
-4. Under **Attribute mapping**, keep the users mapping and turn off groups. slotmirror stores
-   `userName` (the sign-in address), `externalId` and `active`, and ignores the rest. A change of
-   `userName` ends the user's open sessions; the next sign-in uses the new address.
-5. Set `ALLOWED_TENANT_IDS` to your tenant before the first sign-in. If `userName` is the mail
-   address and differs from the user principal name, only then does a sign-in from your tenant
-   find the user that SCIM created. Without it, the user signs in as a new user under the user
-   principal name.
-6. Assign the users or groups who should use slotmirror, then start provisioning.
 
 ## Push notifications
 
@@ -331,10 +307,10 @@ renew it. The token is in the URL path, so it reaches every log that records req
 
 **Renew or delete.** "New address" replaces the token: the old address returns 404 at once, and
 everyone who should still see the feed needs the new one. "Delete" ends the feed. A feed also ends
-when its last calendar goes with a disconnected account, when its user is deleted or deactivated,
-and at its next fetch once the access settings no longer admit its user. A reactivated user
-creates new feeds. If the access settings admit nobody at all, for example after a deploy with
-empty `ALLOWED_*` values, the feeds stay and answer 503 until the settings are back.
+when its last calendar goes with a disconnected account, when its user is deleted, and at its
+next fetch once the access settings no longer admit its user. If the access settings admit nobody
+at all, for example after a deploy with empty `ALLOWED_*` values, the feeds stay and answer 503
+until the settings are back.
 
 **Delay.** A rendered feed is reused for 15 minutes. The last copy stays in D1 with the feed, so
 a repeated fetch costs one D1 read and no calendar read; the Cache API also keeps it, but

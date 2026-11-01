@@ -146,7 +146,7 @@ export class GraphCalendar implements CalendarClient {
     private readonly onRead: () => void = () => {},
   ) {}
 
-  async listCalendars({ complete = false }: { complete?: boolean } = {}): Promise<CalendarInfo[]> {
+  async listCalendars(): Promise<CalendarInfo[]> {
     const [me, body] = await Promise.all([
       this.get(`${GRAPH}/me?$select=mail,userPrincipalName`),
       this.get(`${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar,owner&$top=100`),
@@ -156,24 +156,13 @@ export class GraphCalendar implements CalendarClient {
       [profile.mail, profile.userPrincipalName].filter(Boolean).map((a) => String(a).toLowerCase()),
     );
     const page = calendarsSchema.parse(body);
-    const listed = [...page.value];
-    let next = complete ? page["@odata.nextLink"] : undefined;
-    while (next) {
-      const more = calendarsSchema.parse(await this.get(next));
-      listed.push(...more.value);
-      next = more["@odata.nextLink"];
-    }
-    return listed.map((calendar) => {
-      const owned = own.has((calendar.owner?.address ?? "").toLowerCase());
-      return {
-        id: calendar.id,
-        name: calendar.name,
-        canEdit: calendar.canEdit ?? false,
-        isDefault: calendar.isDefaultCalendar ?? false,
-        owned,
-        dataOwned: owned,
-      };
-    });
+    return page.value.map((calendar) => ({
+      id: calendar.id,
+      name: calendar.name,
+      canEdit: calendar.canEdit ?? false,
+      isDefault: calendar.isDefaultCalendar ?? false,
+      owned: own.has((calendar.owner?.address ?? "").toLowerCase()),
+    }));
   }
 
   /**

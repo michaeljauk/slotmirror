@@ -14,12 +14,6 @@ export interface CalendarInfo {
    * calendar shared by a colleague with edit rights never receives blocks by accident.
    */
   owned: boolean;
-  /**
-   * True if the calendar's data belongs to the account. Only such calendars may go into a busy
-   * feed. Stricter than `owned` on Google, where the role "owner" also means "manage sharing" on
-   * someone else's calendar.
-   */
-  dataOwned: boolean;
 }
 
 /** A change subscription at the provider: a Graph subscription or a Google channel. */
@@ -56,12 +50,8 @@ export interface TimeWindow {
 export interface CalendarClient {
   /** Writes per batch request. */
   readonly batchLimit: number;
-  /**
-   * The account's calendars, in the form for the calendar choice. With `complete`, every calendar
-   * the provider has for the account, so that a calendar left out is known to be missing: Google
-   * adds hidden calendars, and Graph reads all pages.
-   */
-  listCalendars(options?: { complete?: boolean }): Promise<CalendarInfo[]>;
+  /** The account's calendars, in the form for the calendar choice. */
+  listCalendars(): Promise<CalendarInfo[]>;
   /**
    * Every occurrence in the window, series expanded, with our own blocks recognisable. The body
    * of each occurrence only on request.

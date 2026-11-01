@@ -53,9 +53,6 @@ const KNOWN_IGNORED = new Set([
   "group_changed",
   "settings_changed",
   "user_deleted",
-  "feed_created",
-  "feed_rotated",
-  "feed_deleted",
 ]);
 
 /** Every audit kind this report knows. A test compares it with `AuditKind` in `src/audit.ts`. */

@@ -95,12 +95,6 @@ import type { ExistingBlock, SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
 import { accountSync } from "./durable";
-import {
-  feedCalendarsOfAccount,
-  limitFeedEvents,
-  storeFeedOwnership,
-  type FeedLimits,
-} from "./feeds";
 import type { Watch } from "./providers/calendar-client";
 import {
   addFakeEvent,
@@ -297,15 +291,6 @@ const FULL_CYCLE_KEY = "fullCycleAt";
  */
 const FULL_CYCLE_EVERY_MS = 60 * 60_000;
 
-/** Durable Object storage key: when the next check of the owners of feed calendars is due. */
-const FEED_OWNERSHIP_CHECK_KEY = "feedOwnershipCheckAt";
-
-/** A successful check of the owners of feed calendars holds for this long. */
-const FEED_OWNERSHIP_CHECK_EVERY_MS = 24 * 60 * 60_000;
-
-/** A check that lost a calendar holds for this long, so that one short list soon heals. */
-const FEED_OWNERSHIP_RECHECK_MS = 60 * 60_000;
-
 /** Durable Object storage key of block removals for deleted or switched-off rules. */
 const REMOVAL_QUEUE_KEY = "removalQueue";
 
@@ -352,21 +337,21 @@ const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Durable Object storage key: until when the provider throttles this account (Unix ms). `client()`
- * sets it from every throttled answer. Feed reads do not call the provider before it; the sync
- * keeps waiting through its alarm.
+ * sets it from every throttled answer. Comparison reads do not call the provider before it; the
+ * sync keeps waiting through its alarm.
  */
 const THROTTLED_UNTIL_KEY = "throttledUntil";
 
-/** A feed read reached the provider queue during a penalty; it made no provider call. */
+/** A comparison read reached the provider queue during a penalty; it made no provider call. */
 class PenaltyActive extends Error {
   constructor(readonly retryAfterMs: number) {
     super("Provider penalty active");
   }
 }
 
-/** Outcome of a feed read. A throttled or unreadable calendar is an answer, not an error. */
-export type FeedRead =
-  | { kind: "events"; events: SourceEvent[]; cutAt?: string | null }
+/** Outcome of a comparison read. A throttled or unreadable calendar is an answer, not an error. */
+export type CompareRead =
+  | { kind: "events"; events: SourceEvent[] }
   | { kind: "throttled"; retryAfterMs: number }
   | { kind: "unavailable" };
 
@@ -1421,17 +1406,14 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * Busy events of one calendar of this account for a free/busy feed. While the provider throttles
-   * the account, the read makes no provider call, so that a feed never extends the penalty. A
+   * Events of one calendar of this account for a comparison. While the provider throttles the
+   * account, the read makes no provider call, so that a comparison never extends the penalty. A
    * calendar the provider no longer finds or lets the account read is reported as unavailable.
-   * With `limits`, only the events that the feed can show leave this instance. A comparison reads
-   * without them, because it needs every event.
    */
-  async readFeedEvents(
+  async readCompareEvents(
     remoteCalendarId: string,
     window: { start: Date; end: Date },
-    limits?: FeedLimits,
-  ): Promise<FeedRead> {
+  ): Promise<CompareRead> {
     // A quick answer before queueing; the queued call checks again, see `client()`.
     const left = await this.penaltyLeft();
     if (left > 0) return { kind: "throttled", retryAfterMs: left };
@@ -1439,7 +1421,7 @@ export class AccountSync extends DurableObject<Env> {
       const events = await this.readSourceEvents(remoteCalendarId, window, false, {
         respectPenalty: true,
       });
-      return { kind: "events", ...(limits ? limitFeedEvents(events, limits) : { events }) };
+      return { kind: "events", events };
     } catch (error) {
       if (error instanceof PenaltyActive) {
         return { kind: "throttled", retryAfterMs: error.retryAfterMs };
@@ -1449,57 +1431,11 @@ export class AccountSync extends DurableObject<Env> {
       if (delay !== null) return { kind: "throttled", retryAfterMs: delay };
       const { status } = error as { status?: unknown };
       if (status === 403 || status === 404 || status === 410) {
-        console.error("A feed calendar can no longer be read", ...errorLogFields(error));
+        console.error("A source calendar can no longer be read", ...errorLogFields(error));
         return { kind: "unavailable" };
       }
       throw error;
     }
-  }
-
-  /**
-   * True if the owners of this account's feed calendars are due for a check. The first call only
-   * starts the wait: a connected account has just loaded its calendars.
-   */
-  private async feedOwnershipDue(): Promise<boolean> {
-    const at = await this.ctx.storage.get<number>(FEED_OWNERSHIP_CHECK_KEY);
-    if (at === undefined) {
-      await this.ctx.storage.put(
-        FEED_OWNERSHIP_CHECK_KEY,
-        Date.now() + FEED_OWNERSHIP_CHECK_EVERY_MS,
-      );
-      return false;
-    }
-    return Date.now() >= at;
-  }
-
-  /**
-   * Read who owns this account's feed calendars. A feed answers 503 once the provider names another
-   * owner, or a complete list no longer names the calendar. A list that fails changes nothing, and
-   * a later full cycle reads it again. The time goes into storage first, so that a failed step
-   * cannot repeat in the next alarm. Returns the delay of the next alarm.
-   */
-  private async checkFeedOwnership(accountId: string): Promise<number> {
-    await this.ctx.storage.put(FEED_OWNERSHIP_CHECK_KEY, Date.now() + FULL_CYCLE_EVERY_MS);
-    try {
-      const stored = await feedCalendarsOfAccount(this.env.DB, accountId);
-      let lost = false;
-      if (stored.length > 0) {
-        const client = await this.client({ respectPenalty: true });
-        lost = await storeFeedOwnership(
-          this.env.DB,
-          stored,
-          await client.listCalendars({ complete: true }),
-        );
-      }
-      await this.ctx.storage.put(
-        FEED_OWNERSHIP_CHECK_KEY,
-        Date.now() + (lost ? FEED_OWNERSHIP_RECHECK_MS : FEED_OWNERSHIP_CHECK_EVERY_MS),
-      );
-    } catch (error) {
-      console.error("Checking feed calendars failed", ...errorLogFields(error));
-      return throttleDelayMs(error) ?? this.delays().nextRun;
-    }
-    return this.delays().nextRun;
   }
 
   /** Milliseconds left of the current provider penalty, or 0. */
@@ -1509,7 +1445,7 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
-   * Remember a provider penalty, so that feed reads wait for it. A shorter penalty never shortens
+   * Remember a provider penalty, so that comparison reads wait for it. A shorter penalty never shortens
    * a longer one. Only queued provider calls write the key, one at a time, so the read and the
    * write cannot interleave with another write. A failure is logged: the sync waits through its
    * alarm either way.
@@ -2715,11 +2651,6 @@ export class AccountSync extends DurableObject<Env> {
     }
     let queue = (await this.ctx.storage.get<string[]>(RULE_QUEUE_KEY)) ?? [];
     if (queue.length === 0) {
-      // A step of its own, before the cycle, so that the rules keep the budget of their alarms.
-      if (await this.feedOwnershipDue()) {
-        await this.setSyncAlarm(Date.now() + (await this.checkFeedOwnership(accountId)));
-        return;
-      }
       // This cycle covers every request so far. Cleared before the rule list is read: a request
       // during the read, for example for a new rule, marks again and gets one more cycle.
       await this.ctx.storage.delete(CYCLE_AGAIN_KEY);
@@ -3170,8 +3101,8 @@ export class AccountSync extends DurableObject<Env> {
 
   /**
    * The blocks of a slice and the events of all sources of a calendar. Reads run one after the
-   * other, and all of them respect a provider penalty as feed reads do: a comparison never extends
-   * one. Any read that fails ends the comparison, so that a gap never counts as "no deviation".
+   * other, and all of them respect a provider penalty: a comparison never extends one. Any read
+   * that fails ends the comparison, so that a gap never counts as "no deviation".
    */
   private async readCompareSlice(
     state: CompareState,
@@ -3198,8 +3129,8 @@ export class AccountSync extends DurableObject<Env> {
       if (accountId !== ownAccount) this.providerReads++;
       const read =
         accountId === ownAccount
-          ? await this.readFeedEvents(remoteCalendarId, window)
-          : await accountSync(this.env, accountId).readFeedEvents(remoteCalendarId, window);
+          ? await this.readCompareEvents(remoteCalendarId, window)
+          : await accountSync(this.env, accountId).readCompareEvents(remoteCalendarId, window);
       if (read.kind === "throttled") throw new CompareStopped({ reason: "throttled" });
       if (read.kind === "unavailable") throw new CompareStopped({ reason: "source_unavailable" });
       events.set(source, read.events);
@@ -3375,12 +3306,12 @@ export class AccountSync extends DurableObject<Env> {
         : calendarClient(this.providerOrDefault(), token, () => this.providerReads++);
     return oneCallAtATime(provider, (call) => {
       const result = this.providerQueue.then(async () => {
-        // Checked again here: a feed read queued behind a throttled call must not run after it.
+        // Checked again here: a read queued behind a throttled call must not run after it.
         if (options.respectPenalty) {
           const left = await this.penaltyLeft();
           if (left > 0) throw new PenaltyActive(left);
         }
-        // Every throttled answer, read or write, starts a penalty that feed reads respect. It is
+        // Every throttled answer, read or write, starts a penalty that comparison reads respect. It is
         // stored before the next queued call starts.
         try {
           const value = await call();

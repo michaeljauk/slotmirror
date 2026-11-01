@@ -128,7 +128,6 @@ export class FakeCalendar implements CalendarClient {
         canEdit: true,
         isDefault: true,
         owned: true,
-        dataOwned: true,
       },
     ];
   }

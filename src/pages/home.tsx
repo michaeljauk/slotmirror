@@ -20,9 +20,6 @@ import {
   workHoursText,
   type Notice,
 } from "./calendar-editor";
-import type { CalendarRow } from "../calendars";
-import type { FeedSummary } from "../feeds";
-import { FeedSection } from "./feeds";
 
 export interface AccountRow {
   id: string;
@@ -266,9 +263,6 @@ export function HomePage(props: {
   /** Sync status per account ID; accounts without an entry were never synced. */
   statuses: Map<string, AccountSyncStatus>;
   editor: EditorState;
-  feeds: FeedSummary[];
-  /** Calendars the user can put into a feed: those of their own accounts. */
-  calendars: CalendarRow[];
   /** Calendars with blocks that an offboarding could not remove. */
   cleanups: number;
   cleanupsRunning: number;
@@ -511,8 +505,6 @@ export function HomePage(props: {
           </div>
         </section>
       ) : null}
-
-      <FeedSection feeds={props.feeds} calendars={props.calendars} />
     </Layout>
   );
 }

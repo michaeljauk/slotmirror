@@ -50,7 +50,6 @@ const calendarListSchema = z.object({
       accessRole: z.string(),
       primary: z.optional(z.boolean()),
       /** Email of the calendar's data owner; Google sets it only for secondary calendars. */
-      dataOwner: z.optional(z.string()),
     }),
   ),
   nextPageToken: z.optional(z.string()),
@@ -98,39 +97,26 @@ export class GoogleCalendar implements CalendarClient {
     private readonly onRead: () => void = () => {},
   ) {}
 
-  async listCalendars({ complete = false }: { complete?: boolean } = {}): Promise<CalendarInfo[]> {
+  async listCalendars(): Promise<CalendarInfo[]> {
     const calendars: CalendarInfo[] = [];
-    const items: z.infer<typeof calendarListSchema>["items"] = [];
-    let ownerAddress: string | null = null;
     let pageToken: string | undefined;
     do {
       const params = new URLSearchParams({ maxResults: "250", minAccessRole: "reader" });
-      if (complete) params.set("showHidden", "true");
       if (pageToken) params.set("pageToken", pageToken);
       const page = calendarListSchema.parse(
         await this.get(`${API}/users/me/calendarList?${params.toString()}`),
       );
       for (const item of page.items) {
-        // The primary calendar's ID is the account's address; it is the data owner of the others.
-        if (item.primary) ownerAddress = item.id.toLowerCase();
+        calendars.push({
+          id: item.id,
+          name: item.summaryOverride ?? item.summary,
+          canEdit: item.accessRole === "owner" || item.accessRole === "writer",
+          isDefault: item.primary ?? false,
+          owned: item.accessRole === "owner",
+        });
       }
-      items.push(...page.items);
       pageToken = page.nextPageToken;
     } while (pageToken);
-    for (const item of items) {
-      calendars.push({
-        id: item.id,
-        name: item.summaryOverride ?? item.summary,
-        canEdit: item.accessRole === "owner" || item.accessRole === "writer",
-        isDefault: item.primary ?? false,
-        owned: item.accessRole === "owner",
-        // Access role "owner" also means "manage sharing" on someone else's calendar. Only the
-        // primary calendar and calendars whose data owner is the account hold its data.
-        dataOwned:
-          item.primary === true ||
-          (ownerAddress !== null && item.dataOwner?.toLowerCase() === ownerAddress),
-      });
-    }
     return calendars;
   }
 

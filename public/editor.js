@@ -46,6 +46,7 @@ for (const field of document.querySelectorAll("input[data-tokens]")) {
   entry.maxLength = 100;
   box.append(entry);
   field.after(box);
+  const saved = field.value;
   field.type = "hidden";
   const names = () =>
     field.value
@@ -104,8 +105,13 @@ for (const field of document.querySelectorAll("input[data-tokens]")) {
   entry.addEventListener("input", () => {
     if (entry.value.includes(",")) commit();
   });
-  // Discard resets the form; the list is back only after the event.
-  field.form?.addEventListener("reset", () => setTimeout(render));
+  // Discard resets the form, but a hidden field keeps its last value. The saved list comes back
+  // here, before the page counts its changes. Otherwise a discarded list would go out with the
+  // next save.
+  field.form?.addEventListener("reset", () => {
+    field.value = saved;
+    render();
+  });
   render();
 }
 
@@ -206,13 +212,17 @@ for (const field of document.querySelectorAll("input[data-tokens]")) {
   /** A form value as trimmed text; a missing field is empty. */
   const asText = (value) => (typeof value === "string" ? value.trim() : "");
 
-  // The details of a direction, its colour and its working-hours checkbox, count as one change
-  // while they differ from the saved ones. Their fields sit in the row and name the form.
+  // The details of a direction, its colour, working-hours checkbox and opt-in list, count as one
+  // change while they differ from the saved ones. Their fields sit in the row and name the form.
   const detailsOf = (form) => {
     const data = new FormData(form);
+    const names = [asText(data.get("onlyCategories")), ...data.getAll("onlyColor")];
     return {
       blockColor: asText(data.get("blockColor")),
       workHours: data.has("workHoursShown") ? (data.has("workHours") ? "1" : "0") : null,
+      onlyCategories: data.has("onlyCategoriesShown")
+        ? names.join(",").split(",").map(asText).filter(Boolean).join(",")
+        : null,
     };
   };
   const savedDetails = new Map();
@@ -247,7 +257,11 @@ for (const field of document.querySelectorAll("input[data-tokens]")) {
       }
       const value = detailsOf(form);
       const saved = savedDetails.get(key);
-      if (value.blockColor === saved.blockColor && value.workHours === saved.workHours) {
+      if (
+        value.blockColor === saved.blockColor &&
+        value.workHours === saved.workHours &&
+        value.onlyCategories === saved.onlyCategories
+      ) {
         pending.delete(key);
       } else pending.set(key, value);
       row.classList.toggle("pending", pending.has(key));
@@ -371,6 +385,9 @@ for (const field of document.querySelectorAll("input[data-tokens]")) {
         }
         if (choice.workHours !== saved.workHours && choice.workHours !== null) {
           body.append(`workHours.${from}.${to}`, choice.workHours);
+        }
+        if (choice.onlyCategories !== saved.onlyCategories && choice.onlyCategories !== null) {
+          body.append(`onlyCategories.${from}.${to}`, choice.onlyCategories);
         }
         continue;
       }

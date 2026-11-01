@@ -1677,6 +1677,113 @@ describe("alarm queue", () => {
   });
 });
 
+describe("opt-in category filter", () => {
+  /** The events of the fixture, from tomorrow on, with a category on each weekly occurrence. */
+  function withCategories(names: (subject: string) => string[]) {
+    return fixtureFromTomorrow().map((event) => ({ ...event, categories: names(event.subject) }));
+  }
+
+  const weekly = (subject: string) => subject.startsWith("FBS weekly series");
+
+  async function tokens(stub: Awaited<ReturnType<typeof setupRule>>["stub"], accountId: string) {
+    await stub.storeTokens(accountId, {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+  }
+
+  async function setOnly(ruleId: string, onlyCategories: string[]) {
+    await env.DB.prepare(
+      "UPDATE rules SET options = json_set(options, '$.onlyCategories', json(?)) WHERE id = ?",
+    )
+      .bind(JSON.stringify(onlyCategories), ruleId)
+      .run();
+  }
+
+  it("removes the blocks of events that leave the filter, per occurrence", async () => {
+    const { stub, ruleId } = await setupRule("acc-only");
+    await tokens(stub, "acc-only");
+    const sources: Record<string, unknown[]> = {
+      [SOURCE_CAL]: withCategories((subject) => (weekly(subject) ? ["Kunde"] : [])),
+    };
+    const store = statefulGraph(sources);
+    const written = (await stub.runRule(ruleId)).stats.create;
+    const series = fixture.value.filter((event) => weekly(event.subject)).length;
+    expect(store.size).toBe(written);
+    expect(written).toBeGreaterThan(series);
+
+    await setOnly(ruleId, ["kunde"]);
+    expect((await stub.runRule(ruleId)).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: written - series,
+      unchanged: series,
+    });
+    expect(store.size).toBe(series);
+
+    // The next run finds nothing to do, so the filter does not flap.
+    expect((await stub.runRule(ruleId)).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: 0,
+      unchanged: series,
+    });
+
+    // One exception loses the category: only its block goes.
+    sources[SOURCE_CAL] = withCategories((subject) =>
+      subject === "FBS weekly series" ? ["Kunde"] : [],
+    );
+    await stub.requestSync();
+    expect((await stub.runRule(ruleId)).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: 1,
+      unchanged: series - 1,
+    });
+
+    // Without the list, every event has its block again.
+    await setOnly(ruleId, []);
+    expect((await stub.runRule(ruleId)).stats).toMatchObject({ delete: 0, unchanged: series - 1 });
+    expect(store.size).toBe(written);
+  });
+
+  it("hands an event to the next rule if the rule with precedence drops it", async () => {
+    const { stub, ruleId } = await setupRule("acc-only-copy");
+    await tokens(stub, "acc-only-copy");
+    const owner = await env.DB.prepare("SELECT user_id FROM rules WHERE id = ?")
+      .bind(ruleId)
+      .first<{ user_id: string }>();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES (?, ?, ?, 'Copy')",
+      ).bind("acc-only-copy-src2", "acc-only-copy", `${SOURCE_CAL}-2`),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES (?, ?, ?, ?)",
+      ).bind("acc-only-copy-rule-2", owner?.user_id, "acc-only-copy-src2", "acc-only-copy-dst"),
+    ]);
+    const [first, second] = await inPrecedenceOrder([ruleId, "acc-only-copy-rule-2"]);
+    if (!first || !second) throw new Error("no rules");
+    const firstSource = first === ruleId ? SOURCE_CAL : `${SOURCE_CAL}-2`;
+    const secondSource = first === ruleId ? `${SOURCE_CAL}-2` : SOURCE_CAL;
+    // The same events reach the target through two rules. Only the second source has the category.
+    const store = statefulGraph({
+      [firstSource]: withCategories(() => []),
+      [secondSource]: withCategories((subject) => (weekly(subject) ? ["Kunde"] : [])),
+    });
+    const written = (await stub.runRule(first)).stats.create;
+    expect((await stub.runRule(second)).stats.create).toBe(0);
+
+    await setOnly(first, ["Kunde"]);
+    await setOnly(second, ["Kunde"]);
+    const series = fixture.value.filter((event) => weekly(event.subject)).length;
+    expect((await stub.runRule(first)).stats).toMatchObject({ delete: written });
+    expect(store.size).toBe(0);
+    expect((await stub.runRule(second)).stats).toMatchObject({ create: series, delete: 0 });
+    expect(store.size).toBe(series);
+  });
+});
+
 /**
  * Fake Graph with a target calendar that keeps what the batches write. Each source calendar
  * answers with `sources[calendar]`, or with the result of a function there.

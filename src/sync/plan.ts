@@ -11,28 +11,41 @@ import { inWorkingHours } from "./working-hours";
 
 /** Decide whether a rule mirrors a source event at all. */
 export function isIncluded(event: SourceEvent, options: RuleOptions): boolean {
-  return included(event, options, skippedCategories(options));
+  return included(event, options, skippedCategories(options), requiredCategories(options));
 }
 
 /** The skipped categories of a rule, trimmed and in lower case; null if it skips none. */
 function skippedCategories(options: RuleOptions): ReadonlySet<string> | null {
   if (options.skipCategories.length === 0) return null;
-  return new Set(options.skipCategories.map((name) => name.trim().toLowerCase()));
+  return new Set(options.skipCategories.map(categoryKey));
+}
+
+/**
+ * The categories an event needs for the rule, trimmed and in lower case; null if it needs none.
+ * A blank name matches nothing that a person chose, so a list of blank names is no list.
+ */
+function requiredCategories(options: RuleOptions): ReadonlySet<string> | null {
+  const names = options.onlyCategories.map(categoryKey).filter((name) => name !== "");
+  return names.length === 0 ? null : new Set(names);
+}
+
+function categoryKey(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 function included(
   event: SourceEvent,
   options: RuleOptions,
   skipped: ReadonlySet<string> | null,
+  required: ReadonlySet<string> | null,
 ): boolean {
   if (event.isMirror) return false;
   if (options.skipAllDay && event.allDay) return false;
   if (options.skipDeclined && event.declined) return false;
   if (options.skipFree && event.showAs === "free") return false;
   if (options.skipTentative && event.showAs === "tentative") return false;
-  if (skipped && event.categories.some((name) => skipped.has(name.trim().toLowerCase()))) {
-    return false;
-  }
+  if (skipped && event.categories.some((name) => skipped.has(categoryKey(name)))) return false;
+  if (required && !event.categories.some((name) => required.has(categoryKey(name)))) return false;
   return inWorkingHours(event, options);
 }
 
@@ -207,9 +220,10 @@ export async function desiredBlocks(
   const blocks = new Map<string, DesiredBlock>();
   const buffered = options.bufferBefore > 0 || options.bufferAfter > 0;
   const skipped = skippedCategories(options);
+  const required = requiredCategories(options);
   // Most hashes are cached; the loop awaits only those that are not.
   for (const event of events) {
-    if (!included(event, options, skipped)) continue;
+    if (!included(event, options, skipped, required)) continue;
     const content = blockContent(event, options);
     // The dedup key uses the event's times, so that rules with different buffers find one meeting.
     const keyed = buffered ? { ...content, start: event.start, end: event.end } : content;

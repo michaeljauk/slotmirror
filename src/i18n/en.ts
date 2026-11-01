@@ -198,6 +198,27 @@ export const en = {
     blockTitleLabel: "Title of busy blocks",
     blockTitleHint: "Copies at the level “As busy” carry this title.",
     defaultBlockTitle: "Busy",
+    onlyCategoriesSummary: (count: number) =>
+      count === 0
+        ? "Copy only some categories"
+        : count === 1
+          ? "Copies only 1 category"
+          : `Copies only ${count} categories`,
+    onlyColorsSummary: (count: number) =>
+      count === 0
+        ? "Copy only some colours"
+        : count === 1
+          ? "Copies only 1 colour"
+          : `Copies only ${count} colours`,
+    onlyCategoriesHint:
+      "Events without one of these Outlook categories are not copied, and their existing blocks disappear. An empty list copies all events. “Do not copy” wins over this list. Upper and lower case do not matter.",
+    onlyColorsHint:
+      "Events without one of these colours are not copied, and their existing blocks disappear. With no colour chosen, all events are copied. An event in the calendar's default colour has no colour here. “Do not copy” wins over this choice.",
+    onlyCategoriesPlaceholder: "Work, Customer",
+    onlyCategoriesGoogle:
+      "Google events have colours, not categories. Choose colours instead. Nothing was saved.",
+    onlyCategoriesDirection:
+      "This list belongs to a direction that no longer exists. Reload the page. Nothing was saved.",
     skipCategoriesLabel: "Skip events with these categories",
     skipCategoriesHint:
       "Events with one of these Outlook categories are not copied. Upper and lower case do not matter.",

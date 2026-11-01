@@ -136,3 +136,22 @@ Each user sets these in the editor, under **For all calendars**. They apply to e
 | Skip Google events with these colours | Google event colours to leave out.                                                       |
 
 Events marked private in the source never carry more than "Busy".
+
+## Copy only some categories
+
+A direction can copy only part of its source. Open a source in the editor, and open **Copy only some
+categories** in the row of the target. The list applies to that direction only. The exclusions under
+**For all calendars** stay as they are.
+
+The list is empty by default, and then every event is copied. If the list has entries, an event
+needs at least one of them. An event without a category is not copied.
+
+- If the source is an Outlook account, the list holds category names. Upper and lower case do not
+  matter, and spaces around a name do not count.
+- If the source is a Google account, the list holds colours, because Google events have no
+  categories. A Google event in the default colour of its calendar has no colour of its own, so no
+  colour in the list matches it.
+- If an event matches this list and an exclusion, it is not copied.
+- If an event leaves the list, the next sync removes its block. If it comes back, the next sync
+  writes the block again. Each occurrence of a recurring event counts on its own.
+- A block that ended before the sync window stays, as with the other filters.

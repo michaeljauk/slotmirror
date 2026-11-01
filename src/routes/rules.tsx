@@ -222,8 +222,9 @@ rules.post("/direction", async (c) => {
 });
 
 // All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
-// "choice.<from>.<to>", "blockColor.<from>.<to>", "workHours.<from>.<to>" ("1" or "0"), the
-// buffer of a source "bufferBefore.<from>" and "bufferAfter.<from>", and "settings.<name>". Every
+// "choice.<from>.<to>", "blockColor.<from>.<to>", "workHours.<from>.<to>" ("1" or "0"),
+// "onlyCategories.<from>.<to>" (a comma list), the buffer of a source "bufferBefore.<from>" and
+// "bufferAfter.<from>", and "settings.<name>". Every
 // field is checked before the first write, so that an invalid field refuses the whole save. The
 // writes are not one transaction: a D1 or Durable Object failure, or a rule that another request
 // changed meanwhile, can still stop them part-way. Each account gets one sync request at the end.
@@ -269,6 +270,9 @@ rules.post("/choices", async (c) => {
     workHours: fields("workHours").flatMap(({ first, second, value }) =>
       second ? [{ from: first, to: second, on: value === "1" }] : [],
     ),
+    onlyCategories: fields("onlyCategories").flatMap(({ first, second, value }) =>
+      second ? [{ from: first, to: second, names: categoryNames(value) }] : [],
+    ),
   };
   const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
@@ -307,8 +311,24 @@ function isEditorField(name: string | undefined): boolean {
     name === "blockColor" ||
     name === "bufferBefore" ||
     name === "bufferAfter" ||
-    name === "workHours"
+    name === "workHours" ||
+    name === "onlyCategories"
   );
+}
+
+/** The names and the checked colours of the opt-in list, as one comma list. */
+function onlyCategoriesField(form: FormData): string {
+  const colors = form.getAll("onlyColor").filter((value) => typeof value === "string");
+  return [formText(form, "onlyCategories"), ...colors].join(",");
+}
+
+/** A comma list as a rule's list of categories: no blanks, no repeats, within the schema's limits. */
+function categoryNames(list: string): string[] {
+  const names = list
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0 && name.length <= 100);
+  return [...new Set(names)].slice(0, 50);
 }
 
 /** Why rule details were refused, in the user's words. */
@@ -322,13 +342,17 @@ function ruleDetailsError(t: Messages, problem: RuleDetailsProblem): string {
       return t.editor.bufferInvalid(MAX_BUFFER_MINUTES);
     case "noWorkHours":
       return t.editor.workHoursMissing(problem.account);
+    case "onlyCategories":
+      return t.editor.onlyCategoriesGoogle;
     case "direction":
+      if (problem.field === "onlyCategories") return t.editor.onlyCategoriesDirection;
       return problem.field === "color" ? t.editor.blockColorInvalid : t.editor.workHoursDirection;
   }
 }
 
 // The details of one direction from the form without the editor script: the block colour and,
-// with "workHoursShown", the working-hours checkbox.
+// with "workHoursShown", the working-hours checkbox. "onlyCategoriesShown" marks a page with the
+// opt-in list, so that a page from before the option leaves the list alone.
 rules.post("/direction/details", async (c) => {
   const user = currentUser(c);
   const { t } = i18nFromContext(c);
@@ -338,6 +362,9 @@ rules.post("/direction/details", async (c) => {
   const details: RuleDetails = {
     colors: form.has("blockColor") ? [{ from, to, value: formText(form, "blockColor") }] : [],
     workHours: form.has("workHoursShown") ? [{ from, to, on: form.get("workHours") === "1" }] : [],
+    onlyCategories: form.has("onlyCategoriesShown")
+      ? [{ from, to, names: categoryNames(onlyCategoriesField(form)) }]
+      : [],
   };
   const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));

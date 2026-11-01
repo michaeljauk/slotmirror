@@ -199,6 +199,27 @@ export const de: Messages = {
     blockTitleLabel: "Titel belegter Blöcke",
     blockTitleHint: "Diesen Titel tragen Kopien mit der Stufe „Als belegt“.",
     defaultBlockTitle: "Belegt",
+    onlyCategoriesSummary: (count) =>
+      count === 0
+        ? "Nur bestimmte Kategorien kopieren"
+        : count === 1
+          ? "Kopiert nur 1 Kategorie"
+          : `Kopiert nur ${count} Kategorien`,
+    onlyColorsSummary: (count) =>
+      count === 0
+        ? "Nur bestimmte Farben kopieren"
+        : count === 1
+          ? "Kopiert nur 1 Farbe"
+          : `Kopiert nur ${count} Farben`,
+    onlyCategoriesHint:
+      "Termine ohne eine dieser Outlook-Kategorien werden nicht kopiert, und ihre vorhandenen Blöcke verschwinden. Eine leere Liste kopiert alle Termine. „Nicht kopieren“ hat Vorrang vor dieser Liste. Groß- und Kleinschreibung zählt nicht.",
+    onlyColorsHint:
+      "Termine ohne eine dieser Farben werden nicht kopiert, und ihre vorhandenen Blöcke verschwinden. Ohne gewählte Farbe werden alle Termine kopiert. Ein Termin in der Standardfarbe des Kalenders hat hier keine Farbe. „Nicht kopieren“ hat Vorrang vor dieser Auswahl.",
+    onlyCategoriesPlaceholder: "Arbeit, Kunde",
+    onlyCategoriesGoogle:
+      "Google-Termine haben Farben, keine Kategorien. Wähle stattdessen Farben. Es wurde nichts gespeichert.",
+    onlyCategoriesDirection:
+      "Diese Liste gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
     skipCategoriesHint:
       "Termine mit einer dieser Outlook-Kategorien werden nicht kopiert. Gross- und Kleinschreibung zählt nicht.",

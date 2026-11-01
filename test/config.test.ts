@@ -12,6 +12,7 @@ describe("parseRuleOptions", () => {
       skipTentative: false,
       skipDeclined: true,
       skipCategories: [],
+      onlyCategories: [],
       workDays: [1, 2, 3, 4, 5, 6, 7],
       workStart: "",
       workEnd: "",

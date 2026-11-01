@@ -1622,7 +1622,7 @@ function insertStatements(
         kind: "rule_created",
         detail: { choice: rule.choice },
       },
-      true,
+      "rule_exists",
     ),
   ]);
 }

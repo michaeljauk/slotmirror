@@ -1,3 +1,4 @@
+import { closeAbandonedTombstones } from "./cleanup";
 import { GoogleApiError } from "./providers/google-calendar";
 import { GraphError } from "./providers/graph-calendar";
 import { TokenError } from "./providers/microsoft";
@@ -43,10 +44,25 @@ export type AuditKind =
   | "feed_deleted";
 
 /** How the removal of an offboarding ended. */
-export type CleanupResult = "removed" | "incomplete" | "token_refused" | "no_tokens";
+export type CleanupResult =
+  | "removed"
+  | "incomplete"
+  | "token_refused"
+  | "no_tokens"
+  | "deadline"
+  | "not_started"
+  | "kept";
 
-/** Detail of a `cleanup_finished` event. `left` is the count of the last step that could count. */
-export type CleanupDetail = { result: CleanupResult; removed: number; left?: number };
+/**
+ * Detail of a `cleanup_finished` event. `left` is the count of the last step that could count, or
+ * with `estimated`, of the rule's last sync run if no step could.
+ */
+export type CleanupDetail = {
+  result: CleanupResult;
+  removed: number;
+  left?: number;
+  estimated?: true;
+};
 
 /** Detail of a `sync_run` event. */
 export interface SyncRunDetail {
@@ -78,6 +94,8 @@ export interface AuditEvent {
   ruleId?: string | null;
   kind: AuditKind;
   detail?: Record<string, string | number | boolean>;
+  /** Makes the event unique: a statement that runs again adds no second row. */
+  reportId?: string;
 }
 
 /** Audit rows older than this many days are deleted by the cron handler. */
@@ -93,19 +111,27 @@ const RUN_OUTCOME_SKEW_MS = 60_000;
 export const ACTIVITY_LIMIT = 100;
 
 /**
- * The insert of one event, for a batch. With `onlyIfRuleExists` the row is written only if the
- * event's rule exists, for example after an insert that a concurrent request made a no-op.
+ * The insert of one event, for a batch. With `onlyIf` the row is written only if the event's rule
+ * exists, for example after an insert that a concurrent request made a no-op, only if the rule
+ * runs, or only if no end of the rule's tombstone is stored. An event with a `reportId` that D1 holds
+ * already adds no row.
  */
 export function auditStatement(
   db: D1Database,
   event: AuditEvent,
-  onlyIfRuleExists = false,
+  onlyIf?: "rule_exists" | "rule_runs" | "tombstone_not_ended",
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6
-       WHERE ?7 = 0 OR EXISTS (SELECT 1 FROM rules WHERE id = ?4)`,
+      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail, report_id)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?8
+       WHERE CASE ?7
+         WHEN 0 THEN 1
+         WHEN 3 THEN NOT EXISTS (SELECT 1 FROM cleanup_tombstones t
+           WHERE t.account_id = ?3 AND t.rule_id = ?4 AND t.state <> 'open')
+         ELSE EXISTS (SELECT 1 FROM rules WHERE id = ?4 AND (?7 = 1 OR enabled = 1))
+       END
+       ON CONFLICT DO NOTHING`,
     )
     .bind(
       event.orgId,
@@ -114,7 +140,14 @@ export function auditStatement(
       event.ruleId ?? null,
       event.kind,
       JSON.stringify(event.detail ?? {}),
-      onlyIfRuleExists ? 1 : 0,
+      onlyIf === "tombstone_not_ended"
+        ? 3
+        : onlyIf === "rule_runs"
+          ? 2
+          : onlyIf === "rule_exists"
+            ? 1
+            : 0,
+      event.reportId ?? null,
     );
 }
 
@@ -326,15 +359,32 @@ export async function accountOwner(
     .first<{ orgId: string; userId: string }>();
 }
 
-/** Delete events past the retention period. One statement. */
-export async function purgeAuditEvents(db: D1Database): Promise<void> {
-  await db
-    .prepare(
-      `DELETE FROM audit_events
-       WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
-    )
-    .bind(`-${AUDIT_RETENTION_DAYS} days`)
-    .run();
+/** Delete events past the retention period and close abandoned tombstones. One statement. */
+export async function purgeAuditEvents<T = unknown>(
+  db: D1Database,
+  /** Runs in the same D1 step, so that a read of the cron costs no subrequest of its own. */
+  alongside?: D1PreparedStatement,
+  now: number = Date.now(),
+): Promise<T[]> {
+  const cutoff = `-${AUDIT_RETENTION_DAYS} days`;
+  const answers = await db.batch<T>([
+    db
+      .prepare(
+        `DELETE FROM audit_events
+         WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
+      )
+      .bind(cutoff),
+    // A tombstone holds a calendar name of an account that may be gone. Same retention as the log.
+    db
+      .prepare(
+        `DELETE FROM cleanup_tombstones
+         WHERE updated_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
+      )
+      .bind(cutoff),
+    ...closeAbandonedTombstones(db, now),
+    ...(alongside ? [alongside] : []),
+  ]);
+  return alongside ? (answers.at(-1)?.results ?? []) : [];
 }
 
 export interface ActivityRow {

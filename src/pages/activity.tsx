@@ -49,9 +49,9 @@ export function describeCompare(row: ActivityRow, t: Messages): string {
 
 /** The outcome of an offboarding's removal: what went, what stayed, and why. */
 function describeCleanup(row: ActivityRow, t: Messages): string {
-  const { result, removed, left } = parseDetail(row.detail) as Partial<CleanupDetail>;
+  const { result, removed, left, estimated } = parseDetail(row.detail) as Partial<CleanupDetail>;
   const parts = [t.activity.cleanupRemoved(removed ?? 0)];
-  if (left) parts.push(t.activity.cleanupLeft(left));
+  if (left) parts.push(estimated ? t.activity.cleanupAbout(left) : t.activity.cleanupLeft(left));
   if (result && result !== "removed") parts.push(t.activity.cleanupReasons[result]);
   return parts.join(", ");
 }

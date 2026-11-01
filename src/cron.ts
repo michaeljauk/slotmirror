@@ -10,6 +10,11 @@ export const CRON_FIXED_SUBREQUESTS = 2;
 export const MIN_CRON_TICKS =
   MAX_CRON_SUBREQUESTS - CRON_FIXED_SUBREQUESTS - SILENCE_CHECK_SUBREQUESTS;
 
+/** The subrequests left for other work, so that `tickLimit` still ticks every account due. */
+export function spareSubrequests(accounts: number, tickLimit: number): number {
+  return Math.max(tickLimit - MIN_CRON_TICKS, tickLimit - accounts, 0);
+}
+
 /**
  * The accounts that one cron invocation ticks. With more accounts than `limit`, the accounts split
  * into rounds of `MIN_CRON_TICKS` or fewer, and each invocation takes the next round. The time

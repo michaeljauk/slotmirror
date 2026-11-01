@@ -27,6 +27,8 @@ export interface AdminUserRow {
 export function AdminPage(props: {
   user: CurrentUser;
   users: AdminUserRow[];
+  /** Calendars with blocks of deactivated and deleted users. */
+  cleanups: number;
   activity: ActivityRow[];
   /** The latest comparison per calendar and mode. */
   compares: ActivityRow[];
@@ -58,6 +60,16 @@ export function AdminPage(props: {
             <p class="lead">{t.admin.lead}</p>
           </div>
         </div>
+        {props.cleanups > 0 ? (
+          <div class="reconnect-notice" role="status">
+            <p>
+              <span>{t.cleanup.adminLink(props.cleanups)}</span>
+              <a class="button small" href="/cleanup">
+                {t.cleanup.show}
+              </a>
+            </p>
+          </div>
+        ) : null}
         {affected > 0 ? (
           <div class="reconnect-notice" role="status">
             <p>

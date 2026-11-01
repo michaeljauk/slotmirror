@@ -269,6 +269,9 @@ export function HomePage(props: {
   feeds: FeedSummary[];
   /** Calendars the user can put into a feed: those of their own accounts. */
   calendars: CalendarRow[];
+  /** Calendars with blocks that an offboarding could not remove. */
+  cleanups: number;
+  cleanupsRunning: number;
   notice?: Notice;
   /** The account whose settings start open. */
   openSettings?: string;
@@ -329,6 +332,21 @@ export function HomePage(props: {
     <Layout title={t.accounts.title} user={props.user} active="accounts">
       <section class="section">
         <ReconnectNotice accounts={props.editor.accounts} operatorNotice={props.operatorNotice} />
+        {props.cleanups > 0 ? (
+          <div class="reconnect-notice" role="status">
+            <p>
+              <span>{t.cleanup.notice(props.cleanups)}</span>
+              <a class="button small" href="/cleanup">
+                {t.cleanup.show}
+              </a>
+            </p>
+          </div>
+        ) : null}
+        {props.cleanupsRunning > 0 ? (
+          <p class="notice info">
+            {t.cleanup.runningNotice(props.cleanupsRunning)} <a href="/cleanup">{t.cleanup.show}</a>
+          </p>
+        ) : null}
 
         <div class="section-head">
           <div>

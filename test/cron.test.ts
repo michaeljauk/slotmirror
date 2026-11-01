@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CRON_TICK_MS, isHourlyTick, SILENCE_CHECK_SUBREQUESTS } from "../src/alerts";
-import { accountsToTick, MIN_CRON_TICKS } from "../src/cron";
+import { accountsToTick, MIN_CRON_TICKS, spareSubrequests } from "../src/cron";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -114,5 +114,17 @@ describe("rotation of cron ticks", () => {
   it("changes the length of a round only at a multiple of the ticks", () => {
     expect(starts(MIN_CRON_TICKS * 3)).toHaveLength(3);
     expect(starts(MIN_CRON_TICKS * 3 + 1)).toHaveLength(4);
+  });
+});
+
+describe("the subrequests beside the ticks", () => {
+  it("leaves the ticks of a round alone", () => {
+    expect(spareSubrequests(100, 48)).toBe(48 - MIN_CRON_TICKS);
+    expect(spareSubrequests(100, MIN_CRON_TICKS)).toBe(0);
+  });
+
+  it("gives a small deployment what its accounts do not use", () => {
+    expect(spareSubrequests(3, 48)).toBe(45);
+    expect(spareSubrequests(3, MIN_CRON_TICKS)).toBe(MIN_CRON_TICKS - 3);
   });
 });

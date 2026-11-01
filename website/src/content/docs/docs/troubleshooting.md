@@ -69,6 +69,37 @@ did not invite the user.
 supported account types to **Accounts in any organizational directory and personal Microsoft
 accounts** (see [Microsoft Entra app](../entra-setup/)).
 
+## Blocks left after a disconnect
+
+If a user disconnects an account, or an admin deletes or deactivates a user, slotmirror removes the
+blocks of those rules from today on. Past blocks stay as a record. Some blocks can stay behind:
+
+- The provider refused the tokens, or kept failing over the five attempts.
+- The account that holds the blocks needs a reconnect, and no reconnect came within 14 days. A
+  deactivated user cannot reconnect, so these removals end after 14 days too.
+- A request could not start the removal and did not run again. The entry appears within about an
+  hour, with the reason. If the rule runs again, it keeps its blocks, and no entry appears. Repeat
+  the request to start the removal.
+
+The page **Blocks left in calendars** at `/cleanup` lists these blocks per target calendar. It shows
+the calendar name, the block count, the period and the marker. It shows no event content. A removal
+that still runs is listed apart, and you need not act on it. A removal in an account that works
+has no end date, because the provider decides how fast it runs. The home page links to it. Admins see the blocks of deactivated and deleted users on the same page, linked
+from the admin page. An entry stays for 90 days.
+
+A count with "about" comes from the last sync run, because no read was possible. If no run left a
+count, the page says that the number is not known.
+
+**What to do:** Delete the blocks by hand in the calendar. A block shows the title that the rule
+set for it, by default "Busy", and it lies in the period on the page. Rules that copy event titles
+have no fixed title. The marker is a hidden property of each block. Calendar apps do not show it,
+but the provider's API returns it.
+
+**Reconnecting does not remove them after a removal ended.** Nothing removes these blocks then. A
+removal that waits for a reconnect names its last day on the page. If the account reconnects before
+that day, the removal runs. If the page says that the state is unknown, a removal may still be
+waiting, and a reconnect can finish it.
+
 ## Google "not verified" warning
 
 This is a warning, not an error. Choose **Advanced**, then **Go to … (unsafe)**. See

@@ -205,9 +205,14 @@ removed. Its next alarm stops its watches. A watch that cannot be stopped is tri
 tokens are deleted, or expires within days; its notifications are ignored. The account reads its calendars only to find and delete those blocks.
 If the provider keeps failing or refuses the tokens, the removal tries again after 1 minute,
 10 minutes, 2 hours and 12 hours. After the fifth failed attempt, the tokens are deleted and the
-remaining blocks stay. The activity log then shows the result of each rule, without event contents.
+remaining blocks stay. A removal in a paused account that stays waits 14 days for a reconnect, and
+then ends. The page **Blocks left in calendars** then lists each calendar with the block count, the
+period and the marker, without event contents. After a removal ended, a later reconnect does not remove these blocks. If the page says that the
+state is unknown, a removal may still be waiting, and a reconnect can finish it.
 If a removal cannot be queued at all, the account and its rules stay and the request reports an
-error, so that you can try again.
+error, so that you can try again. Removals that were queued run to their end all the same, and the
+rules then write those blocks back. If no retry comes, a rule that stopped lists its blocks on that
+page within about an hour. A rule that runs keeps its blocks.
 
 **Resetting a sign-in.** The first sign-in binds a user to that Microsoft or Google account. If
 someone moves to another tenant or account, an admin chooses **Reset sign-in** on the admin page.

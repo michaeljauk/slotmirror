@@ -334,7 +334,7 @@ export const de: Messages = {
       "In Cloudflare Workers, D1 und Durable Objects im Cloudflare-Konto des Betreibers sowie bei Microsoft und Google, wenn Kalender gelesen und geschrieben werden.",
     deleteTitle: "Wie du deine Daten löschst",
     delete:
-      "Trennst du ein Konto, löscht slotmirror die dafür geschriebenen Blöcke und danach seine Tokens. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
+      "Trennst du ein Konto, löscht slotmirror die dafür geschriebenen Blöcke und danach seine Tokens. Lassen sich Blöcke nicht entfernen, bleiben Kalendername, Kalender-ID, Blocktitel, Anzahl, Zeitraum und Marker 90 Tage gespeichert, damit du sie von Hand löschen kannst. Die Kalender-ID eines primären Google-Kalenders ist deine E-Mail-Adresse. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
     googleTitle: "Nutzerdaten von Google",
     google:
       "Die Nutzung und Weitergabe von Informationen aus Google APIs durch slotmirror entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",
@@ -463,14 +463,20 @@ export const de: Messages = {
       compare_deviation: "Ein Vergleich hat Abweichungen bestätigt",
     },
     disconnectFailedDetail:
-      "Die Blöcke konnten nicht zum Entfernen vorgemerkt werden. Nichts wurde geändert.",
+      "Das Trennen ist gescheitert, das Konto bleibt. Seine Regeln laufen wieder und schreiben entfernte Blöcke zurück.",
     cleanupRemoved: (count: number) =>
       count === 1 ? "1 Block entfernt" : `${count} Blöcke entfernt`,
     cleanupLeft: (count: number) => (count === 1 ? "1 Block übrig" : `${count} Blöcke übrig`),
+    cleanupAbout: (count: number) =>
+      count === 1 ? "etwa 1 Block übrig" : `etwa ${count} Blöcke übrig`,
     cleanupReasons: {
       incomplete: "der Anbieter antwortet weiter mit Fehlern, lösche den Rest von Hand",
       token_refused: "der Anbieter lehnt die Tokens ab, lösche den Rest von Hand",
       no_tokens: "das Konto hat keine Tokens, lösche den Rest von Hand",
+      deadline: "das Konto wurde nicht rechtzeitig neu verbunden, lösche den Rest von Hand",
+      not_started:
+        "der Stand der Entfernung ist nicht bekannt, neues Verbinden kann sie noch abschließen, sonst lösche den Rest von Hand",
+      kept: "die Entfernung konnte nicht starten, die Regel behält ihre Blöcke",
     },
     pausedDetail: (code: string) => `Wartet auf neue Verbindung (${code})`,
     resumedDetail: "Synchronisiert wieder",
@@ -497,6 +503,51 @@ export const de: Messages = {
       timeout: "Der Vergleich endete nicht innerhalb eines Tages",
       superseded: "Ein Vergleich des ganzen Fensters hat diesen abgelöst",
     },
+  },
+  cleanup: {
+    title: "Verbliebene Blöcke in Kalendern",
+    lead: "slotmirror konnte die Entfernung dieser Blöcke nicht bestätigen, nachdem ein Konto oder ein Nutzer gegangen ist. Lösche, was übrig ist, von Hand im Kalender.",
+    reconnectDoesNotHelp:
+      "Ein erneutes Verbinden des Kontos entfernt sie nur, wenn der Eintrag das nennt.",
+    runningTitle: "Laufende Entfernungen",
+    runningLead: "slotmirror entfernt diese Blöcke noch.",
+    running: (date: string) =>
+      `Wartet das Konto auf eine neue Verbindung, endet sie um den ${date}.`,
+    runningNotice: (count: number) =>
+      count === 1
+        ? "slotmirror entfernt noch Blöcke aus 1 Kalender."
+        : `slotmirror entfernt noch Blöcke aus ${count} Kalendern.`,
+    othersTitle: "Deaktivierte und gelöschte Nutzer",
+    othersLead:
+      "Diese Nutzer sehen diese Seite nicht. Ihre Blöcke bleiben in ihren Kalendern, bis jemand sie löscht.",
+    empty: "Es sind keine Blöcke übrig.",
+    unnamedCalendar: "Ein Kalender ohne gespeicherten Namen",
+    count: (count: number) => (count === 1 ? "1 Block übrig" : `${count} Blöcke übrig`),
+    aboutCount: (count: number) =>
+      count === 1
+        ? "Etwa 1 Block übrig, laut letzter Synchronisierung"
+        : `Etwa ${count} Blöcke übrig, laut letzter Synchronisierung`,
+    unknownCount: "Die Anzahl der Blöcke ist nicht bekannt",
+    period: (from: string, to: string) => `Zwischen ${from} und ${to}`,
+    marker: (tag: string, title: string) => `Titel „${title}“, Marker ${tag}`,
+    markerOnly: (tag: string) => `Marker ${tag}`,
+    markerHelp:
+      "Der Marker ist eine versteckte Eigenschaft jedes Blocks. Kalender-Apps zeigen ihn nicht, die API des Anbieters liefert ihn. Vergangene Blöcke bleiben als Nachweis stehen.",
+    reasons: {
+      incomplete: "Der Anbieter antwortete weiter mit Fehlern.",
+      token_refused: "Der Anbieter lehnte die Tokens ab.",
+      no_tokens: "Das Konto hat keine Tokens.",
+      deadline: "Das Konto wurde nicht rechtzeitig neu verbunden.",
+      not_started:
+        "Der Stand dieser Entfernung ist nicht bekannt, es können Blöcke übrig sein. Ein erneutes Verbinden des Kontos kann die Entfernung noch abschließen. Sonst lösche sie von Hand.",
+    },
+    notice: (count: number) =>
+      count === 1 ? "In 1 Kalender sind Blöcke übrig." : `In ${count} Kalendern sind Blöcke übrig.`,
+    show: "Anzeigen",
+    adminLink: (count: number) =>
+      count === 1
+        ? "In 1 Kalender sind Blöcke deaktivierter oder gelöschter Nutzer übrig"
+        : `In ${count} Kalendern sind Blöcke deaktivierter oder gelöschter Nutzer übrig`,
   },
   feeds: {
     title: "Frei/Belegt-Feed",

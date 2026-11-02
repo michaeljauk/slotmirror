@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="760" alt="The sync editor: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
+  <img src="docs/images/demo.gif" width="760" alt="The Rules page: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
 </p>
 
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
@@ -34,7 +34,7 @@ operator holds the tokens. The deployment then shows who runs it before you conn
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.
 
-![The calendar editor: one card per calendar, and an overview of all directions](docs/images/editor.png)
+![The Rules page: one card per calendar, and an overview of all directions](docs/images/editor.png)
 
 ## What it does
 
@@ -249,7 +249,7 @@ marks the account and stops its work until the user connects it again:
 
 - The accounts page shows a notice at the top. It names the account's address and provider and
   has a **Reconnect** button. The button starts the provider's sign-in with that address
-  preselected. The account's row shows the same state, and the sync page shows the notice too.
+  preselected. The account's row shows the same state, and the Rules page shows the notice too.
 - The admin page lists which users have accounts that need reconnecting, without the addresses.
 - The activity log records "Token refresh failed", with the provider's error code.
 - The account asks the provider nothing more. Rules into its calendars pause, and rules that read

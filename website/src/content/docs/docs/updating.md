@@ -105,7 +105,7 @@ the dashboard. The file value replaces the dashboard value on every deploy.
 
 ## All-day events are mirrored by default
 
-New rules now mirror all-day events, unless the events are marked as free. Rules from the editor
+New rules now mirror all-day events, unless the events are marked as free. Rules created on the Rules page
 keep their behavior, because each rule stores `skipAllDay` in `rules.options`. The **Skip all-day
 events** switch stays on for a user with a rule that skips these events, and that user's new rules
 skip them too. A save changes the rules only if the user changes this switch. Then every rule of
@@ -115,7 +115,7 @@ If such a user never saved the settings and removes their last rule, the switch 
 on again before you add a rule, or the new rule mirrors all-day events.
 
 A rule without `skipAllDay` in `rules.options` starts to mirror all-day events after the update. The
-editor never writes such a rule. It can come from your own SQL, because `options` defaults to `{}`.
+The Rules page never writes such a rule. It can come from your own SQL, because `options` defaults to `{}`.
 To keep the old behavior, add `"skipAllDay": true` to the row before you update.
 
 All-day blocks in Outlook now lie in the time zone of the mailbox, if Microsoft Graph names that

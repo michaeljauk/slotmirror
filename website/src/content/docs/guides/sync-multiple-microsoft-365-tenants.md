@@ -17,10 +17,10 @@ and often does not exist. This guide syncs the calendars yourself, as busy block
 2. Deploy slotmirror with the [Quickstart](../../docs/quickstart/) and set `PUBLIC_URL`.
 3. Connect one account per tenant under **Accounts**. If a tenant blocks user consent, its admin
    must grant consent to the app once.
-4. In **Where your events go**, add the calendars to the group **Block each other**.
+4. On the **Rules** page, add the calendars to the group **Block each other**.
 5. Choose **Save**.
 
-## Names in the editor
+## Names on the Rules page
 
 slotmirror derives a short name from each address. You can rename an account, for example to the
 name of the company, so that the overview reads "from Company A to Company B".

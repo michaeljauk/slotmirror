@@ -1,6 +1,6 @@
 ---
 title: Settings reference
-description: All variables and secrets of a slotmirror deployment, and the sync settings in the editor.
+description: All variables and secrets of a slotmirror deployment, and the sync settings on the Rules page.
 ---
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars
@@ -123,7 +123,7 @@ down or its trigger is gone, no alert arrives. Use an outside uptime check for t
 
 ![Sync settings for all calendars](../../../../../docs/images/settings.png)
 
-Each user sets these in the editor, under **For all calendars**. They apply to every direction.
+Each user sets these on the **Rules** page, under **For all calendars**. They apply to every direction.
 
 | Setting                               | Effect                                                                                   |
 | ------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -139,7 +139,7 @@ Events marked private in the source never carry more than "Busy".
 
 ## Copy only some categories
 
-A direction can copy only part of its source. Open a source in the editor, and open **Copy only some
+A direction can copy only part of its source. Open a source on the **Rules** page, and open **Copy only some
 categories** in the row of the target. The list applies to that direction only. The exclusions under
 **For all calendars** stay as they are.
 

@@ -15,7 +15,7 @@ schedule in your other calendars.
    Calendar.
 2. Deploy slotmirror with the [Quickstart](../../docs/quickstart/) and connect that account and
    your work account.
-3. In **Where your events go**, expand the card of the account with the schedule.
+3. On the **Rules** page, expand the card of the account with the schedule.
 4. Under **Calendars from …**, turn on the schedule next to the main calendar.
 5. Keep **As busy** for the work calendar, or choose **With title** if colleagues may see "Home
    match".

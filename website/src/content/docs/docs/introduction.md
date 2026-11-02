@@ -17,7 +17,7 @@ operator holds the tokens. The deployment then shows who runs it before you conn
 The version is below 1.0. Settings and the database can still change between releases.
 :::
 
-![The calendar editor: one card per calendar, and an overview of all directions](../../../../../docs/images/editor.png)
+![The Rules page: one card per calendar, and an overview of all directions](../../../../../docs/images/editor.png)
 
 ## What it does
 

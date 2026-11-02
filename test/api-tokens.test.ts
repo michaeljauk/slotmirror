@@ -90,6 +90,45 @@ describe("api tokens", () => {
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
   });
 
+  it("audits a revocation only if a token ended", async () => {
+    const { user } = await newToken();
+    const [row] = await listApiTokens(env.DB, user.id);
+    const audited = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'api_token_revoked'",
+        )
+          .bind(user.id)
+          .all<{ detail: string }>()
+      ).results;
+    expect(await revokeApiToken(env, user, "a".repeat(16_000))).toBe(false);
+    expect(await revokeApiToken(env, user, crypto.randomUUID())).toBe(false);
+    expect(await audited()).toEqual([]);
+    expect(await revokeApiToken(env, user, row?.id ?? "")).toBe(true);
+    expect(await audited()).toHaveLength(1);
+  });
+
+  it("creates no token for a session from before a sign-in reset", async () => {
+    const { user } = await signIn("owner@example.com");
+    await resetSignInBinding(env, user, "admin");
+    expect(await createApiToken(env, user, { name: "late", days: 7 })).toBeNull();
+    expect(await listApiTokens(env.DB, user.id)).toEqual([]);
+  });
+
+  it("refuses a token whose session version is old, if a row stays", async () => {
+    const { token, user } = await newToken();
+    await env.DB.prepare("UPDATE users SET session_version = session_version + 1 WHERE id = ?")
+      .bind(user.id)
+      .run();
+    expect(await authenticateToken(env, HEADER(token))).toBeNull();
+  });
+
+  it("frees the slots of a user on a sign-in reset", async () => {
+    const { user } = await newToken();
+    await resetSignInBinding(env, user, "admin");
+    expect(await listApiTokens(env.DB, user.id)).toEqual([]);
+  });
+
   it("ends tokens if the policy stops admitting the user", async () => {
     const { token } = await newToken();
     const removed = { ...env, ALLOWED_EMAILS: "other@elsewhere.org" };

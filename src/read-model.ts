@@ -9,6 +9,9 @@ import { hasWorkingHours } from "./sync/working-hours";
  * titles and audit texts stay out. All queries read D1 and take the user from the token.
  */
 
+/** Rules in one answer. A LIMIT without ORDER BY stops the read; a sort would read all rows first. */
+const MAX_LISTED_RULES = 500;
+
 export interface AccountView {
   id: string;
   provider: string;
@@ -79,7 +82,10 @@ function ruleSettings(
   }
 }
 
-export async function readRules(env: Env, userId: string): Promise<{ rules: RuleView[] }> {
+export async function readRules(
+  env: Env,
+  userId: string,
+): Promise<{ rules: RuleView[]; truncated: boolean }> {
   const { results } = await env.DB.prepare(
     `SELECT r.id, r.options, r.enabled,
             sc.account_id AS sourceAccountId, sc.name AS sourceCalendar,
@@ -91,9 +97,9 @@ export async function readRules(env: Env, userId: string): Promise<{ rules: Rule
      JOIN accounts sa ON sa.id = sc.account_id
      JOIN calendars tc ON tc.id = r.target_calendar_id
      JOIN accounts ta ON ta.id = tc.account_id
-     WHERE r.user_id = ? ORDER BY r.id`,
+     WHERE r.user_id = ? LIMIT ?`,
   )
-    .bind(userId)
+    .bind(userId, MAX_LISTED_RULES + 1)
     .all<{
       id: string;
       options: string;
@@ -108,7 +114,8 @@ export async function readRules(env: Env, userId: string): Promise<{ rules: Rule
       targetTenantId: string | null;
     }>();
   return {
-    rules: results.map((row) => ({
+    truncated: results.length > MAX_LISTED_RULES,
+    rules: results.slice(0, MAX_LISTED_RULES).map((row) => ({
       id: row.id,
       source: { accountId: row.sourceAccountId, calendar: row.sourceCalendar },
       target: { accountId: row.targetAccountId, calendar: row.targetCalendar },
@@ -126,7 +133,7 @@ export async function readRules(env: Env, userId: string): Promise<{ rules: Rule
 export interface RuleStatusView {
   ruleId: string;
   enabled: boolean;
-  /** "unknown": no run within the rows that one call reads. Never reported as healthy. */
+  /** "unknown": no run within the audit rows that one call reads. Never reported as healthy. */
   state: "ok" | "partial" | "error" | "paused" | "unknown";
   at: string | null;
   code?: string;
@@ -186,18 +193,19 @@ function ruleStatus(
 
 /** Rows of the audit log that one status call reads at most. */
 function runRowLimit(rules: number): number {
-  return Math.max(100, rules * 10);
+  return Math.min(1000, Math.max(100, rules * 10));
 }
 
 export async function readSyncStatus(
   db: D1Database,
   userId: string,
-): Promise<{ rules: RuleStatusView[] }> {
+): Promise<{ rules: RuleStatusView[]; truncated: boolean }> {
   const { results } = await db
-    .prepare("SELECT id, enabled FROM rules WHERE user_id = ? ORDER BY id")
-    .bind(userId)
+    .prepare("SELECT id, enabled FROM rules WHERE user_id = ? LIMIT ?")
+    .bind(userId, MAX_LISTED_RULES + 1)
     .all<{ id: string; enabled: number }>();
-  const runs = await recentRuleRuns(db, userId, runRowLimit(results.length));
+  const rules = results.slice(0, MAX_LISTED_RULES);
+  const runs = await recentRuleRuns(db, userId, runRowLimit(rules.length));
   const latest = new Map<string, RecentRun>();
   const lastRun = new Map<string, RecentRun>();
   for (const run of runs) {
@@ -205,7 +213,8 @@ export async function readSyncStatus(
     if (run.kind === "sync_run" && !lastRun.has(run.ruleId)) lastRun.set(run.ruleId, run);
   }
   return {
-    rules: results.map((rule) =>
+    truncated: results.length > MAX_LISTED_RULES,
+    rules: rules.map((rule) =>
       ruleStatus(rule.id, rule.enabled === 1, latest.get(rule.id), lastRun.get(rule.id)),
     ),
   };

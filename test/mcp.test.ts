@@ -204,6 +204,16 @@ describe("access to /mcp", () => {
     expect(response.status).toBe(413);
   });
 
+  it("answers 404 below /mcp without reading a session", async () => {
+    const { token, cookie } = await tokenFor("owner@example.com");
+    const response = await exports.default.fetch(`${BASE}/mcp/other`, {
+      method: "POST",
+      headers: { ...bearer(token), cookie },
+    });
+    expect(response.status).toBe(404);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
   it("forbids caching and keeps the security headers", async () => {
     const { token } = await tokenFor("owner@example.com");
     const response = await legacy(token, "tools/list");
@@ -687,6 +697,80 @@ describe("tools", () => {
     expect(status.rules[0]).toMatchObject({ state: "ok", blocks: 1 });
     expect(rowsRead).toBeGreaterThan(0);
     expect(rowsRead).toBeLessThan(400);
+  });
+});
+
+describe("cost of a status call", () => {
+  /** Rows that `readSyncStatus` reads, with a database that counts them. */
+  async function rowsReadBy(userId: string) {
+    const { readSyncStatus } = await import("../src/read-model");
+    let rowsRead = 0;
+    const counting = new Proxy(env.DB, {
+      get(target, key) {
+        if (key !== "prepare") return Reflect.get(target, key);
+        return (sql: string) => ({
+          bind: (...values: unknown[]) => ({
+            all: async () => {
+              const result = await target
+                .prepare(sql)
+                .bind(...values)
+                .all();
+              rowsRead += result.meta.rows_read;
+              return result;
+            },
+          }),
+        });
+      },
+    });
+    const status = await readSyncStatus(counting, userId);
+    return { rowsRead, status };
+  }
+
+  it("stops at the row limit if other audit rows fill the log", async () => {
+    const { userId } = await tokenFor("owner@example.com");
+    const ruleId = await seedRule(userId, "noise");
+    await addRun(userId, ruleId, "sync_run", { unchanged: 1 }, "2030-01-01T00:00:00.000Z");
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 13000)
+       INSERT INTO audit_events (org_id, user_id, kind, detail, created_at)
+       SELECT 'default', ?, 'rule_updated', '{}',
+              strftime('%Y-%m-%dT%H:%M:%fZ', '2036-01-01', '-' || i || ' minutes')
+       FROM n`,
+    )
+      .bind(userId)
+      .run();
+    const { rowsRead, status } = await rowsReadBy(userId);
+    expect(rowsRead).toBeGreaterThan(0);
+    expect(rowsRead).toBeLessThan(400);
+    expect(status.rules[0]).toMatchObject({ state: "unknown", blocks: null });
+  });
+
+  it("caps the rules that one answer lists, and says so", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await seedRule(userId, "cap");
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+       INSERT INTO calendars (id, account_id, remote_id, name)
+       SELECT 'many-' || i, 'cap-a', 'r' || i, 'C' FROM n`,
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id)
+       SELECT 'rule-' || id, ?, id, 'cap-cb' FROM calendars WHERE id GLOB 'many-*'`,
+    )
+      .bind(userId)
+      .run();
+    const listed = await call(token, "list_rules");
+    expect((listed.rules as unknown[]).length).toBe(500);
+    expect(listed.truncated).toBe(true);
+    const status = await call(token, "get_sync_status");
+    expect((status.rules as unknown[]).length).toBe(500);
+    expect(status.truncated).toBe(true);
+  });
+
+  it("does not report a short list as cut", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await seedRule(userId, "short");
+    expect((await call(token, "list_rules")).truncated).toBe(false);
   });
 });
 

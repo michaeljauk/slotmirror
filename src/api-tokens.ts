@@ -1,6 +1,6 @@
-import { auditStatement, recordAudit } from "./audit";
+import { recordAudit } from "./audit";
 import { base64url } from "./session";
-import { loadUser, type CurrentUser } from "./users";
+import { loadUser, type SignedInUser } from "./users";
 
 /** Lifetimes that the token page offers, in days. */
 export const TOKEN_DAYS = [7, 30, 90] as const;
@@ -17,6 +17,7 @@ export const DAILY_TOOL_CALLS = 1000;
 
 const TOKEN_PREFIX = "sm_pat_";
 const TOKEN_PATTERN = /^sm_pat_[A-Za-z0-9_-]{43}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const LAST_USED_INTERVAL_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
@@ -35,10 +36,14 @@ async function hashToken(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** Create a token. Return it once, or null if the user has the maximum of active tokens. */
+/**
+ * Create a token. Return it once, or null if the user has the maximum of active tokens or the
+ * session is older than the user's session version: a reset that lands during this call must not
+ * leave a token behind.
+ */
 export async function createApiToken(
   env: Env,
-  user: { id: string; orgId: string },
+  user: { id: string; orgId: string; sessionVersion: number },
   input: { name: string; days: number },
   now = Date.now(),
 ): Promise<{ token: string } | null> {
@@ -56,7 +61,8 @@ export async function createApiToken(
     env.DB.prepare(
       `INSERT INTO api_tokens (token_hash, id, user_id, name, last_four, session_version, expires_at)
        SELECT ?, ?, u.id, ?, ?, u.session_version, ? FROM users u
-       WHERE u.id = ? AND (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id) < ?`,
+       WHERE u.id = ? AND u.session_version = ?
+         AND (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id) < ?`,
     ).bind(
       await hashToken(token),
       id,
@@ -64,6 +70,7 @@ export async function createApiToken(
       token.slice(-4),
       expiresAt,
       user.id,
+      user.sessionVersion,
       MAX_TOKENS_PER_USER,
     ),
   ]);
@@ -95,12 +102,19 @@ export async function revokeApiToken(
   user: { id: string; orgId: string },
   tokenId: string,
 ): Promise<boolean> {
-  const event = { orgId: user.orgId, userId: user.id, kind: "api_token_revoked" } as const;
-  const [deleted] = await env.DB.batch([
-    env.DB.prepare("DELETE FROM api_tokens WHERE id = ? AND user_id = ?").bind(tokenId, user.id),
-    auditStatement(env.DB, { ...event, detail: { tokenId } }),
-  ]);
-  return (deleted?.meta.changes ?? 0) > 0;
+  // The ID comes from the URL. Only a real ID may reach the audit log, and only once.
+  if (!UUID_PATTERN.test(tokenId)) return false;
+  const deleted = await env.DB.prepare("DELETE FROM api_tokens WHERE id = ? AND user_id = ?")
+    .bind(tokenId, user.id)
+    .run();
+  if (!deleted.meta.changes) return false;
+  await recordAudit(env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    kind: "api_token_revoked",
+    detail: { tokenId },
+  });
+  return true;
 }
 
 /** End every token of a user. For an admin, who cannot see the user's tokens one by one. */
@@ -108,11 +122,16 @@ export async function revokeUserTokens(
   env: Env,
   user: { id: string; orgId: string },
 ): Promise<void> {
-  const event = { orgId: user.orgId, userId: user.id, kind: "api_token_revoked" } as const;
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?").bind(user.id),
-    auditStatement(env.DB, { ...event, detail: { all: true } }),
-  ]);
+  const deleted = await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?")
+    .bind(user.id)
+    .run();
+  if (!deleted.meta.changes) return;
+  await recordAudit(env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    kind: "api_token_revoked",
+    detail: { count: deleted.meta.changes },
+  });
 }
 
 /**
@@ -124,7 +143,7 @@ export async function authenticateToken(
   env: Env,
   header: string | undefined,
   now = Date.now(),
-): Promise<CurrentUser | null> {
+): Promise<SignedInUser | null> {
   const token = /^bearer +(\S+)$/i.exec(header ?? "")?.[1];
   if (!token || !TOKEN_PATTERN.test(token)) return null;
   const hash = await hashToken(token);

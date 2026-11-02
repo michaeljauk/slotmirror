@@ -11,7 +11,7 @@ import { mcpEnabled } from "../config";
 import { i18nFromContext } from "../i18n";
 import { TokensPage } from "../pages/tokens";
 import { render } from "../render";
-import type { CurrentUser } from "../users";
+import type { SignedInUser } from "../users";
 
 /** Personal API tokens. The page exists only while the MCP endpoint is on. */
 export const tokens = new Hono<AppEnv>();
@@ -24,7 +24,7 @@ tokens.use("*", async (c, next) => {
   await next();
 });
 
-function currentUser(c: Context<AppEnv>): CurrentUser {
+function currentUser(c: Context<AppEnv>): SignedInUser {
   const user = c.get("user");
   if (!user) throw new Error("token routes require a user");
   return user;

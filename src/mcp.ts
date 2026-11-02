@@ -165,6 +165,9 @@ mcp.all("/", (c) => {
   return c.body(null, 405);
 });
 
+// Paths below /mcp end here, so that no request with a bearer token reaches the session middleware.
+mcp.all("*", (c) => c.notFound());
+
 type Message = z.infer<typeof messageSchema> & { id?: string | number };
 
 /** The value of `Mcp-Name`: plain, or in the Base64 form for names that are not header-safe. */

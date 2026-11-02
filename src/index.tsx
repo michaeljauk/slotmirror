@@ -62,7 +62,7 @@ import {
   type AccountWorkHours,
 } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
-import { loadUser, resetSignInBinding, type CurrentUser } from "./users";
+import { loadUser, resetSignInBinding, type CurrentUser, type SignedInUser } from "./users";
 import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
@@ -157,7 +157,7 @@ app.use(
 app.use("*", crossSiteGuard);
 
 /** The signed-in user of the request, or null. Needs a finished setup. */
-async function sessionUser(c: Context<AppEnv>): Promise<CurrentUser | null> {
+async function sessionUser(c: Context<AppEnv>): Promise<SignedInUser | null> {
   const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
   return session ? loadUser(c.env, session.userId, session.version ?? 0) : null;
 }

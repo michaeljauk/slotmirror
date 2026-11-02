@@ -513,10 +513,11 @@ export function parseDetail(json: string): RuleOutcome["detail"] {
 export type RecentRun = Pick<RuleOutcome, "ruleId" | "kind" | "createdAt" | "detail">;
 
 /**
- * The newest runs and failures of a user, newest first, without dry runs. Unlike
- * `latestRuleOutcomes`, which reads every audit row of the user, this stops at `limit`: an API
- * client can call it in a loop, and D1 refuses every query of the deployment at its daily limit of
- * rows read. A rule that ran only before these rows does not appear.
+ * The runs and failures among the newest `limit` audit rows of a user, newest first, without dry
+ * runs. Unlike `latestRuleOutcomes`, which reads every audit row of the user, this stops at `limit`:
+ * an API client can call it in a loop, and D1 refuses every query of the deployment at its daily
+ * limit of rows read. The limit sits in the subquery because a LIMIT on the outer query counts
+ * matches, not rows read. A rule that ran only before these rows does not appear.
  */
 export async function recentRuleRuns(
   db: D1Database,
@@ -525,9 +526,14 @@ export async function recentRuleRuns(
 ): Promise<RecentRun[]> {
   const { results } = await db
     .prepare(
-      `SELECT rule_id AS ruleId, kind, created_at AS createdAt, detail FROM audit_events
-       WHERE user_id = ? AND rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
-       ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT rule_id AS ruleId, kind, created_at AS createdAt, detail FROM (
+         SELECT id, rule_id, kind, created_at, detail FROM audit_events
+         WHERE user_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?
+       )
+       WHERE rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
+       ORDER BY created_at DESC, id DESC`,
     )
     .bind(userId, limit)
     .all<Omit<RecentRun, "detail"> & { detail: string }>();

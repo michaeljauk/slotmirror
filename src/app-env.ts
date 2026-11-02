@@ -1,6 +1,6 @@
-import type { CurrentUser } from "./users";
+import type { SignedInUser } from "./users";
 
 export type AppEnv = {
   Bindings: Env;
-  Variables: { user: CurrentUser | null; language: string };
+  Variables: { user: SignedInUser | null; language: string };
 };

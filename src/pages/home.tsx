@@ -366,7 +366,7 @@ export function HomePage(props: {
                     ? editor.color
                     : "auto";
                 return (
-                  <li id={`account-${account.id}`}>
+                  <li id={`account-${account.id}`} class="account-row">
                     <span
                       class="provider-icon tinted"
                       style={editor ? colorStyle(editor) : undefined}
@@ -404,72 +404,86 @@ export function HomePage(props: {
                     )}
                     <details class="rename" open={props.openSettings === account.id}>
                       <summary class="link-button">{t.accounts.rename}</summary>
-                      <form
-                        method="post"
-                        action={`/accounts/${account.id}/settings`}
-                        class="rename-form"
-                      >
-                        {props.returnSource ? (
-                          <input type="hidden" name="returnSource" value={props.returnSource} />
-                        ) : null}
-                        <label>
-                          <span>{t.accounts.nameLabel}</span>
-                          <input
-                            type="text"
-                            name="name"
-                            maxlength={MAX_NAME_LENGTH}
-                            value={draft ? draft.name : (editor?.customName ?? "")}
-                            placeholder={editor?.derivedName}
-                          />
-                        </label>
-                        <p class="fineprint">{t.accounts.nameHint}</p>
-                        <fieldset class="account-colors">
-                          <legend>{t.accounts.colorLabel}</legend>
-                          <span class="color-row pick">
-                            <label class="color-choice auto" title={t.accounts.colorAuto}>
+                      <div class="account-settings">
+                        <form
+                          method="post"
+                          action={`/accounts/${account.id}/settings`}
+                          class="rename-form"
+                        >
+                          {props.returnSource ? (
+                            <input type="hidden" name="returnSource" value={props.returnSource} />
+                          ) : null}
+                          <div class="settings-col">
+                            <label>
+                              <span>{t.accounts.nameLabel}</span>
                               <input
-                                type="radio"
-                                name="color"
-                                value="auto"
-                                checked={shownColor === "auto"}
+                                type="text"
+                                name="name"
+                                maxlength={MAX_NAME_LENGTH}
+                                value={draft ? draft.name : (editor?.customName ?? "")}
+                                placeholder={editor?.derivedName}
                               />
-                              <span class="color-dot">{t.accounts.colorAuto}</span>
                             </label>
-                            {ACCOUNT_COLOR_KEYS.map((key) => (
-                              <label class="color-choice" title={t.accounts.colorNames[key]}>
-                                <input
-                                  type="radio"
-                                  name="color"
-                                  value={key}
-                                  checked={shownColor === key}
-                                  aria-label={t.accounts.colorNames[key]}
-                                />
-                                <span
-                                  class="color-dot"
-                                  style={`background:${ACCOUNT_COLORS[key]}`}
-                                />
-                              </label>
-                            ))}
-                          </span>
-                          <p class="fineprint">{t.accounts.colorHint}</p>
-                        </fieldset>
-                        {editor ? (
-                          <AccountHours
-                            account={editor}
-                            editor={props.editor}
-                            draft={draft?.hours}
-                          />
-                        ) : null}
-                        {/* Enter submits with the first submit button, so Save comes first. */}
-                        <div class="rename-actions">
-                          <button type="submit" class="button small">
-                            {t.accounts.save}
-                          </button>
+                            <p class="fineprint">{t.accounts.nameHint}</p>
+                            <fieldset class="account-colors">
+                              <legend>{t.accounts.colorLabel}</legend>
+                              <span class="color-row pick">
+                                <label class="color-choice auto" title={t.accounts.colorAuto}>
+                                  <input
+                                    type="radio"
+                                    name="color"
+                                    value="auto"
+                                    checked={shownColor === "auto"}
+                                    aria-label={t.accounts.colorAuto}
+                                  />
+                                  <span class="color-dot">{t.accounts.colorAuto}</span>
+                                </label>
+                                {ACCOUNT_COLOR_KEYS.map((key) => (
+                                  <label class="color-choice" title={t.accounts.colorNames[key]}>
+                                    <input
+                                      type="radio"
+                                      name="color"
+                                      value={key}
+                                      checked={shownColor === key}
+                                      aria-label={t.accounts.colorNames[key]}
+                                    />
+                                    <span
+                                      class="color-dot"
+                                      style={`background:${ACCOUNT_COLORS[key]}`}
+                                    />
+                                  </label>
+                                ))}
+                              </span>
+                              <p class="fineprint">{t.accounts.colorHint}</p>
+                            </fieldset>
+                          </div>
+                          {editor ? (
+                            <div class="settings-col">
+                              <AccountHours
+                                account={editor}
+                                editor={props.editor}
+                                draft={draft?.hours}
+                              />
+                            </div>
+                          ) : null}
+                          {/* Enter submits with the first submit button, so Save comes first. */}
+                          <div class="rename-actions">
+                            <button type="submit" class="button primary">
+                              {t.accounts.save}
+                            </button>
+                          </div>
+                        </form>
+                        <section
+                          class="account-danger"
+                          aria-labelledby={`disconnect-${account.id}`}
+                        >
+                          <h3 id={`disconnect-${account.id}`}>{t.accounts.disconnectHeading}</h3>
+                          <p class="fineprint">{t.accounts.disconnectAbout}</p>
                           <a class="link-button danger" href={`/accounts/${account.id}/disconnect`}>
-                            {t.accounts.disconnect}
+                            {t.accounts.disconnectLink}
                           </a>
-                        </div>
-                      </form>
+                        </section>
+                      </div>
                     </details>
                   </li>
                 );

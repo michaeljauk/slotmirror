@@ -77,6 +77,10 @@ export const de: Messages = {
     nameLabel: "Name",
     nameHint: "Leer lassen für den Namen aus der Adresse.",
     save: "Speichern",
+    disconnectHeading: "Konto trennen",
+    disconnectAbout:
+      "slotmirror entfernt zuerst die Blöcke, die es in die Kalender dieses Kontos geschrieben hat. Danach löscht es die Tokens.",
+    disconnectLink: "Dieses Konto trennen…",
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
     disconnectText: (email) =>

@@ -309,6 +309,10 @@ describe("account actions", () => {
 
     const home = await (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
     expect(home).toContain('href="/accounts/acc-ask/disconnect"');
+    // The link sits in its own section of the settings, and the settings are no popup.
+    expect(home).toMatch(
+      /<section class="account-danger"[^>]*>\s*<h3[^>]*>Disconnect account<\/h3>/,
+    );
 
     const response = await exports.default.fetch(`${BASE}/accounts/acc-ask/disconnect`, {
       headers: { cookie },

@@ -19,6 +19,8 @@ export interface AdminUserRow {
   accounts: number;
   /** Accounts of the user whose refresh token the provider refused. */
   needsReconnect: number;
+  /** API tokens of the user, also expired ones. */
+  apiTokens: number;
 }
 
 /** Users of the admin's org with their number of connected accounts. No calendar data. */
@@ -126,6 +128,21 @@ export function AdminPage(props: {
                             {t.admin.resetSignIn}
                           </button>
                         </form>
+                        {row.apiTokens > 0 ? (
+                          <form
+                            method="post"
+                            action={`/admin/users/${row.id}/revoke-tokens`}
+                            class="inline-form"
+                          >
+                            <button
+                              type="submit"
+                              class="link-button quiet"
+                              title={t.admin.revokeTokensHint}
+                            >
+                              {t.admin.revokeTokens(row.apiTokens)}
+                            </button>
+                          </form>
+                        ) : null}
                         <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
                           {t.admin.deleteUser}
                         </a>

@@ -15,6 +15,8 @@ service between your calendars and your deployment.
 - An activity log with times, counts and error codes, without event content. Entries older than
   90 days are deleted.
 - A session cookie and a language cookie in the browser.
+- For API tokens, if the [MCP server](/docs/mcp/) is on: a hash of each token, its name, and when it
+  was last used.
 
 ## What is not stored
 

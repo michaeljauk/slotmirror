@@ -29,12 +29,26 @@ export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
- * Endpoints that providers call server to server. They authenticate with their own secret (a client
- * state or a channel token), never with the session cookie.
+ * Endpoints that providers and API clients call server to server. They authenticate with their own
+ * secret (a client state, a channel token or a bearer token), never with the session cookie.
  */
-const SERVER_TO_SERVER = [/^\/webhooks\//];
+const SERVER_TO_SERVER = [/^\/webhooks\//, /^\/mcp$/];
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The origins of this deployment: the request's own, and the one in PUBLIC_URL. */
+export function allowedOrigins(request: Request, publicUrl: string | undefined): string[] {
+  const allowed = [new URL(request.url).origin];
+  const configured = publicUrl?.trim();
+  if (configured) {
+    try {
+      allowed.push(new URL(configured).origin);
+    } catch {
+      // A malformed PUBLIC_URL admits no further origin.
+    }
+  }
+  return allowed;
+}
 
 /**
  * True if a browser sent the request from this deployment's own pages.
@@ -50,16 +64,7 @@ export function sameOriginRequest(request: Request, publicUrl: string | undefine
   if (site !== null) return site === "same-origin" || site === "none";
   const origin = request.headers.get("origin");
   if (origin === null) return true;
-  const allowed = [new URL(request.url).origin];
-  const configured = publicUrl?.trim();
-  if (configured) {
-    try {
-      allowed.push(new URL(configured).origin);
-    } catch {
-      // A malformed PUBLIC_URL admits no further origin.
-    }
-  }
-  return allowed.includes(origin);
+  return allowedOrigins(request, publicUrl).includes(origin);
 }
 
 /**

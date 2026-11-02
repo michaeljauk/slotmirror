@@ -12,6 +12,7 @@ import {
   silenceCheckCost,
   TEST_ALERT_OUTCOMES,
 } from "./alerts";
+import { revokeUserTokens } from "./api-tokens";
 import { cleanupsOfOthers, NO_CLEANUPS, ownCleanups } from "./cleanup";
 import {
   accountsToTick,
@@ -44,9 +45,11 @@ import { MessagePage } from "./pages/message";
 import { PrivacyPage } from "./pages/privacy";
 import { SetupPage } from "./pages/setup";
 import { render } from "./render";
+import { mcp } from "./mcp";
 import { auth } from "./routes/auth";
 import { dev } from "./routes/dev";
 import { rules } from "./routes/rules";
+import { tokens } from "./routes/tokens";
 import { ACCOUNT_COLOR_KEYS } from "./colors";
 import {
   accountWorkHours,
@@ -132,6 +135,9 @@ app.post("/webhooks/google", async (c) => {
   return c.body(null, 200);
 });
 
+// Before the language and session middleware: the bearer token is the only credential here.
+app.route("/mcp", mcp);
+
 // Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
 app.use(
   "*",
@@ -181,6 +187,7 @@ app.use("*", async (c, next) => {
 
 app.route("/auth", auth);
 app.route("/rules", rules);
+app.route("/tokens", tokens);
 app.route("/dev", dev);
 
 app.get("/", async (c) => {
@@ -468,6 +475,16 @@ app.post("/admin/users/:id/reset-sign-in", async (c) => {
   return c.redirect("/admin");
 });
 
+app.post("/admin/users/:id/revoke-tokens", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const target = await deletableUser(c.env, user, c.req.param("id"));
+  if (!target) return c.notFound();
+  await revokeUserTokens(c.env, { id: target.id, orgId: user.orgId });
+  return c.redirect("/admin");
+});
+
 // What an offboarding could not remove. An admin also sees the rest of users who cannot sign in.
 app.get("/cleanup", async (c) => {
   const user = c.get("user");
@@ -500,7 +517,8 @@ app.get("/admin", async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT u.id, u.email, u.role, u.last_sign_in_at AS lastSignInAt,
             COUNT(a.id) AS accounts,
-            COALESCE(SUM(a.needs_reconnect), 0) AS needsReconnect
+            COALESCE(SUM(a.needs_reconnect), 0) AS needsReconnect,
+            (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id) AS apiTokens
      FROM users u LEFT JOIN accounts a ON a.user_id = u.id
      WHERE u.org_id = ?
      GROUP BY u.id

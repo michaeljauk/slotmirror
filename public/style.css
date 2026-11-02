@@ -2923,3 +2923,56 @@ details.swatch > summary::-webkit-details-marker {
   color: var(--muted);
   font-size: 13px;
 }
+
+.token-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 16px;
+}
+
+.token-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.token-form input,
+.token-form select {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.token-form input {
+  width: 240px;
+  max-width: 100%;
+}
+
+.token-form .button {
+  height: 36px;
+}
+
+.token-created {
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.token-created h2 {
+  margin-top: 0;
+}
+
+.token-value {
+  display: block;
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}

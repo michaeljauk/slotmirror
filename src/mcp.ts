@@ -1,0 +1,289 @@
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import * as z from "zod/mini";
+import { authenticateToken, secondsToNextDay, takeToolCall } from "./api-tokens";
+import type { AppEnv } from "./app-env";
+import { errorLogFields } from "./audit";
+import { APP_NAME } from "./brand";
+import { mcpEnabled, setupStatus } from "./config";
+import { i18nFor, type Messages } from "./i18n";
+import { readAccounts, readRules, readSyncStatus } from "./read-model";
+import { allowedOrigins } from "./request-guard";
+import type { CurrentUser } from "./users";
+import { buildVersionLabel } from "./version";
+
+/**
+ * Read-only MCP server over Streamable HTTP. Each POST gets one JSON answer: no sessions, no SSE.
+ * The protocol is written by hand, as for Graph and Google: the official SDK adds 109 KB gzip to a
+ * Worker of 189 KB. It serves both protocol eras, because a request with `_meta` selects 2026-07-28
+ * and anything else the `initialize` handshake of older revisions.
+ *
+ * The route runs before the language and session middleware and never reads a cookie. The user comes
+ * only from the bearer token, and no tool takes a user as an argument.
+ */
+
+const MODERN_VERSION = "2026-07-28";
+const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const VERSIONS = [MODERN_VERSION, ...LEGACY_VERSIONS];
+const VERSION_META = "io.modelcontextprotocol/protocolVersion";
+const SERVER_INFO_META = "io.modelcontextprotocol/serverInfo";
+
+const MAX_BODY_BYTES = 64 * 1024;
+const CACHE_TTL_MS = 3_600_000;
+
+const PARSE_ERROR = -32700;
+const INVALID_REQUEST = -32600;
+const METHOD_NOT_FOUND = -32601;
+const INVALID_PARAMS = -32602;
+const SERVER_ERROR = -32000;
+const HEADER_MISMATCH = -32020;
+const UNSUPPORTED_VERSION = -32022;
+
+const messageSchema = z.object({
+  jsonrpc: z.literal("2.0"),
+  id: z.optional(z.union([z.string(), z.number()])),
+  method: z.string(),
+  params: z.optional(z.record(z.string(), z.unknown())),
+});
+
+type RequestId = string | number | undefined;
+
+const SERVER_INFO = () => ({ name: APP_NAME, version: buildVersionLabel() ?? "dev" });
+
+const TOOLS = [
+  { name: "list_accounts", run: (env: Env, user: CurrentUser) => readAccounts(env.DB, user.id) },
+  { name: "list_rules", run: (env: Env, user: CurrentUser) => readRules(env, user.id) },
+  {
+    name: "get_sync_status",
+    run: (env: Env, user: CurrentUser) => readSyncStatus(env.DB, user.id),
+  },
+] as const;
+
+function messages(c: Context<AppEnv>): Messages["mcp"] {
+  return i18nFor(/^\s*de\b/i.test(c.req.header("accept-language") ?? "") ? "de" : "en").t.mcp;
+}
+
+function rpcError(
+  c: Context<AppEnv>,
+  status: 200 | 400 | 401 | 403 | 404 | 413 | 429 | 503,
+  id: RequestId,
+  code: number,
+  message: string,
+  data?: Record<string, unknown>,
+) {
+  return c.json(
+    {
+      jsonrpc: "2.0",
+      ...(id === undefined ? {} : { id }),
+      error: { code, message, ...(data ? { data } : {}) },
+    },
+    status,
+  );
+}
+
+export const mcp = new Hono<AppEnv>();
+
+// Each check ends the request at its first failure. See the design: the order is the contract.
+mcp.use("*", async (c, next) => {
+  if (!mcpEnabled(c.env)) return c.notFound();
+  c.header("Cache-Control", "no-store");
+  const t = messages(c);
+  const origin = c.req.header("origin");
+  if (origin !== undefined && !allowedOrigins(c.req.raw, c.env.PUBLIC_URL).includes(origin)) {
+    return rpcError(c, 403, undefined, SERVER_ERROR, t.errors.forbiddenOrigin);
+  }
+  if (!setupStatus(c.env).ready) {
+    return rpcError(c, 503, undefined, SERVER_ERROR, t.errors.notReady);
+  }
+  const user = await authenticateToken(c.env, c.req.header("authorization"));
+  if (!user) {
+    c.header("WWW-Authenticate", "Bearer");
+    return rpcError(c, 401, undefined, SERVER_ERROR, t.errors.unauthorized);
+  }
+  c.set("user", user);
+  await next();
+});
+
+mcp.post(
+  "/",
+  bodyLimit({
+    maxSize: MAX_BODY_BYTES,
+    onError: (c) =>
+      rpcError(
+        c as Context<AppEnv>,
+        413,
+        undefined,
+        SERVER_ERROR,
+        messages(c as Context<AppEnv>).errors.tooLarge,
+      ),
+  }),
+  async (c) => {
+    const t = messages(c);
+    let body: unknown;
+    try {
+      body = JSON.parse(await c.req.text());
+    } catch {
+      return rpcError(c, 400, undefined, PARSE_ERROR, t.errors.parse);
+    }
+    const parsed = messageSchema.safeParse(body);
+    if (!parsed.success) {
+      return rpcError(c, 400, undefined, INVALID_REQUEST, t.errors.invalidRequest);
+    }
+    const message = parsed.data;
+    if (message.id === undefined) return c.body(null, 202);
+
+    const meta = message.params?._meta as Record<string, unknown> | undefined;
+    const requested = meta?.[VERSION_META];
+    const header = c.req.header("mcp-protocol-version");
+    if (requested !== undefined) {
+      if (requested !== MODERN_VERSION) {
+        return rpcError(c, 400, message.id, UNSUPPORTED_VERSION, t.errors.unsupportedVersion, {
+          supported: VERSIONS,
+          requested,
+        });
+      }
+      if (!modernHeadersMatch(c, header, message)) {
+        return rpcError(c, 400, message.id, HEADER_MISMATCH, t.errors.headerMismatch);
+      }
+      return modern(c, message);
+    }
+    if (header === MODERN_VERSION) {
+      return rpcError(c, 400, message.id, HEADER_MISMATCH, t.errors.headerMismatch);
+    }
+    if (header !== undefined && !LEGACY_VERSIONS.includes(header)) {
+      return rpcError(c, 400, message.id, UNSUPPORTED_VERSION, t.errors.unsupportedVersion, {
+        supported: VERSIONS,
+        requested: header,
+      });
+    }
+    return legacy(c, message);
+  },
+);
+
+mcp.all("/", (c) => {
+  c.header("Allow", "POST");
+  return c.body(null, 405);
+});
+
+type Message = z.infer<typeof messageSchema> & { id?: string | number };
+
+/** The value of `Mcp-Name`: plain, or in the Base64 form for names that are not header-safe. */
+function decodeName(value: string | undefined): string | undefined {
+  const encoded = /^=\?base64\?(.*)\?=$/.exec(value ?? "")?.[1];
+  if (encoded === undefined) return value;
+  try {
+    return new TextDecoder().decode(Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0)));
+  } catch {
+    return undefined;
+  }
+}
+
+function modernHeadersMatch(
+  c: Context<AppEnv>,
+  version: string | undefined,
+  message: Message,
+): boolean {
+  if (version !== MODERN_VERSION || c.req.header("mcp-method") !== message.method) return false;
+  if (message.method !== "tools/call") return true;
+  const name = message.params?.name;
+  return typeof name === "string" && decodeName(c.req.header("mcp-name")) === name;
+}
+
+function toolList(c: Context<AppEnv>) {
+  const t = messages(c);
+  return TOOLS.map((tool) => ({
+    name: tool.name,
+    description: t.tools[tool.name],
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }));
+}
+
+/** A result of a 2026-07-28 request: every result names its type and the server. */
+function modernResult(c: Context<AppEnv>, id: RequestId, result: object) {
+  return c.json({
+    jsonrpc: "2.0",
+    id,
+    result: { ...result, resultType: "complete", _meta: { [SERVER_INFO_META]: SERVER_INFO() } },
+  });
+}
+
+async function modern(c: Context<AppEnv>, message: Message) {
+  const { id, method } = message;
+  if (method === "server/discover") {
+    return modernResult(c, id, {
+      supportedVersions: VERSIONS,
+      capabilities: { tools: {} },
+      instructions: messages(c).instructions,
+      ttlMs: CACHE_TTL_MS,
+      cacheScope: "public",
+    });
+  }
+  if (method === "tools/list") {
+    return modernResult(c, id, {
+      tools: toolList(c),
+      ttlMs: CACHE_TTL_MS,
+      cacheScope: "private",
+    });
+  }
+  if (method === "tools/call") {
+    return callTool(c, message, (result) => modernResult(c, id, result));
+  }
+  return rpcError(c, 404, id, METHOD_NOT_FOUND, messages(c).errors.unknownMethod);
+}
+
+function legacyResult(c: Context<AppEnv>, id: RequestId, result: object) {
+  return c.json({ jsonrpc: "2.0", id, result });
+}
+
+async function legacy(c: Context<AppEnv>, message: Message) {
+  const { id, method } = message;
+  if (method === "initialize") {
+    const wanted = message.params?.protocolVersion;
+    return legacyResult(c, id, {
+      protocolVersion:
+        typeof wanted === "string" && LEGACY_VERSIONS.includes(wanted)
+          ? wanted
+          : LEGACY_VERSIONS[0],
+      capabilities: { tools: {} },
+      serverInfo: SERVER_INFO(),
+      instructions: messages(c).instructions,
+    });
+  }
+  if (method === "ping") return legacyResult(c, id, {});
+  if (method === "tools/list") return legacyResult(c, id, { tools: toolList(c) });
+  if (method === "tools/call") {
+    return callTool(c, message, (result) => legacyResult(c, id, result));
+  }
+  return rpcError(c, 200, id, METHOD_NOT_FOUND, messages(c).errors.unknownMethod);
+}
+
+async function callTool(
+  c: Context<AppEnv>,
+  message: Message,
+  respond: (result: object) => Response,
+) {
+  const t = messages(c);
+  const tool = TOOLS.find((candidate) => candidate.name === message.params?.name);
+  if (!tool) return rpcError(c, 200, message.id, INVALID_PARAMS, t.errors.unknownTool);
+  const args = message.params?.arguments ?? {};
+  if (typeof args !== "object" || args === null || Object.keys(args).length > 0) {
+    return rpcError(c, 200, message.id, INVALID_PARAMS, t.errors.unexpectedArguments);
+  }
+  const user = c.get("user");
+  if (!user) throw new Error("the MCP route requires a user");
+  if (!(await takeToolCall(c.env.DB, user.id))) {
+    c.header("Retry-After", String(secondsToNextDay()));
+    return rpcError(c, 429, message.id, SERVER_ERROR, t.errors.dailyLimit);
+  }
+  try {
+    const data = await tool.run(c.env, user);
+    return respond({
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      structuredContent: data,
+    });
+  } catch (error) {
+    console.error("MCP tool failed", tool.name, ...errorLogFields(error));
+    return respond({ content: [{ type: "text", text: t.errors.toolFailed }], isError: true });
+  }
+}

@@ -160,7 +160,6 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM audit_events"),
     env.DB.prepare("DELETE FROM rules"),
     env.DB.prepare("DELETE FROM accounts"),
-    env.DB.prepare("UPDATE users SET active = 1"),
   ]);
   ({
     user: { id: userId },
@@ -295,14 +294,6 @@ describe("silence check", () => {
     expect(alerts).toEqual([]);
   });
 
-  it("skips a rule of a deactivated user", async () => {
-    const alerts = acceptAlerts();
-    await seedRule("inactive", userId);
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(userId).run();
-    await checkSilentRules(env, NOON);
-    expect(alerts).toEqual([]);
-  });
-
   it("skips a rule of a user the access policy no longer admits", async () => {
     const alerts = acceptAlerts();
     await env.DB.prepare(
@@ -331,14 +322,6 @@ describe("silence check", () => {
     expect(alerts).toEqual([]);
   });
 
-  it("gives a rule 3 hours after its user is active again", async () => {
-    const alerts = acceptAlerts();
-    await seedRule("back", userId);
-    await addEvent("user_reactivated", NOON - HOUR, { userId });
-    await checkSilentRules(env, NOON);
-    expect(alerts).toEqual([]);
-  });
-
   it("ends that grace after 3 hours", async () => {
     const alerts = acceptAlerts();
     await seedRule("grace-over", userId);
@@ -347,12 +330,11 @@ describe("silence check", () => {
     expect(alerts).toHaveLength(1);
   });
 
-  it("lets an event of another rule, account or user grant no grace", async () => {
+  it("lets an event of another rule or account grant no grace", async () => {
     const alerts = acceptAlerts();
     await seedRule("alone", userId);
     await addEvent("rule_created", NOON - HOUR, { ruleId: "another" });
     await addEvent("account_resumed", NOON - HOUR, { accountId: "another" });
-    await addEvent("user_reactivated", NOON - HOUR, { userId: "another" });
     await checkSilentRules(env, NOON);
     expect(alerts).toHaveLength(1);
   });

@@ -1126,30 +1126,13 @@ describe("alarm queue", () => {
     expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 1 });
   });
 
-  it("retries the removal of an enabled rule whose user is deactivated", async () => {
-    const { stub, ruleId, deletes } = await waitingRemoval("acc-removal-inactive");
-    const lookupFailed = lookupLog();
-    const { user } = await signIn("paused-removal@org.example");
-    await env.DB.batch([
-      env.DB.prepare("UPDATE rules SET enabled = 1, user_id = ? WHERE id = ?").bind(
-        user.id,
-        ruleId,
-      ),
-      env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id),
-    ]);
-    await runDurableObjectAlarm(stub);
-    expect(deletes()).toBe(2);
-    expect((await removalsOf(stub))?.[0]).toMatchObject({ ruleId, attempts: 2 });
-    expect(lookupFailed()).toBe(false);
-  });
-
   it("retries the removal of an enabled rule whose owner the policy no longer admits", async () => {
     const { stub, ruleId, deletes } = await waitingRemoval("acc-removal-unadmitted");
     const lookupFailed = lookupLog();
-    // Active, but outside ALLOWED_EMAILS and ALLOWED_DOMAINS: the rule never runs again.
+    // A user, but outside ALLOWED_EMAILS and ALLOWED_DOMAINS: the rule never runs again.
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO users (id, org_id, email, role, active) VALUES ('unadmitted-removal', 'default', 'removal-owner@former.example', 'member', 1)",
+        "INSERT INTO users (id, org_id, email, role) VALUES ('unadmitted-removal', 'default', 'removal-owner@former.example', 'member')",
       ),
       env.DB.prepare(
         "UPDATE rules SET enabled = 1, user_id = 'unadmitted-removal' WHERE id = ?",
@@ -2245,40 +2228,6 @@ describe("waiting rules", () => {
     },
   );
 
-  it("drops a queued rule of a deactivated user without a run", async () => {
-    const { user } = await signIn("paused@org.example");
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO accounts (id, user_id, provider, email) VALUES ('acc-inactive', ?, 'microsoft', 'acc-inactive@example.com')",
-      ).bind(user.id),
-      env.DB.prepare(
-        "INSERT INTO calendars (id, account_id, remote_id, name) VALUES ('acc-inactive-src', 'acc-inactive', ?, 'Work'), ('acc-inactive-dst', 'acc-inactive', ?, 'Test')",
-      ).bind(SOURCE_CAL, TARGET_CAL),
-      env.DB.prepare(
-        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id) VALUES ('acc-inactive-rule', ?, 'acc-inactive-src', 'acc-inactive-dst')",
-      ).bind(user.id),
-      env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(user.id),
-    ]);
-    const stub = accountStub("acc-inactive");
-    await stub.storeTokens("acc-inactive", {
-      refreshToken: "r",
-      accessToken: "a",
-      accessExpiresAt: Date.now() + 3_600_000,
-    });
-    const calls = fakeGraph();
-    await runInDurableObject(stub, async (_instance, state) => {
-      await state.storage.put("ruleQueue", ["acc-inactive-rule"]);
-      await state.storage.setAlarm(Date.now() + 60_000);
-    });
-
-    await runDurableObjectAlarm(stub);
-
-    expect(calls.filter((call) => call.url.includes("calendarView"))).toHaveLength(0);
-    expect(
-      await runInDurableObject(stub, (_instance, state) => state.storage.get("ruleQueue")),
-    ).toBeUndefined();
-  });
-
   it("keeps the queue and backs off while D1 cannot tell which rules may run", async () => {
     const { stub, ruleId } = await setupRule("acc-lookup-fails");
     await stub.storeTokens("acc-lookup-fails", {
@@ -2978,7 +2927,7 @@ describe("written IDs", () => {
 });
 
 /**
- * A rule whose owner the access policy no longer admits: the user row is active, but its address
+ * A rule whose owner the access policy no longer admits: the user row exists, but its address
  * is outside the test policy, as after an operator removed it from ALLOWED_* variables.
  */
 async function setupRemovedOwnerRule(accountId: string) {
@@ -2986,7 +2935,7 @@ async function setupRemovedOwnerRule(accountId: string) {
   await signIn("owner@example.com");
   const userId = `${accountId}-user`;
   await env.DB.prepare(
-    "INSERT INTO users (id, org_id, email, role, active) VALUES (?, 'default', ?, 'member', 1)",
+    "INSERT INTO users (id, org_id, email, role) VALUES (?, 'default', ?, 'member')",
   )
     .bind(userId, `${accountId}@former.example`)
     .run();
@@ -3076,7 +3025,7 @@ describe("access policy in the background", () => {
     const [failure] = await auditOf(ruleId, "sync_failed");
     expect(failure?.detail).toEqual({
       runId: expect.any(String),
-      code: "The rule's owner is deactivated or no longer admitted",
+      code: "The rule's owner is no longer admitted",
     });
   });
 });
@@ -3133,7 +3082,7 @@ function writeTrackingGraph() {
 /** Two rules from two source calendars into one target calendar; one alarm ran the first. */
 async function secondRuleQueued(accountId: string) {
   const { stub, ruleId } = await setupRule(accountId);
-  // An owner of its own: the tests deactivate or remove it.
+  // An owner of its own: the tests remove it.
   const { user } = await signIn(`${accountId}@org.example`);
   await env.DB.batch([
     env.DB.prepare("UPDATE accounts SET user_id = ? WHERE id = ?").bind(user.id, accountId),
@@ -3169,22 +3118,6 @@ async function runAllAlarms(stub: DurableObjectStub<AccountSync>): Promise<void>
 }
 
 describe("stale queued rules", () => {
-  it("drops a queued rule after its user is deactivated: the removal runs first, then no writes", async () => {
-    const { stub, rules, stale, userId, target, writes } = await secondRuleQueued("acc-stale-off");
-    expect(target.size).toBeGreaterThan(0);
-    const runsBefore = (await auditOf(stale, "sync_run")).length;
-
-    const { setUserActive } = await import("../src/offboarding");
-    await setUserActive(env, { id: userId, orgId: "default" }, false, "scim");
-    writes.length = 0;
-    await runAllAlarms(stub);
-
-    expect(writes.filter((method) => method !== "DELETE")).toEqual([]);
-    expect(target.size).toBe(0);
-    expect(await auditOf(stale, "sync_run")).toHaveLength(runsBefore);
-    for (const ruleId of rules) expect(await auditOf(ruleId, "sync_failed")).toEqual([]);
-  });
-
   it("drops a queued rule whose direction was turned off after its removal ran", async () => {
     const { stub, rules, stale, target, writes } = await secondRuleQueued("acc-queued-pause");
     // Finish the cycle, so that both rules have blocks; then the rule waits in a queue again.

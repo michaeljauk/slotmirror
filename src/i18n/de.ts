@@ -356,7 +356,6 @@ export const de: Messages = {
     resetSignIn: "Anmeldung zurücksetzen",
     resetSignInHint:
       "Löst die Bindung an das Microsoft- oder Google-Konto und beendet die Sitzungen. 24 Stunden lang bindet eine Anmeldung unter einer bestätigten Adresse die Person an ein neues Konto; das bisherige Konto bleibt gesperrt. Danach ist ein neuer Reset nötig.",
-    inactive: "deaktiviert",
     needsReconnect: (count) =>
       count === 1 ? "1 muss neu verbunden werden" : `${count} müssen neu verbunden werden`,
     reconnectSummary: (count) =>
@@ -430,9 +429,6 @@ export const de: Messages = {
       rule_updated: "Regel geändert",
       group_changed: "Gruppe geändert",
       settings_changed: "Sync-Einstellungen geändert",
-      user_provisioned: "Nutzer angelegt",
-      user_deactivated: "Nutzer deaktiviert",
-      user_reactivated: "Nutzer reaktiviert",
       user_deleted: "Nutzer gelöscht",
       sign_in_reset: "Anmeldebindung zurückgesetzt",
       sync_run: "Synchronisierung",
@@ -517,7 +513,7 @@ export const de: Messages = {
       count === 1
         ? "slotmirror entfernt noch Blöcke aus 1 Kalender."
         : `slotmirror entfernt noch Blöcke aus ${count} Kalendern.`,
-    othersTitle: "Deaktivierte und gelöschte Nutzer",
+    othersTitle: "Gelöschte Nutzer",
     othersLead:
       "Diese Nutzer sehen diese Seite nicht. Ihre Blöcke bleiben in ihren Kalendern, bis jemand sie löscht.",
     empty: "Es sind keine Blöcke übrig.",
@@ -546,8 +542,8 @@ export const de: Messages = {
     show: "Anzeigen",
     adminLink: (count: number) =>
       count === 1
-        ? "In 1 Kalender sind Blöcke deaktivierter oder gelöschter Nutzer übrig"
-        : `In ${count} Kalendern sind Blöcke deaktivierter oder gelöschter Nutzer übrig`,
+        ? "In 1 Kalender sind Blöcke gelöschter Nutzer übrig"
+        : `In ${count} Kalendern sind Blöcke gelöschter Nutzer übrig`,
   },
   feeds: {
     title: "Frei/Belegt-Feed",

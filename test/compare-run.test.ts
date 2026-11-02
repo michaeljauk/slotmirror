@@ -1101,15 +1101,6 @@ describe("a calendar without a rule", () => {
     await context.target.startCompares("full");
     expect(await stateOf(context.target, id)).toBeUndefined();
   });
-
-  it("is left out for a deactivated owner", async () => {
-    const context = await setup("leftover-owner");
-    const id = await spare(context);
-    await env.DB.prepare("UPDATE users SET active = 0 WHERE id = ?").bind(context.userId).run();
-    await context.target.startCompares("full");
-    await env.DB.prepare("UPDATE users SET active = 1 WHERE id = ?").bind(context.userId).run();
-    expect(await stateOf(context.target, id)).toBeUndefined();
-  });
 });
 
 describe("a remote calendar with two rows", () => {

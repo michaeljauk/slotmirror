@@ -19,7 +19,7 @@ const microsoft = (claims: Record<string, unknown>) => microsoftIdentityFrom(idT
 const google = (email: string, sub: string) =>
   googleIdentityFrom(idToken({ sub, email, email_verified: true }));
 
-/** An unbound user row, as SCIM or a sign-in from before the binding leaves it. */
+/** An unbound user row, as a sign-in from before the binding leaves it. */
 async function unboundUser(email: string, tenantId: string | null): Promise<string> {
   const { user } = await signIn(email);
   await env.DB.prepare("UPDATE users SET tenant_id = ? WHERE id = ?").bind(tenantId, user.id).run();
@@ -70,8 +70,8 @@ describe("admin addresses", () => {
   });
 });
 
-describe("trusted tenants and SCIM users", () => {
-  // Case B: SCIM created the row from the mail address; the UPN differs; no xms_edov.
+describe("trusted tenants and users without a tenant", () => {
+  // Case B: the row holds the mail address; the UPN differs; no xms_edov.
   const caseB = (name: string, oid: string) => ({
     tid: TENANT_A,
     oid,
@@ -89,7 +89,7 @@ describe("trusted tenants and SCIM users", () => {
     expect(await row(id)).toMatchObject({ ms_object_id: null });
   });
 
-  it("binds a SCIM user whose userName is the mail address, if the tenant is allowed", async () => {
+  it("binds a user whose address is the mail address, if the tenant is allowed", async () => {
     const id = await unboundUser("b2.mail@org.example", null);
     const outcome = await admitSignIn(
       { ...env, ALLOWED_TENANT_IDS: `${TENANT_A},${TENANT_B}` },

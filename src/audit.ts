@@ -26,9 +26,6 @@ export type AuditKind =
   | "rule_updated"
   | "group_changed"
   | "settings_changed"
-  | "user_provisioned"
-  | "user_deactivated"
-  | "user_reactivated"
   | "user_deleted"
   | "sync_run"
   | "sync_failed"
@@ -237,7 +234,7 @@ const STATIC_MESSAGES = new Set([
   "Google address is not verified",
   "Malformed ID token",
   "ID token carries no verified email and no preferred_username",
-  "The rule's owner is deactivated or no longer admitted",
+  "The rule's owner is no longer admitted",
   "Google event time has neither date nor dateTime",
 ]);
 

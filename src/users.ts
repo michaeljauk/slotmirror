@@ -20,7 +20,7 @@ export type SignedInUser = CurrentUser & { sessionVersion: number };
 
 /**
  * Why a sign-in was refused:
- * - "policy": the org policy does not admit the address, or the user is deactivated;
+ * - "policy": the org policy does not admit the address;
  * - "identity": the address belongs to a user bound to another identity of the same provider;
  * - "provider": the user is bound to the other provider and signs in only there.
  */
@@ -35,14 +35,13 @@ interface UserRow {
   id: string;
   email: string;
   tenantId: string | null;
-  active: number;
   msObjectId: string | null;
   googleSubject: string | null;
   rebindUntil: string | null;
   refusedSubjects: string | null;
 }
 
-const USER_ROW = `id, email, tenant_id AS tenantId, active, ms_object_id AS msObjectId,
+const USER_ROW = `id, email, tenant_id AS tenantId, ms_object_id AS msObjectId,
   google_subject AS googleSubject, rebind_until AS rebindUntil,
   refused_subjects AS refusedSubjects`;
 
@@ -89,8 +88,7 @@ export async function admitSignIn(
 
   const email = row?.email ?? identity.email;
   const decision = decideAccess(policy, { email, tenantId: identity.tenantId });
-  // A user that Entra deactivated over SCIM cannot sign in, whatever the policy says.
-  if (!decision.allowed || row?.active === 0) return { refused: "policy" };
+  if (!decision.allowed) return { refused: "policy" };
 
   const orgName = env.ORG_NAME?.trim() || "slotmirror";
   const msTenantId = microsoft ? identity.tenantId : null;
@@ -105,7 +103,7 @@ export async function admitSignIn(
   if (bound) {
     write = env.DB.prepare(
       `UPDATE users SET ${signedIn}
-       WHERE id = ? AND active = 1 AND ${
+       WHERE id = ? AND ${
          microsoft ? "ms_object_id = ? AND ms_tenant_id = ?" : "google_subject = ?"
        }
        ${returning}`,
@@ -119,7 +117,7 @@ export async function admitSignIn(
     write = env.DB.prepare(
       `UPDATE users SET ${signedIn},
          ms_tenant_id = ?, ms_object_id = ?, google_subject = ?, rebind_until = NULL
-       WHERE id = ? AND active = 1 AND email = ?
+       WHERE id = ? AND email = ?
          AND ms_tenant_id IS NULL AND ms_object_id IS NULL AND google_subject IS NULL
          AND tenant_id IS ? AND rebind_until IS ? AND refused_subjects IS ?
        ${returning}`,
@@ -223,8 +221,8 @@ export async function resetSignInBinding(
  * - A Google account binds only a user without an Entra tenant. A user with a tenant belongs to
  *   that tenant.
  * - The unverified `email` claim binds only from the tenant the user already has, or, for a user
- *   without a tenant (created over SCIM), from a tenant in ALLOWED_TENANT_IDS. It never binds a
- *   user whose address is in ADMIN_EMAILS.
+ *   without a tenant, from a tenant in ALLOWED_TENANT_IDS. It never binds a user whose address is
+ *   in ADMIN_EMAILS.
  */
 function mayBind(
   row: UserRow,
@@ -299,8 +297,8 @@ async function unboundUserFor(
 /**
  * Load the user of a session and check the org policy again, so that removing someone from the
  * policy ends their access at the next request instead of when the session cookie expires. A
- * deactivated user has no session either, and neither has a session from before the user's
- * session version changed. The role follows the stored address at every request.
+ * session from before the user's session version changed ends too. The role follows the stored
+ * address at every request.
  */
 export async function loadUser(
   env: Env,
@@ -310,7 +308,7 @@ export async function loadUser(
   const row = await env.DB.prepare(
     `SELECT u.id, u.org_id AS orgId, u.email, u.tenant_id AS tenantId, o.policy
      FROM users u JOIN orgs o ON o.id = u.org_id
-     WHERE u.id = ? AND u.active = 1 AND u.session_version = ?`,
+     WHERE u.id = ? AND u.session_version = ?`,
   )
     .bind(userId, sessionVersion)
     .first<{ id: string; orgId: string; email: string; tenantId: string | null; policy: string }>();

@@ -354,7 +354,6 @@ export const en = {
     resetSignIn: "Reset sign-in",
     resetSignInHint:
       "Unbinds the user from their Microsoft or Google account and ends their sessions. For 24 hours, a sign-in under a verified address binds them to a new account; the previous account stays refused. After that, reset again.",
-    inactive: "deactivated",
     needsReconnect: (count: number) =>
       count === 1 ? "1 needs reconnecting" : `${count} need reconnecting`,
     reconnectSummary: (count: number) =>
@@ -428,9 +427,6 @@ export const en = {
       rule_updated: "Rule changed",
       group_changed: "Block group changed",
       settings_changed: "Sync settings changed",
-      user_provisioned: "User provisioned",
-      user_deactivated: "User deactivated",
-      user_reactivated: "User reactivated",
       user_deleted: "User deleted",
       sync_run: "Sync run",
       sync_failed: "Sync failed",
@@ -513,7 +509,7 @@ export const en = {
       count === 1
         ? "slotmirror is still removing blocks from 1 calendar."
         : `slotmirror is still removing blocks from ${count} calendars.`,
-    othersTitle: "Deactivated and deleted users",
+    othersTitle: "Deleted users",
     othersLead:
       "These users cannot see this page. Their blocks stay in their calendars until someone deletes them.",
     empty: "No blocks are left.",
@@ -542,8 +538,8 @@ export const en = {
     show: "Show them",
     adminLink: (count: number) =>
       count === 1
-        ? "Blocks of a deactivated or deleted user are left in 1 calendar"
-        : `Blocks of deactivated or deleted users are left in ${count} calendars`,
+        ? "Blocks of a deleted user are left in 1 calendar"
+        : `Blocks of deleted users are left in ${count} calendars`,
   },
   feeds: {
     title: "Free/busy feed",

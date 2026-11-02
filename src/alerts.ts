@@ -482,7 +482,7 @@ export function silentRuleStatements(db: D1Database, now: number): D1PreparedSta
            JOIN accounts ta ON ta.id = tc.account_id
            JOIN users u ON u.id = r.user_id
            JOIN orgs o ON o.id = u.org_id
-           WHERE r.enabled = 1 AND u.active = 1 AND u.org_id = ?1
+           WHERE r.enabled = 1 AND u.org_id = ?1
              AND sa.needs_reconnect = 0 AND ta.needs_reconnect = 0
          )
          SELECT * FROM active
@@ -540,7 +540,6 @@ function silentRules(
 ): { silent: ActiveRule[]; failing: Set<string | null> } {
   const quietRules = new Set(locked);
   const quietAccounts = new Set<string | null>();
-  const quietUsers = new Set<string | null>();
   const failing = new Set<string | null>();
   for (const group of groups) {
     if (group.kind === "sync_run") {
@@ -552,16 +551,13 @@ function silentRules(
       quietRules.add(group.ruleId);
     } else if (ACCOUNT_EVENTS.has(group.kind)) {
       quietAccounts.add(group.accountId);
-    } else if (group.kind === "user_reactivated") {
-      quietUsers.add(group.userId);
     }
   }
   const silent = active.filter(
     (rule) =>
       !quietRules.has(rule.ruleId) &&
       !quietAccounts.has(rule.sourceAccountId) &&
-      !quietAccounts.has(rule.targetAccountId) &&
-      !quietUsers.has(rule.userId),
+      !quietAccounts.has(rule.targetAccountId),
   );
   return { silent, failing };
 }

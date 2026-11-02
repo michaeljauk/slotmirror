@@ -71,12 +71,11 @@ accounts** (see [Microsoft Entra app](../entra-setup/)).
 
 ## Blocks left after a disconnect
 
-If a user disconnects an account, or an admin deletes or deactivates a user, slotmirror removes the
+If a user disconnects an account, or an admin deletes a user, slotmirror removes the
 blocks of those rules from today on. Past blocks stay as a record. Some blocks can stay behind:
 
 - The provider refused the tokens, or kept failing over the five attempts.
-- The account that holds the blocks needs a reconnect, and no reconnect came within 14 days. A
-  deactivated user cannot reconnect, so these removals end after 14 days too.
+- The account that holds the blocks needs a reconnect, and no reconnect came within 14 days.
 - A request could not start the removal and did not run again. The entry appears within about an
   hour, with the reason. If the rule runs again, it keeps its blocks, and no entry appears. Repeat
   the request to start the removal.
@@ -84,7 +83,7 @@ blocks of those rules from today on. Past blocks stay as a record. Some blocks c
 The page **Blocks left in calendars** at `/cleanup` lists these blocks per target calendar. It shows
 the calendar name, the block count, the period and the marker. It shows no event content. A removal
 that still runs is listed apart, and you need not act on it. A removal in an account that works
-has no end date, because the provider decides how fast it runs. The home page links to it. Admins see the blocks of deactivated and deleted users on the same page, linked
+has no end date, because the provider decides how fast it runs. The home page links to it. Admins see the blocks of deleted users on the same page, linked
 from the admin page. An entry stays for 90 days.
 
 A count with "about" comes from the last sync run, because no read was possible. If no run left a

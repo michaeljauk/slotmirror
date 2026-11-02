@@ -73,12 +73,11 @@ export async function signIn(
        VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        ON CONFLICT (email) DO UPDATE SET role = excluded.role,
          last_sign_in_at = excluded.last_sign_in_at
-       WHERE users.active = 1
        RETURNING id, org_id AS orgId, email, role, session_version AS sessionVersion`,
     ).bind(crypto.randomUUID(), DEFAULT_ORG_ID, email, decision.role),
   ]);
   const user = result?.results[0] as (CurrentUser & { sessionVersion: number }) | undefined;
-  if (!user) throw new Error(`${email} is deactivated`);
+  if (!user) throw new Error(`${email} has no user row`);
   const token = await signSession(
     { userId: user.id, exp: Math.floor(Date.now() / 1000) + 60, version: user.sessionVersion },
     env.SESSION_SECRET,

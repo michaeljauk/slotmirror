@@ -80,7 +80,7 @@ function RunningList(props: { calendars: CalendarCleanup[] }) {
 export function CleanupPage(props: {
   user: CurrentUser;
   own: Cleanups;
-  /** Deactivated and deleted users, for an admin. */
+  /** Deleted users, for an admin. */
   others: Cleanups;
 }) {
   const { t } = useI18n();

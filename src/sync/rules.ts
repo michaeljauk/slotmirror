@@ -192,6 +192,17 @@ export async function leftoverCalendars(
     .map(({ calendarId, remoteCalendarId }) => ({ calendarId, remoteCalendarId }));
 }
 
+/** True if the access policy admits the owner of an account. False if the owner is gone. */
+export async function accountOwnerAdmitted(env: Env, accountId: string): Promise<boolean> {
+  const owner = await env.DB.prepare(
+    `SELECT ${OWNER_COLUMNS} FROM accounts a JOIN users u ON u.id = a.user_id
+     JOIN orgs o ON o.id = u.org_id WHERE a.id = ?`,
+  )
+    .bind(accountId)
+    .first<OwnerColumns>();
+  return owner !== null && ownerAdmission(env)(owner);
+}
+
 /**
  * The rules that write into the same remote calendar as this calendar row, through a row of another
  * account. Google gives the same calendar id to every account that owns a shared calendar. The

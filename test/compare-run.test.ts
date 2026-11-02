@@ -1101,6 +1101,130 @@ describe("a calendar without a rule", () => {
     await context.target.startCompares("full");
     expect(await stateOf(context.target, id)).toBeUndefined();
   });
+  /** Run `work` while the owner's address is outside the test policy. Other tests share the row. */
+  async function outsidePolicy(userId: string, work: () => Promise<void>): Promise<void> {
+    const setEmail = (email: string) =>
+      env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind(email, userId).run();
+    await setEmail("owner@former.example");
+    try {
+      await work();
+    } finally {
+      await setEmail("owner@example.com");
+    }
+  }
+
+  /** Run alarms until the scan of the calendar has read its first slice. */
+  async function firstSliceRead(stub: Stub, calendarId: string): Promise<void> {
+    const start = (await stateOf(stub, calendarId))?.sliceStart;
+    while ((await stateOf(stub, calendarId))?.sliceStart === start) {
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
+    }
+  }
+
+  /** The calls that the simulated calendars of both accounts answered. */
+  async function providerCalls({ source, target }: Setup): Promise<number> {
+    const stats = await Promise.all([source.fakeStats(), target.fakeStats()]);
+    return stats.flatMap(({ calls }) => Object.values(calls)).reduce((sum, n) => sum + n, 0);
+  }
+
+  function spyOnClient(stub: Stub) {
+    return runInDurableObject(stub, (instance) =>
+      vi.spyOn(instance as unknown as { client(options?: object): unknown }, "client"),
+    );
+  }
+
+  async function failureOf(accountId: string, calendarId: string) {
+    const events = await compareEvents(accountId);
+    return events.find((event) => event.detail.calendarId === calendarId);
+  }
+
+  it("stops during a scan if the policy no longer admits the owner", async () => {
+    const context = await setup("leftover-policy");
+    const { target, targetId, userId } = context;
+    const id = await spare(context);
+    await target.startCompares("full");
+    await firstSliceRead(target, id);
+    const client = await spyOnClient(target);
+    const calls = await providerCalls(context);
+    await outsidePolicy(userId, async () => {
+      await alarms(target);
+    });
+    expect(await stateOf(target, id)).toBeUndefined();
+    expect(await failureOf(targetId, id)).toMatchObject({
+      kind: "compare_failed",
+      detail: { mode: "leftover", reason: "owner_not_admitted" },
+    });
+    expect(client).not.toHaveBeenCalled();
+    expect(await providerCalls(context)).toBe(calls);
+  });
+
+  it("stops before its second scan if the policy no longer admits the owner", async () => {
+    const context = await setup("leftover-confirm");
+    const { target, targetId, userId } = context;
+    const id = await spare(context);
+    await target.startCompares("full");
+    await alarms(target);
+    expect(await stateOf(target, id)).toMatchObject({ phase: "confirming" });
+    const client = await spyOnClient(target);
+    const calls = await providerCalls(context);
+    await outsidePolicy(userId, async () => {
+      await target.tick();
+      await alarms(target);
+    });
+    expect(await stateOf(target, id)).toBeUndefined();
+    expect(await failureOf(targetId, id)).toMatchObject({
+      kind: "compare_failed",
+      detail: { reason: "owner_not_admitted" },
+    });
+    expect(client).not.toHaveBeenCalled();
+    expect(await providerCalls(context)).toBe(calls);
+  });
+
+  it("stops if the owner is gone, and writes no row for the account that went with them", async () => {
+    const context = await setup("leftover-gone");
+    const { target, targetId } = context;
+    const id = await spare(context);
+    await env.DB.prepare(
+      `INSERT INTO users (id, org_id, email, role) VALUES ('gone', 'default', 'gone@org.example', 'member')`,
+    ).run();
+    await env.DB.prepare("UPDATE accounts SET user_id = 'gone' WHERE id = ?").bind(targetId).run();
+    await target.startCompares("full");
+    await firstSliceRead(target, id);
+    const client = await spyOnClient(target);
+    const calls = await providerCalls(context);
+    await env.DB.prepare("DELETE FROM users WHERE id = 'gone'").run();
+    await alarms(target);
+    expect(await stateOf(target, id)).toBeUndefined();
+    expect(await failureOf(targetId, id)).toBeUndefined();
+    expect(client).not.toHaveBeenCalled();
+    expect(await providerCalls(context)).toBe(calls);
+  });
+
+  it("goes on through client() while the policy admits the owner", async () => {
+    const context = await setup("leftover-admitted");
+    const { target, targetId } = context;
+    const id = await spare(context);
+    await target.startCompares("full");
+    await firstSliceRead(target, id);
+    const scanned = (await stateOf(target, id))?.sliceStart ?? 0;
+    const client = await spyOnClient(target);
+    const calls = await providerCalls(context);
+    await runDurableObjectAlarm(target);
+    expect(await stateOf(target, id)).toMatchObject({ mode: "leftover", phase: "scanning" });
+    expect((await stateOf(target, id))?.sliceStart).toBeGreaterThan(scanned);
+    expect(client).toHaveBeenCalledWith({ respectPenalty: true });
+    expect(await providerCalls(context)).toBeGreaterThan(calls);
+    expect(await failureOf(targetId, id)).toBeUndefined();
+  });
+
+  it("leaves a comparison with a rule to the rule query", async () => {
+    const { target, targetId, userId } = await setup("leftover-rule-mode");
+    await target.startCompares("full");
+    await outsidePolicy(userId, async () => {
+      await alarms(target);
+    });
+    expect((await failure(targetId)).reason).toBe("config_changed");
+  });
 });
 
 describe("a remote calendar with two rows", () => {

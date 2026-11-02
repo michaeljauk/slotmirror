@@ -148,11 +148,18 @@ app.use(
 // and the guard exempts them by path as well.
 app.use("*", crossSiteGuard);
 
+/** The signed-in user of the request, or null. Needs a finished setup. */
+async function sessionUser(c: Context<AppEnv>): Promise<CurrentUser | null> {
+  const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
+  return session ? loadUser(c.env, session.userId, session.version ?? 0) : null;
+}
+
 // Public, also before the setup is finished: Google requires a reachable privacy statement.
-app.get("/privacy", (c) =>
+app.get("/privacy", async (c) =>
   render(
     c,
     <PrivacyPage
+      user={setupStatus(c.env).ready ? await sessionUser(c) : null}
       operator={c.env.ORG_NAME?.trim() || "the operator"}
       contact={c.env.PRIVACY_CONTACT?.trim() ?? ""}
       notice={operatorNotice(c.env)}
@@ -166,8 +173,7 @@ app.use("*", async (c, next) => {
   if (!status.ready) {
     return render(c, <SetupPage status={status} />, 503);
   }
-  const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
-  c.set("user", session ? await loadUser(c.env, session.userId, session.version ?? 0) : null);
+  c.set("user", await sessionUser(c));
   await next();
 });
 
@@ -484,7 +490,7 @@ app.get("/admin", async (c) => {
     const { t } = i18nFromContext(c);
     return render(
       c,
-      <MessagePage title={t.messages.notAllowed} message={t.admin.onlyAdmins} />,
+      <MessagePage user={user} title={t.messages.notAllowed} message={t.admin.onlyAdmins} />,
       403,
     );
   }

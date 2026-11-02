@@ -1,11 +1,12 @@
 import { useI18n } from "../i18n";
+import type { CurrentUser } from "../users";
 import { Layout } from "./layout";
 
 /** A short notice with a link back to the start page. */
-export function MessagePage(props: { title: string; message: string }) {
+export function MessagePage(props: { title: string; message: string; user?: CurrentUser | null }) {
   const { t } = useI18n();
   return (
-    <Layout title={props.title}>
+    <Layout title={props.title} user={props.user}>
       <div class="center">
         <div class="card">
           <h1>{props.title}</h1>

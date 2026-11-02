@@ -60,6 +60,11 @@ an outside monitor such as healthchecks.io. The cron calls it with a plain GET o
 any data, and the monitor alerts when the calls stop. Set the monitor's period to 1 hour and its
 grace time to 3 hours. The call needs a free subrequest, so it stops above about 44 accounts.
 
+healthchecks.io can take both secrets from one check. Set `HEARTBEAT_URL` to the ping URL and
+`ALERT_WEBHOOK_URL` to the ping URL plus `/fail`. An alert then shows up as a failure with the text
+as its ping body, and goes to the check's integrations, such as e-mail or Discord. The next heartbeat
+marks the check as up again, so an alert does not stay visible in the check.
+
 To try the webhook, use **Send test alert** on the admin page. Only admins see it, it works once per
 minute, and a failed try also counts. The page shows the result, never the URL. The activity log
 records each try that goes to the webhook. A refused request within the minute leaves no entry.

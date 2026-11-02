@@ -385,6 +385,11 @@ export function HomePage(props: {
                         {accountKind(account)}
                       </div>
                       {editor ? <WorkHoursStatus account={editor} editor={props.editor} /> : null}
+                      {editor && !editor.calendar && !account.needsReconnect ? (
+                        <div class="item-meta warning">
+                          {t.accounts.noCalendars} <a href="/rules">{t.accounts.noCalendarsLink}</a>
+                        </div>
+                      ) : null}
                     </div>
                     {account.needsReconnect ? (
                       <a

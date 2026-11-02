@@ -928,6 +928,25 @@ function QuickStart(props: { count: number }) {
   );
 }
 
+/** Accounts without any loaded calendar are missing from the rules, so the page says why. */
+function CalendarsMissingNotice(props: { accounts: EditorAccount[] }) {
+  const { t } = useI18n();
+  const missing = props.accounts.filter((account) => !account.calendar && !account.needsReconnect);
+  if (missing.length === 0) return null;
+  const google = missing.some((account) => account.provider === "google");
+  return (
+    <div class="notice error" role="alert">
+      <p>{t.rules.calendarsMissing(missing.map((account) => account.name).join(", "))}</p>
+      {google ? <p>{t.rules.calendarsMissingGoogle}</p> : null}
+      <form method="post" action="/rules/calendars/refresh">
+        <button type="submit" class="link-button">
+          {t.rules.refreshCalendars}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export function CalendarEditorPage(props: {
   /** Providers that can be connected, for the first steps. */
   providers: Record<"microsoft" | "google", boolean>;
@@ -953,6 +972,7 @@ export function CalendarEditorPage(props: {
 
         {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
         <ReconnectNotice accounts={props.state.accounts} operatorNotice={props.operatorNotice} />
+        <CalendarsMissingNotice accounts={props.state.accounts} />
 
         {ready.length < 2 ? (
           <FirstSteps

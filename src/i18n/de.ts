@@ -57,6 +57,8 @@ export const de: Messages = {
     workHoursInUse: (hours, used, total) =>
       `Arbeitszeit ${hours} · gilt für ${used} von ${total} ${total === 1 ? "Richtung" : "Richtungen"}`,
     workHoursUnused: (hours) => `Arbeitszeit ${hours} filtert noch nichts.`,
+    noCalendars: "Es liessen sich keine Kalender laden.",
+    noCalendarsLink: "Regeln öffnen",
     workHoursChoose: "Richtungen wählen",
     workHoursIdle: (hours) => `Arbeitszeit ${hours} · noch kopiert nichts in dieses Konto`,
     colorLabel: "Farbe",
@@ -120,6 +122,10 @@ export const de: Messages = {
     runNow: "Jetzt ausführen",
     delete: "Löschen",
     refreshCalendars: "Kalender neu laden",
+    calendarsMissing: (names) =>
+      `Für ${names} liessen sich keine Kalender laden. Die Regeln zeigen dieses Konto deshalb nicht.`,
+    calendarsMissingGoogle:
+      "Bei einem Google-Konto muss der Betreiber im Google-Cloud-Projekt die Google Calendar API aktivieren.",
     noCalendars: "Verbinde zuerst ein Konto, dann erscheinen hier seine Kalender.",
     previewResult: (create, update, remove, unchanged) =>
       `Vorschau: ${create} anlegen, ${update} ändern, ${remove} löschen, ${unchanged} unverändert. Es wurde nichts geschrieben.`,

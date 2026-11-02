@@ -1,0 +1,48 @@
+{
+  "id": "account-paused",
+  "title": "A paused source keeps its blocks, and a reconnect catches up on what changed",
+  "covers": "paused account",
+  "expectedText": "The source token is refused. While paused, the Tuesday block stays and the new Wednesday event does not arrive, even after the Tuesday event is deleted. After the reconnect only Wednesday is busy.",
+  "requires": ["account-state", "clock"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "before",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]]
+      }
+    },
+    { "do": "control", "action": "refuse-token", "calendar": "source" },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "during",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z" }
+    },
+    { "do": "write", "change": "delete", "key": "before" },
+    {
+      "do": "sync",
+      "settleSeconds": 1800,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]]
+      }
+    },
+    { "do": "control", "action": "reconnect", "calendar": "source" },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+2d@10:00Z", "week+2d@11:00Z"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

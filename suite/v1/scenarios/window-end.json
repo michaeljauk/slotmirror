@@ -1,0 +1,43 @@
+{
+  "id": "window-end",
+  "title": "An event behind the end of the sync window stays out until the window reaches it",
+  "covers": "window boundary",
+  "expectedText": "With a 14-day window the event on day 13 is busy and the event on day 20 is free. After eight days the window reaches day 20 and both are busy.",
+  "requires": ["clock"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "rule": { "daysAhead": 14 },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "inside",
+      "event": { "start": "today+13d@10:00Z", "end": "today+13d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "outside",
+      "event": { "start": "today+20d@10:00Z", "end": "today+20d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["today+1d@00:00Z", "today+30d@00:00Z"],
+        "busy": [["today+13d@10:00Z", "today+13d@11:00Z"]]
+      }
+    },
+    { "do": "advance", "to": "today+8d@00:10Z" },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["today+9d@00:00Z", "today+30d@00:00Z"],
+        "busy": [
+          ["today+13d@10:00Z", "today+13d@11:00Z"],
+          ["today+20d@10:00Z", "today+20d@11:00Z"]
+        ],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

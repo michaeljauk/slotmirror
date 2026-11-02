@@ -50,7 +50,9 @@ cancelled, its block is removed.
 
 ## How fast does a change arrive?
 
-With `PUBLIC_URL` set, usually within seconds. See [Push notifications](../push-notifications/).
+With `PUBLIC_URL` set, when Microsoft or Google notify the Worker. Without it, at the next run,
+after up to 10 minutes. We have not measured the delay yet. See
+[Push notifications](../push-notifications/).
 
 ## Can I add more than one calendar of an account?
 
@@ -67,8 +69,23 @@ Not yet. Microsoft 365 and Google Calendar are supported.
 
 ## Why is there a "not verified" warning from Google?
 
-Your OAuth client is your own, and Google has not verified it. For your own deployment, you can
-continue past the warning. See [Google OAuth client](../google-setup/).
+Your OAuth client is your own, and Google has not verified it. To continue, choose **Advanced**,
+then **Go to … (unsafe)**. slotmirror shows this before the redirect. If the app is in **Testing**
+mode, Google also expires its refresh tokens after 7 days. See
+[Google OAuth client](../google-setup/).
+
+## Who is the operator, and what does the role include?
+
+The operator is the person or company that deploys slotmirror. There is no slotmirror service in
+between. The operator owns the Cloudflare account, so the tokens, the rules and the activity log
+are in the operator's account. The operator sets `PRIVACY_CONTACT`, the contact on the `/privacy`
+page. See [Privacy and data location](../privacy/).
+
+## Why does Microsoft ask for consent, and what if my tenant blocks it?
+
+The Microsoft app asks to read and write your calendars. Users can consent themselves, unless
+the tenant blocks user consent. Then a tenant admin must grant consent once. See
+[Microsoft Entra app](../entra-setup/).
 
 ## Where are my tokens?
 

@@ -1,0 +1,30 @@
+{
+  // The test Worker of the capacity probe. See scripts/README.md, section Prerequisites.
+  // Copy this file to wrangler.probe.jsonc (git ignores the copy) and replace both placeholders.
+  // The fixed name and the account ID keep a deploy away from a production Worker.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "slotmirror-capacity-probe",
+  // Required. The ID of the separate Cloudflare account. Wrangler rejects the placeholder.
+  "account_id": "<ID of the separate test account>",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-10-25",
+  // If the fetch target lies on the same zone, add: "compatibility_flags": ["global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "assets": { "directory": "./public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slotmirror-capacity-probe",
+      "database_id": "<ID of the new D1 database>",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNT_SYNC", "class_name": "AccountSync" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountSync"] }],
+  // Empty on purpose. A cron would add sync work to every stage; a missing key keeps the old trigger.
+  "triggers": { "crons": [] },
+  "keep_vars": true,
+}

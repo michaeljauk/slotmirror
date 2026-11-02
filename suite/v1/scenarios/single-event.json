@@ -1,0 +1,23 @@
+{
+  "id": "single-event",
+  "title": "A single timed event blocks the same time in the target",
+  "covers": "single event",
+  "expectedText": "Target is busy on Tuesday 10:00 to 11:00 UTC and free in the rest of the week.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

@@ -34,6 +34,87 @@ document.addEventListener("change", (event) => {
   if (end) end.disabled = event.target.checked;
 });
 
+// A comma list as single entries: the visible field takes one name, the original field keeps the
+// list that the server reads. Without the script the original field stays as it is.
+for (const field of document.querySelectorAll("input[data-tokens]")) {
+  const box = document.createElement("div");
+  box.className = "tokens";
+  const entry = document.createElement("input");
+  entry.type = "text";
+  entry.placeholder = field.dataset.add;
+  entry.setAttribute("aria-label", field.dataset.add);
+  entry.maxLength = 100;
+  box.append(entry);
+  field.after(box);
+  const saved = field.value;
+  field.type = "hidden";
+  const names = () =>
+    field.value
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+  const render = () => {
+    for (const token of box.querySelectorAll(".token")) token.remove();
+    for (const name of names()) {
+      const token = document.createElement("span");
+      token.className = "token";
+      token.textContent = name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", field.dataset.remove.replace("{name}", name));
+      remove.addEventListener("click", (event) => {
+        // The click sits inside a label, which would move the focus to the entry only by accident.
+        event.preventDefault();
+        change(names().filter((other) => other !== name));
+        entry.focus();
+      });
+      token.append(remove);
+      box.insertBefore(token, entry);
+    }
+  };
+  const change = (list) => {
+    field.value = list.join(", ");
+    render();
+    // The hidden field fires nothing by itself; the page counts this as a change.
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  /** Add what the entry holds. Matching ignores case, so one spelling per name is enough. */
+  const commit = () => {
+    const list = names();
+    const known = new Set(list.map((name) => name.toLowerCase()));
+    for (const raw of entry.value.split(",")) {
+      const name = raw.trim();
+      if (!name || known.has(name.toLowerCase())) continue;
+      known.add(name.toLowerCase());
+      list.push(name);
+    }
+    entry.value = "";
+    if (list.length !== names().length) change(list);
+  };
+  entry.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === ",") {
+      if (event.key === "," || entry.value.trim()) event.preventDefault();
+      commit();
+    } else if (event.key === "Backspace" && entry.value === "") {
+      change(names().slice(0, -1));
+    }
+  });
+  entry.addEventListener("blur", commit);
+  // A pasted list becomes entries at once.
+  entry.addEventListener("input", () => {
+    if (entry.value.includes(",")) commit();
+  });
+  // Discard resets the form, but a hidden field keeps its last value. The saved list comes back
+  // here, before the page counts its changes. Otherwise a discarded list would go out with the
+  // next save.
+  field.form?.addEventListener("reset", () => {
+    field.value = saved;
+    render();
+  });
+  render();
+}
+
 (() => {
   document.documentElement.classList.add("js");
   const bar = document.getElementById("page-bar");
@@ -131,13 +212,17 @@ document.addEventListener("change", (event) => {
   /** A form value as trimmed text; a missing field is empty. */
   const asText = (value) => (typeof value === "string" ? value.trim() : "");
 
-  // The details of a direction, its colour and its working-hours checkbox, count as one change
-  // while they differ from the saved ones. Their fields sit in the row and name the form.
+  // The details of a direction, its colour, working-hours checkbox and opt-in list, count as one
+  // change while they differ from the saved ones. Their fields sit in the row and name the form.
   const detailsOf = (form) => {
     const data = new FormData(form);
+    const names = [asText(data.get("onlyCategories")), ...data.getAll("onlyColor").map(asText)];
     return {
       blockColor: asText(data.get("blockColor")),
       workHours: data.has("workHoursShown") ? (data.has("workHours") ? "1" : "0") : null,
+      onlyCategories: data.has("onlyCategoriesShown")
+        ? names.join(",").split(",").map(asText).filter(Boolean).join(",")
+        : null,
     };
   };
   const savedDetails = new Map();
@@ -172,7 +257,11 @@ document.addEventListener("change", (event) => {
       }
       const value = detailsOf(form);
       const saved = savedDetails.get(key);
-      if (value.blockColor === saved.blockColor && value.workHours === saved.workHours) {
+      if (
+        value.blockColor === saved.blockColor &&
+        value.workHours === saved.workHours &&
+        value.onlyCategories === saved.onlyCategories
+      ) {
         pending.delete(key);
       } else pending.set(key, value);
       row.classList.toggle("pending", pending.has(key));
@@ -296,6 +385,9 @@ document.addEventListener("change", (event) => {
         }
         if (choice.workHours !== saved.workHours && choice.workHours !== null) {
           body.append(`workHours.${from}.${to}`, choice.workHours);
+        }
+        if (choice.onlyCategories !== saved.onlyCategories && choice.onlyCategories !== null) {
+          body.append(`onlyCategories.${from}.${to}`, choice.onlyCategories);
         }
         continue;
       }

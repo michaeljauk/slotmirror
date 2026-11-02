@@ -1,0 +1,3713 @@
+{
+  "suiteVersion": "v1",
+  "frozenAt": "2026-10-30",
+  "commit": "9ab70fdedcc75ed4af49d46b4d358ff398faab35",
+  "dirty": false,
+  "listHash": "39b951646c8272537db75969057db9253c4be2918c4b391225157b3dff254da9",
+  "runAt": "2026-10-30T23:38:29.079Z",
+  "driver": {
+    "name": "local",
+    "mode": "simulated-clock",
+    "modeSource": "driver",
+    "allowForeign": 0
+  },
+  "scope": "all",
+  "summary": {
+    "pass": 31,
+    "fail": 1,
+    "not_run": 0
+  },
+  "scenarios": [
+    {
+      "id": "single-event",
+      "title": "A single timed event blocks the same time in the target",
+      "covers": "single event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Target is busy on Tuesday 10:00 to 11:00 UTC and free in the rest of the week.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 141,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 77,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 64,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "event-moved",
+      "title": "A moved event frees the old time and blocks the new time",
+      "covers": "moved event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "After the move the target is busy on Wednesday 14:00 to 15:30 UTC only; Tuesday is free.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T14:00:00.000Z",
+            "end": "2031-02-12T15:30:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T14:00:00.000Z",
+            "end": "2031-02-12T15:30:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 201,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 105,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T14:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T14:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 96,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T14:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T14:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "event-deleted",
+      "title": "A deleted event frees its time and leaves other events alone",
+      "covers": "deleted event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "After the delete the target is free on Tuesday and busy on Thursday 09:00 to 09:30 UTC.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-13T09:00:00.000Z",
+            "end": "2031-02-13T09:30:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-13T09:00:00.000Z",
+            "end": "2031-02-13T09:30:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 199,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 93,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 106,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "series-exception",
+      "title": "A moved occurrence of a daily series blocks its new time, the others stay",
+      "covers": "series with an exception",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Monday, Tuesday, Thursday and Friday are busy 09:00 to 09:30 UTC. Wednesday is busy 15:00 to 15:30 UTC and free at 09:00.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-10T09:00:00.000Z",
+            "end": "2031-02-10T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-11T09:00:00.000Z",
+            "end": "2031-02-11T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-12T15:00:00.000Z",
+            "end": "2031-02-12T15:30:00.000Z"
+          },
+          {
+            "start": "2031-02-13T09:00:00.000Z",
+            "end": "2031-02-13T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-14T09:00:00.000Z",
+            "end": "2031-02-14T09:30:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-10T09:00:00.000Z",
+            "end": "2031-02-10T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-11T09:00:00.000Z",
+            "end": "2031-02-11T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-12T15:00:00.000Z",
+            "end": "2031-02-12T15:30:00.000Z"
+          },
+          {
+            "start": "2031-02-13T09:00:00.000Z",
+            "end": "2031-02-13T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-14T09:00:00.000Z",
+            "end": "2031-02-14T09:30:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 158,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 79,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 79,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-13T09:00:00.000Z",
+                "end": "2031-02-13T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "series-occurrence-deleted",
+      "title": "A deleted occurrence of a daily series frees that day only",
+      "covers": "deleted occurrence of a series",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Monday, Tuesday, Wednesday and Friday are busy 09:00 to 09:30 UTC. Thursday is free.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-10T09:00:00.000Z",
+            "end": "2031-02-10T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-11T09:00:00.000Z",
+            "end": "2031-02-11T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-12T09:00:00.000Z",
+            "end": "2031-02-12T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-14T09:00:00.000Z",
+            "end": "2031-02-14T09:30:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-10T09:00:00.000Z",
+            "end": "2031-02-10T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-11T09:00:00.000Z",
+            "end": "2031-02-11T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-12T09:00:00.000Z",
+            "end": "2031-02-12T09:30:00.000Z"
+          },
+          {
+            "start": "2031-02-14T09:00:00.000Z",
+            "end": "2031-02-14T09:30:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 193,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 86,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:00:00.000Z",
+                "end": "2031-02-12T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:00:00.000Z",
+                "end": "2031-02-12T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 107,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:00:00.000Z",
+                "end": "2031-02-12T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-10T09:00:00.000Z",
+                "end": "2031-02-10T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-11T09:00:00.000Z",
+                "end": "2031-02-11T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:00:00.000Z",
+                "end": "2031-02-12T09:30:00.000Z"
+              },
+              {
+                "start": "2031-02-14T09:00:00.000Z",
+                "end": "2031-02-14T09:30:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "all-day",
+      "title": "An all-day event blocks its date in the time zone of the target",
+      "covers": "all-day event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The Wednesday of the event is busy from midnight to midnight in the target zone, and the days next to it are free.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T15:00:00.000Z",
+            "end": "2031-02-12T15:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T15:00:00.000Z",
+            "end": "2031-02-12T15:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 109,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 54,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T15:00:00.000Z",
+                "end": "2031-02-12T15:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T15:00:00.000Z",
+                "end": "2031-02-12T15:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 55,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T15:00:00.000Z",
+                "end": "2031-02-12T15:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T15:00:00.000Z",
+                "end": "2031-02-12T15:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "multi-day",
+      "title": "Timed and all-day events over several days block every day they touch",
+      "covers": "multi-day event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Busy from Friday 14:00 UTC to Monday 09:00 UTC without a gap, and Tuesday to Thursday of the next week as full days.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-24T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-14T14:00:00.000Z",
+            "end": "2031-02-17T09:00:00.000Z"
+          },
+          {
+            "start": "2031-02-17T23:00:00.000Z",
+            "end": "2031-02-20T23:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-24T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-14T14:00:00.000Z",
+            "end": "2031-02-17T09:00:00.000Z"
+          },
+          {
+            "start": "2031-02-17T23:00:00.000Z",
+            "end": "2031-02-20T23:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 121,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 52,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-24T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-14T14:00:00.000Z",
+                "end": "2031-02-17T09:00:00.000Z"
+              },
+              {
+                "start": "2031-02-17T23:00:00.000Z",
+                "end": "2031-02-20T23:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-24T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-14T14:00:00.000Z",
+                "end": "2031-02-17T09:00:00.000Z"
+              },
+              {
+                "start": "2031-02-17T23:00:00.000Z",
+                "end": "2031-02-20T23:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 69,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-24T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-14T14:00:00.000Z",
+                "end": "2031-02-17T09:00:00.000Z"
+              },
+              {
+                "start": "2031-02-17T23:00:00.000Z",
+                "end": "2031-02-20T23:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-24T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-14T14:00:00.000Z",
+                "end": "2031-02-17T09:00:00.000Z"
+              },
+              {
+                "start": "2031-02-17T23:00:00.000Z",
+                "end": "2031-02-20T23:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "dst-spring",
+      "title": "Daylight saving start: a series keeps its wall-clock time, a night event loses an hour",
+      "covers": "daylight saving change",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "09:00 Vienna is 08:00 UTC before the change and 07:00 UTC after it. The night event from 00:30 to 04:00 Vienna runs from 23:30 UTC to 02:00 UTC.",
+      "local_limit": "The simulation expands the series and applies the zone rules itself. Only a live run says something about a real calendar.",
+      "expected": {
+        "window": {
+          "start": "2031-03-23T00:00:00.000Z",
+          "end": "2031-04-06T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-03-25T08:00:00.000Z",
+            "end": "2031-03-25T09:00:00.000Z"
+          },
+          {
+            "start": "2031-03-29T23:30:00.000Z",
+            "end": "2031-03-30T02:00:00.000Z"
+          },
+          {
+            "start": "2031-04-01T07:00:00.000Z",
+            "end": "2031-04-01T08:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-03-23T00:00:00.000Z",
+          "end": "2031-04-06T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-03-25T08:00:00.000Z",
+            "end": "2031-03-25T09:00:00.000Z"
+          },
+          {
+            "start": "2031-03-29T23:30:00.000Z",
+            "end": "2031-03-30T02:00:00.000Z"
+          },
+          {
+            "start": "2031-04-01T07:00:00.000Z",
+            "end": "2031-04-01T08:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 171,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 108,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-03-23T00:00:00.000Z",
+              "end": "2031-04-06T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-03-25T08:00:00.000Z",
+                "end": "2031-03-25T09:00:00.000Z"
+              },
+              {
+                "start": "2031-03-29T23:30:00.000Z",
+                "end": "2031-03-30T02:00:00.000Z"
+              },
+              {
+                "start": "2031-04-01T07:00:00.000Z",
+                "end": "2031-04-01T08:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-03-23T00:00:00.000Z",
+              "end": "2031-04-06T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-03-25T08:00:00.000Z",
+                "end": "2031-03-25T09:00:00.000Z"
+              },
+              {
+                "start": "2031-03-29T23:30:00.000Z",
+                "end": "2031-03-30T02:00:00.000Z"
+              },
+              {
+                "start": "2031-04-01T07:00:00.000Z",
+                "end": "2031-04-01T08:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 63,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-03-23T00:00:00.000Z",
+              "end": "2031-04-06T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-03-25T08:00:00.000Z",
+                "end": "2031-03-25T09:00:00.000Z"
+              },
+              {
+                "start": "2031-03-29T23:30:00.000Z",
+                "end": "2031-03-30T02:00:00.000Z"
+              },
+              {
+                "start": "2031-04-01T07:00:00.000Z",
+                "end": "2031-04-01T08:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-03-23T00:00:00.000Z",
+              "end": "2031-04-06T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-03-25T08:00:00.000Z",
+                "end": "2031-03-25T09:00:00.000Z"
+              },
+              {
+                "start": "2031-03-29T23:30:00.000Z",
+                "end": "2031-03-30T02:00:00.000Z"
+              },
+              {
+                "start": "2031-04-01T07:00:00.000Z",
+                "end": "2031-04-01T08:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "dst-fall",
+      "title": "Daylight saving end: a series keeps its wall-clock time, a night event gains an hour",
+      "covers": "daylight saving change",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "09:00 Vienna is 07:00 UTC before the change and 08:00 UTC after it. The night event from 00:30 to 04:00 Vienna runs from 22:30 UTC to 03:00 UTC.",
+      "local_limit": "The simulation expands the series and applies the zone rules itself. Only a live run says something about a real calendar.",
+      "expected": {
+        "window": {
+          "start": "2031-10-19T00:00:00.000Z",
+          "end": "2031-11-02T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-10-21T07:00:00.000Z",
+            "end": "2031-10-21T08:00:00.000Z"
+          },
+          {
+            "start": "2031-10-25T22:30:00.000Z",
+            "end": "2031-10-26T03:00:00.000Z"
+          },
+          {
+            "start": "2031-10-28T08:00:00.000Z",
+            "end": "2031-10-28T09:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-10-19T00:00:00.000Z",
+          "end": "2031-11-02T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-10-21T07:00:00.000Z",
+            "end": "2031-10-21T08:00:00.000Z"
+          },
+          {
+            "start": "2031-10-25T22:30:00.000Z",
+            "end": "2031-10-26T03:00:00.000Z"
+          },
+          {
+            "start": "2031-10-28T08:00:00.000Z",
+            "end": "2031-10-28T09:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 124,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 61,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-10-19T00:00:00.000Z",
+              "end": "2031-11-02T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-10-21T07:00:00.000Z",
+                "end": "2031-10-21T08:00:00.000Z"
+              },
+              {
+                "start": "2031-10-25T22:30:00.000Z",
+                "end": "2031-10-26T03:00:00.000Z"
+              },
+              {
+                "start": "2031-10-28T08:00:00.000Z",
+                "end": "2031-10-28T09:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-10-19T00:00:00.000Z",
+              "end": "2031-11-02T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-10-21T07:00:00.000Z",
+                "end": "2031-10-21T08:00:00.000Z"
+              },
+              {
+                "start": "2031-10-25T22:30:00.000Z",
+                "end": "2031-10-26T03:00:00.000Z"
+              },
+              {
+                "start": "2031-10-28T08:00:00.000Z",
+                "end": "2031-10-28T09:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 63,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-10-19T00:00:00.000Z",
+              "end": "2031-11-02T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-10-21T07:00:00.000Z",
+                "end": "2031-10-21T08:00:00.000Z"
+              },
+              {
+                "start": "2031-10-25T22:30:00.000Z",
+                "end": "2031-10-26T03:00:00.000Z"
+              },
+              {
+                "start": "2031-10-28T08:00:00.000Z",
+                "end": "2031-10-28T09:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-10-19T00:00:00.000Z",
+              "end": "2031-11-02T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-10-21T07:00:00.000Z",
+                "end": "2031-10-21T08:00:00.000Z"
+              },
+              {
+                "start": "2031-10-25T22:30:00.000Z",
+                "end": "2031-10-26T03:00:00.000Z"
+              },
+              {
+                "start": "2031-10-28T08:00:00.000Z",
+                "end": "2031-10-28T09:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "midnight-other-zone",
+      "title": "Events around midnight in the source zone keep their instants in a distant target zone",
+      "covers": "midnight in another time zone",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "23:30 to 00:30 Tokyo is 14:30 to 15:30 UTC, and 00:00 to 01:00 Tokyo on Thursday is 15:00 to 16:00 UTC on Wednesday. Nothing else is busy.",
+      "local_limit": "The simulation resolves the zones of the events itself. Only a live run says something about a real calendar.",
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T14:30:00.000Z",
+            "end": "2031-02-11T15:30:00.000Z"
+          },
+          {
+            "start": "2031-02-12T15:00:00.000Z",
+            "end": "2031-02-12T16:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T14:30:00.000Z",
+            "end": "2031-02-11T15:30:00.000Z"
+          },
+          {
+            "start": "2031-02-12T15:00:00.000Z",
+            "end": "2031-02-12T16:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 107,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 53,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T14:30:00.000Z",
+                "end": "2031-02-11T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T16:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T14:30:00.000Z",
+                "end": "2031-02-11T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T16:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 54,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T14:30:00.000Z",
+                "end": "2031-02-11T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T16:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T14:30:00.000Z",
+                "end": "2031-02-11T15:30:00.000Z"
+              },
+              {
+                "start": "2031-02-12T15:00:00.000Z",
+                "end": "2031-02-12T16:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "free-transparent",
+      "title": "An event that does not block time leaves the target free",
+      "covers": "free or transparent event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The free event never blocks the target. A busy event that turns free stops blocking it. The tentative event blocks.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-13T10:00:00.000Z",
+            "end": "2031-02-13T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-13T10:00:00.000Z",
+            "end": "2031-02-13T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 193,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 85,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 108,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "cancelled",
+      "title": "Cancelled and declined events do not block time",
+      "covers": "cancelled event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "An event that the organizer cancels stops blocking, an event that the owner declined never blocks, and the witness event on Thursday stays busy.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-13T10:00:00.000Z",
+            "end": "2031-02-13T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-13T10:00:00.000Z",
+            "end": "2031-02-13T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 218,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 109,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 109,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "private-event",
+      "title": "A private event blocks its time and shows no content",
+      "covers": "private event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The target is busy on Tuesday 10:00 to 11:00 UTC, and no field of the block holds the title or the location.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 215,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 107,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 108,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "private-event-full-detail",
+      "title": "A rule that copies all details still shows nothing of a private event",
+      "covers": "private event",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The rule copies title, location and description. The block of the private Tuesday event holds none of them, and the block of the public Wednesday event holds its title.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 187,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 67,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 120,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "working-hours",
+      "title": "A working hours filter mirrors events that overlap the hours, at their full length",
+      "covers": "working hours filter",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Hours are Monday to Friday 09:00 to 17:00 Tokyo, which is 00:00 to 08:00 UTC. Busy: 01:00 to 02:00 and the full overlapping event 07:30 to 09:00. Free: the event from 09:00 UTC, the event that ends exactly at 09:00 Tokyo, and the Saturday event.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T01:00:00.000Z",
+            "end": "2031-02-11T02:00:00.000Z"
+          },
+          {
+            "start": "2031-02-11T07:30:00.000Z",
+            "end": "2031-02-11T09:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T01:00:00.000Z",
+            "end": "2031-02-11T02:00:00.000Z"
+          },
+          {
+            "start": "2031-02-11T07:30:00.000Z",
+            "end": "2031-02-11T09:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 135,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 77,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T01:00:00.000Z",
+                "end": "2031-02-11T02:00:00.000Z"
+              },
+              {
+                "start": "2031-02-11T07:30:00.000Z",
+                "end": "2031-02-11T09:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T01:00:00.000Z",
+                "end": "2031-02-11T02:00:00.000Z"
+              },
+              {
+                "start": "2031-02-11T07:30:00.000Z",
+                "end": "2031-02-11T09:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 58,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T01:00:00.000Z",
+                "end": "2031-02-11T02:00:00.000Z"
+              },
+              {
+                "start": "2031-02-11T07:30:00.000Z",
+                "end": "2031-02-11T09:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T01:00:00.000Z",
+                "end": "2031-02-11T02:00:00.000Z"
+              },
+              {
+                "start": "2031-02-11T07:30:00.000Z",
+                "end": "2031-02-11T09:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "working-hours-other-date",
+      "title": "A working hours filter reads the date of its own zone, not the date in UTC",
+      "covers": "working hours filter",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Hours are Monday to Friday 09:00 to 17:00 Tokyo. The event from Friday 23:30 UTC is Saturday morning in Tokyo, and the event from Saturday 23:30 UTC is Sunday morning there: both are free. The event from Sunday 23:30 UTC is Monday 08:30 to 09:30 in Tokyo, so it is busy at its full length.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-18T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-16T23:30:00.000Z",
+            "end": "2031-02-17T00:30:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-18T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-16T23:30:00.000Z",
+            "end": "2031-02-17T00:30:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 208,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 90,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-18T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T23:30:00.000Z",
+                "end": "2031-02-17T00:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-18T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T23:30:00.000Z",
+                "end": "2031-02-17T00:30:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 118,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-18T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T23:30:00.000Z",
+                "end": "2031-02-17T00:30:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-18T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T23:30:00.000Z",
+                "end": "2031-02-17T00:30:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "buffer",
+      "title": "A buffer widens timed blocks on both sides and leaves all-day blocks alone",
+      "covers": "buffer",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Buffers are 15 minutes before and 10 minutes after. Tuesday is busy 09:45 to 11:10. Two close events on Wednesday give one busy time from 09:45 to 12:10. Thursday stays one full day.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T09:45:00.000Z",
+            "end": "2031-02-11T11:10:00.000Z"
+          },
+          {
+            "start": "2031-02-12T09:45:00.000Z",
+            "end": "2031-02-12T12:10:00.000Z"
+          },
+          {
+            "start": "2031-02-13T00:00:00.000Z",
+            "end": "2031-02-14T00:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T09:45:00.000Z",
+            "end": "2031-02-11T11:10:00.000Z"
+          },
+          {
+            "start": "2031-02-12T09:45:00.000Z",
+            "end": "2031-02-12T12:10:00.000Z"
+          },
+          {
+            "start": "2031-02-13T00:00:00.000Z",
+            "end": "2031-02-14T00:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 212,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 116,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T09:45:00.000Z",
+                "end": "2031-02-11T11:10:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:45:00.000Z",
+                "end": "2031-02-12T12:10:00.000Z"
+              },
+              {
+                "start": "2031-02-13T00:00:00.000Z",
+                "end": "2031-02-14T00:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T09:45:00.000Z",
+                "end": "2031-02-11T11:10:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:45:00.000Z",
+                "end": "2031-02-12T12:10:00.000Z"
+              },
+              {
+                "start": "2031-02-13T00:00:00.000Z",
+                "end": "2031-02-14T00:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 96,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T09:45:00.000Z",
+                "end": "2031-02-11T11:10:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:45:00.000Z",
+                "end": "2031-02-12T12:10:00.000Z"
+              },
+              {
+                "start": "2031-02-13T00:00:00.000Z",
+                "end": "2031-02-14T00:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T09:45:00.000Z",
+                "end": "2031-02-11T11:10:00.000Z"
+              },
+              {
+                "start": "2031-02-12T09:45:00.000Z",
+                "end": "2031-02-12T12:10:00.000Z"
+              },
+              {
+                "start": "2031-02-13T00:00:00.000Z",
+                "end": "2031-02-14T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "loop-both-directions",
+      "title": "With rules in both directions a block never comes back as a new block",
+      "covers": "loop protection in both directions",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "Each calendar shows its own event and one block of the other event, after a settle time of 4300 s too. After the delete, both calendars are free on Tuesday and busy on Wednesday.",
+      "local_limit": "The simulation flags every block as a mirror itself. How the tool recognises its blocks in a real calendar stays unchecked.",
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 287,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 162,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 125,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "window-end",
+      "title": "An event behind the end of the sync window stays out until the window reaches it",
+      "covers": "window boundary",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "With a 14-day window the event on day 13 is busy and the event on day 20 is free. After eight days the window reaches day 20 and both are busy.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-12T00:00:00.000Z",
+          "end": "2031-03-05T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-16T10:00:00.000Z",
+            "end": "2031-02-16T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-23T10:00:00.000Z",
+            "end": "2031-02-23T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-12T00:00:00.000Z",
+          "end": "2031-03-05T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-16T10:00:00.000Z",
+            "end": "2031-02-16T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-23T10:00:00.000Z",
+            "end": "2031-02-23T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 169,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 82,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-12T00:00:00.000Z",
+              "end": "2031-03-05T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T10:00:00.000Z",
+                "end": "2031-02-16T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-23T10:00:00.000Z",
+                "end": "2031-02-23T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-12T00:00:00.000Z",
+              "end": "2031-03-05T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T10:00:00.000Z",
+                "end": "2031-02-16T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-23T10:00:00.000Z",
+                "end": "2031-02-23T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 87,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-12T00:00:00.000Z",
+              "end": "2031-03-05T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T10:00:00.000Z",
+                "end": "2031-02-16T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-23T10:00:00.000Z",
+                "end": "2031-02-23T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-12T00:00:00.000Z",
+              "end": "2031-03-05T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-16T10:00:00.000Z",
+                "end": "2031-02-16T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-23T10:00:00.000Z",
+                "end": "2031-02-23T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "window-start-edge",
+      "title": "A block that ends exactly at the start of the window goes when its event goes",
+      "covers": "window boundary",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "An event ends at 00:00 UTC. Five minutes later, midnight has moved the window start to that end. While the event exists the target stays busy, and after the delete it is free.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-04T00:00:00.000Z",
+          "end": "2031-02-06T00:00:00.000Z"
+        },
+        "busy": [],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-04T00:00:00.000Z",
+          "end": "2031-02-06T00:00:00.000Z"
+        },
+        "busy": []
+      },
+      "text": "As expected.",
+      "durationMs": 189,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 96,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": []
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 93,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "window-edge-all-day",
+      "title": "West of UTC an all-day event stays blocked after midnight UTC until its own day ends",
+      "covers": "window boundary",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "It is still the day of the event in Los Angeles at 03:05 UTC the next day, so the block stays. After the delete that day is free.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-02T00:00:00.000Z",
+          "end": "2031-02-06T00:00:00.000Z"
+        },
+        "busy": [],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-02T00:00:00.000Z",
+          "end": "2031-02-06T00:00:00.000Z"
+        },
+        "busy": []
+      },
+      "text": "As expected.",
+      "durationMs": 177,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 85,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-02T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-02T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": []
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 92,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-02T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-02T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "window-past-block-delete",
+      "title": "A block from before the window goes when its event goes after midnight",
+      "covers": "window boundary",
+      "status": "fail",
+      "stopped": false,
+      "expectedText": "An event ends at 23:30 UTC. Five minutes after midnight, the window starts behind that end, and then the event is deleted. The target is free.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-04T00:00:00.000Z",
+          "end": "2031-02-06T00:00:00.000Z"
+        },
+        "busy": [],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-04T00:00:00.000Z",
+          "end": "2031-02-06T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-04T22:30:00.000Z",
+            "end": "2031-02-04T23:30:00.000Z"
+          }
+        ]
+      },
+      "text": "busy but must be free: 2031-02-04T22:30:00.000Z to 2031-02-04T23:30:00.000Z",
+      "durationMs": 258,
+      "failedStep": 6,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "fail",
+          "stopped": false,
+          "text": "busy but must be free: 2031-02-04T22:30:00.000Z to 2031-02-04T23:30:00.000Z",
+          "durationMs": 152,
+          "failedStep": 6,
+          "expected": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-04T22:30:00.000Z",
+                "end": "2031-02-04T23:30:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "fail",
+          "stopped": false,
+          "text": "busy but must be free: 2031-02-04T22:30:00.000Z to 2031-02-04T23:30:00.000Z",
+          "durationMs": 106,
+          "failedStep": 6,
+          "expected": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-04T00:00:00.000Z",
+              "end": "2031-02-06T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-04T22:30:00.000Z",
+                "end": "2031-02-04T23:30:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "throttled-read",
+      "title": "A throttled source read waits for Retry-After, then the block appears",
+      "covers": "throttling with Retry-After",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The source answers a read with 429 and Retry-After 120. For the next 110 seconds the tool makes no call to the source and the target stays free. Within two minutes after that the target is busy.",
+      "local_limit": "Both directions raise the read error of one calendar system. The error path of the other system stays unchecked.",
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 165,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 82,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 83,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "throttled-write",
+      "title": "A throttled target write waits for Retry-After, then the block appears once",
+      "covers": "throttling with Retry-After",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The target answers a write with 429 and Retry-After 180. For the next 170 seconds the tool makes no call to the target. Within two minutes after that the target is busy, with one block.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 168,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 94,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 74,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "partial-batch-failure",
+      "title": "One failed write in a batch comes back with the next cycle, without duplicates",
+      "covers": "partial failure in a batch",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The target refuses one write of a batch of three. Within 70 minutes all three times are busy, each with one block.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-13T10:00:00.000Z",
+            "end": "2031-02-13T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          },
+          {
+            "start": "2031-02-13T10:00:00.000Z",
+            "end": "2031-02-13T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 201,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 98,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 103,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              },
+              {
+                "start": "2031-02-13T10:00:00.000Z",
+                "end": "2031-02-13T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "account-paused",
+      "title": "A paused source keeps its blocks, and a reconnect catches up on what changed",
+      "covers": "paused account",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "The source token is refused. While paused, the Tuesday block stays and the new Wednesday event does not arrive, even after the Tuesday event is deleted. After the reconnect only Wednesday is busy.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 246,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 133,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 113,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "disconnect-source",
+      "title": "Disconnecting the source account frees the target",
+      "covers": "disconnect",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "After the source account is disconnected, the target is free in the whole week.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": []
+      },
+      "text": "As expected.",
+      "durationMs": 141,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 69,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": []
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 72,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "disconnect-target",
+      "title": "Disconnecting the target account removes its blocks and keeps its own events",
+      "covers": "disconnect",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "After the target account is disconnected, its own Wednesday event remains and the block on Tuesday is gone.",
+      "local_limit": "The simulated calendar goes with the account. From then on the check reads a snapshot from before the last alarm. That alarm only forgets the account, and a delete in it would stay unseen.",
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ],
+        "checks": "times"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-12T10:00:00.000Z",
+            "end": "2031-02-12T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 204,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 116,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 88,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ],
+            "checks": "times"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-12T10:00:00.000Z",
+                "end": "2031-02-12T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "privacy-title",
+      "title": "The title of an event never reaches the target at the default detail level",
+      "covers": "data that must not reach the target",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "A block exists, and none of its fields holds the title of the event. This scenario checks data only, not times.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": null,
+        "checks": "data"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 108,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 56,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 52,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "privacy-location",
+      "title": "The location of an event never reaches the target at the default detail level",
+      "covers": "data that must not reach the target",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "A block exists, and none of its fields holds the location of the event. This scenario checks data only, not times.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": null,
+        "checks": "data"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 104,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 51,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 53,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "privacy-description",
+      "title": "The description of an event never reaches the target at the default detail level",
+      "covers": "data that must not reach the target",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "A block exists, and none of its fields holds the description of the event. This scenario checks data only, not times.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": null,
+        "checks": "data"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 101,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 52,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 49,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "privacy-attendee",
+      "title": "The attendee of an event never reaches the target at the default detail level",
+      "covers": "data that must not reach the target",
+      "status": "pass",
+      "stopped": false,
+      "expectedText": "A block exists, and none of its fields holds the attendee of the event. This scenario checks data only, not times.",
+      "local_limit": null,
+      "expected": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": null,
+        "checks": "data"
+      },
+      "observed": {
+        "window": {
+          "start": "2031-02-10T00:00:00.000Z",
+          "end": "2031-02-17T00:00:00.000Z"
+        },
+        "busy": [
+          {
+            "start": "2031-02-11T10:00:00.000Z",
+            "end": "2031-02-11T11:00:00.000Z"
+          }
+        ]
+      },
+      "text": "As expected.",
+      "durationMs": 133,
+      "failedStep": null,
+      "directions": [
+        {
+          "direction": "forward",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 50,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        },
+        {
+          "direction": "reverse",
+          "status": "pass",
+          "stopped": false,
+          "text": "As expected.",
+          "durationMs": 83,
+          "failedStep": null,
+          "expected": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": null,
+            "checks": "data"
+          },
+          "observed": {
+            "window": {
+              "start": "2031-02-10T00:00:00.000Z",
+              "end": "2031-02-17T00:00:00.000Z"
+            },
+            "busy": [
+              {
+                "start": "2031-02-11T10:00:00.000Z",
+                "end": "2031-02-11T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "latency": {
+    "mode": "simulated-clock",
+    "samplesPerDirection": {
+      "forward": 20,
+      "reverse": 20
+    },
+    "timedOut": 0,
+    "incomplete": false,
+    "pollMs": null,
+    "p50Ms": null,
+    "p95Ms": null,
+    "selfTestMs": {
+      "p50": 5000,
+      "p95": 5000
+    }
+  }
+}

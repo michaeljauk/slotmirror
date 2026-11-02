@@ -16,6 +16,7 @@ import { ALL_WEEKDAYS, hasWorkingHours } from "../sync/working-hours";
 import type { CurrentUser } from "../users";
 import { ProviderIcon } from "./icons";
 import { Layout } from "./layout";
+import { OperatorNotice } from "./operator-notice";
 
 export type Notice = { kind: "info" | "error"; text: string };
 
@@ -76,7 +77,9 @@ function AccountName(props: { account: EditorAccount }) {
     <span class="account-name" style={colorStyle(props.account)}>
       <i class="mark" aria-hidden="true" />
       <ProviderIcon provider={props.account.provider} size={13} />
-      {props.account.name}
+      <span class="account-label" title={props.account.name}>
+        {props.account.name}
+      </span>
     </span>
   );
 }
@@ -126,30 +129,35 @@ export function ReconnectNotice(props: {
     email: string;
     needsReconnect: boolean;
   }[];
+  /** The operator's notice. It leads the banner, which is the page's first connect link. */
+  operatorNotice?: string;
 }) {
   const { t } = useI18n();
   const broken = props.accounts.filter((account) => account.needsReconnect);
   if (broken.length === 0) return null;
   return (
-    <div class="reconnect-notice" role="alert">
-      {broken.map((account) => (
-        <p>
-          <span>
-            <strong>
-              {t.editor.reconnectTitle(account.email, PROVIDER_LABEL[account.provider])}
-            </strong>{" "}
-            {t.editor.reconnectText}
-          </span>
-          <a
-            class="button small"
-            href={reconnectUrl(account)}
-            aria-label={t.editor.reconnect(account.email)}
-          >
-            {t.editor.reconnectShort}
-          </a>
-        </p>
-      ))}
-    </div>
+    <>
+      <OperatorNotice text={props.operatorNotice} />
+      <div class="reconnect-notice" role="alert">
+        {broken.map((account) => (
+          <p>
+            <span>
+              <strong>
+                {t.editor.reconnectTitle(account.email, PROVIDER_LABEL[account.provider])}
+              </strong>{" "}
+              {t.editor.reconnectText}
+            </span>
+            <a
+              class="button small"
+              href={reconnectUrl(account)}
+              aria-label={t.editor.reconnect(account.email)}
+            >
+              {t.editor.reconnectShort}
+            </a>
+          </p>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -163,8 +171,9 @@ function SettingsCard(props: { state: EditorState }) {
         <strong>{t.editor.settingsTitle}</strong>
         <span class="group-text">{t.editor.settingsLead}</span>
       </div>
-      {/* A save of other settings keeps each rule's window; see setSettings. */}
+      {/* A save of other settings keeps each rule's window and all-day value; see setSettings. */}
       <input type="hidden" name="daysAheadShown" value={String(settings.daysAhead)} />
+      <input type="hidden" name="skipAllDayShown" value={settings.skipAllDay ? "1" : "0"} />
       <div class="settings-row">
         <span class="settings-label">{t.editor.window}</span>
         <span class="choices">
@@ -192,31 +201,33 @@ function SettingsCard(props: { state: EditorState }) {
           placeholder={t.editor.defaultBlockTitle}
         />
       </label>
+      <Switch
+        name="markPrivate"
+        checked={settings.markPrivate}
+        title={t.editor.markPrivateTitle}
+        hint={t.editor.markPrivateHint}
+      />
+      <h3 class="settings-group">{t.editor.skipGroupTitle}</h3>
+      {/* The script turns the comma list into single entries; the field stays what is sent. */}
       <label class="settings-field">
         <span class="switch-title">{t.editor.skipCategoriesLabel}</span>
-        <span class="switch-hint">{t.editor.skipCategoriesHint}</span>
+        <span class="switch-hint">
+          {t.editor.skipCategoriesHint}{" "}
+          <span class="nojs-only">{t.editor.skipCategoriesCommas}</span>
+        </span>
         <input
           type="text"
           name="skipCategories"
           placeholder={t.editor.skipCategoriesPlaceholder}
           value={settings.skipCategories.filter((name) => !name.startsWith("color:")).join(", ")}
+          data-tokens
+          data-add={t.editor.skipCategoriesAdd}
+          data-remove={t.editor.skipCategoriesRemove("{name}")}
         />
       </label>
       <div class="settings-field">
         <span class="switch-title">{t.editor.skipColorsLabel}</span>
-        <span class="color-row">
-          {GOOGLE_COLORS.map((color) => (
-            <label class="color-choice" title={t.editor.googleColor(color.id)}>
-              <input
-                type="checkbox"
-                name="skipColor"
-                value={`color:${color.id}`}
-                checked={settings.skipCategories.includes(`color:${color.id}`)}
-              />
-              <span class="color-dot" style={`background:${color.hex}`} />
-            </label>
-          ))}
-        </span>
+        <ColorChoices name="skipColor" chosen={settings.skipCategories} />
       </div>
       <Switch
         name="skipAllDay"
@@ -230,16 +241,39 @@ function SettingsCard(props: { state: EditorState }) {
         title={t.editor.skipTentativeTitle}
         hint={t.editor.skipTentativeHint}
       />
-      <Switch
-        name="markPrivate"
-        checked={settings.markPrivate}
-        title={t.editor.markPrivateTitle}
-        hint={t.editor.markPrivateHint}
-      />
       <button type="submit" class="button small nojs-only">
         {t.editor.save}
       </button>
     </form>
+  );
+}
+
+/**
+ * Checkboxes for Google's event colours. `form` names the form of fields outside it. With `tick`,
+ * a chosen colour shows a tick because it stays in; otherwise it shows the cross of the skip filter.
+ */
+function ColorChoices(props: {
+  name: string;
+  chosen: readonly string[];
+  form?: string;
+  tick?: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <span class={props.tick ? "color-row pick" : "color-row"}>
+      {GOOGLE_COLORS.map((color) => (
+        <label class="color-choice" title={t.editor.googleColor(color.id)}>
+          <input
+            type="checkbox"
+            name={props.name}
+            form={props.form}
+            value={`color:${color.id}`}
+            checked={props.chosen.includes(`color:${color.id}`)}
+          />
+          <span class="color-dot" style={`background:${color.hex}`} />
+        </label>
+      ))}
+    </span>
   );
 }
 
@@ -300,7 +334,7 @@ export function workHoursText(t: Messages, hours: AccountWorkHours): string {
   return `${dayText} ${timeText}`;
 }
 
-/** The ID of the form that holds the colour and working hours of a direction. */
+/** The ID of the form that holds the colour, working hours and opt-in list of a direction. */
 function detailsFormId(source: EditorAccount, target: EditorAccount): string {
   return `details-${source.id}-${target.id}`;
 }
@@ -386,23 +420,80 @@ function WorkHoursToggle(props: {
   const on = direction.options !== null && hasWorkingHours(direction.options);
   // Rules can keep hours from before the account had any; the label then shows the rule's own.
   const hours = target.workHours ?? (on && direction.options ? direction.options : null);
+  // The account settings hold the hours; after a save they come back to this source's card.
+  const settingsHref = `/?settings=${encodeURIComponent(target.id)}&from=${encodeURIComponent(source.id)}#account-${target.id}`;
   if (!hours) {
     return (
-      <a
-        class="quiet-link"
-        href={`/?settings=${encodeURIComponent(target.id)}#account-${target.id}`}
-      >
+      <a class="quiet-link" href={settingsHref}>
         {t.editor.setWorkHours}
       </a>
     );
   }
   const form = detailsFormId(source, target);
   return (
-    <label class="hours-check" title={t.editor.onlyWorkHoursHint}>
-      <input type="hidden" name="workHoursShown" value="1" form={form} />
-      <input type="checkbox" name="workHours" value="1" form={form} checked={on} />
-      {t.editor.onlyWorkHours(target.name, workHoursText(t, hours))}
-    </label>
+    <>
+      <label class="hours-check" title={t.editor.onlyWorkHoursHint}>
+        <input type="hidden" name="workHoursShown" value="1" form={form} />
+        <input type="checkbox" name="workHours" value="1" form={form} checked={on} />
+        {t.editor.onlyWorkHours(target.name, workHoursText(t, hours))}
+      </label>
+      <a class="quiet-link" href={settingsHref}>
+        {t.editor.change}
+      </a>
+    </>
+  );
+}
+
+/**
+ * The opt-in list of a direction, closed while it is empty. It fits the source: an Outlook source
+ * has category names, a Google source has colours only. So a list cannot name what the source
+ * does not have, which would stop every event of the direction.
+ */
+function OnlyCategories(props: {
+  source: EditorAccount;
+  target: EditorAccount;
+  direction: EditorDirection;
+}) {
+  const { t } = useI18n();
+  const { source, target, direction } = props;
+  const names = direction.options?.onlyCategories ?? [];
+  const form = detailsFormId(source, target);
+  const google = source.provider === "google";
+  return (
+    <details class="only-edit" open={names.length > 0}>
+      <summary>
+        <span class="edit-link">
+          {google
+            ? t.editor.onlyColorsSummary(names.length)
+            : t.editor.onlyCategoriesSummary(names.length)}
+        </span>
+      </summary>
+      {/* The script turns the comma list into single entries; the field stays what is sent. */}
+      <input type="hidden" name="onlyCategoriesShown" value="1" form={form} />
+      {google ? (
+        <div class="only-field">
+          <span class="switch-hint">{t.editor.onlyColorsHint}</span>
+          <ColorChoices name="onlyColor" chosen={names} form={form} tick />
+        </div>
+      ) : (
+        <label class="only-field">
+          <span class="switch-hint">
+            {t.editor.onlyCategoriesHint}{" "}
+            <span class="nojs-only">{t.editor.skipCategoriesCommas}</span>
+          </span>
+          <input
+            type="text"
+            name="onlyCategories"
+            form={form}
+            placeholder={t.editor.onlyCategoriesPlaceholder}
+            value={names.join(", ")}
+            data-tokens
+            data-add={t.editor.skipCategoriesAdd}
+            data-remove={t.editor.skipCategoriesRemove("{name}")}
+          />
+        </label>
+      )}
+    </details>
   );
 }
 
@@ -426,7 +517,9 @@ function DestinationRow(props: {
         <span class="dest-to" aria-label={t.editor.to}>
           →
         </span>
-        <AccountName account={target} />
+        <span class="dest-account">
+          <AccountName account={target} />
+        </span>
         {fromGroup ? (
           <span class="dest-tag" title={t.editor.fromGroup}>
             {t.editor.cellGroup}
@@ -484,8 +577,13 @@ function DestinationRow(props: {
             >
               <input type="hidden" name="from" value={source.id} />
               <input type="hidden" name="to" value={target.id} />
-              <button type="submit" class="link-button">
-                {t.editor.checkReal}
+              <button
+                type="submit"
+                class="link-button"
+                aria-label={t.editor.checkReal}
+                title={t.editor.checkReal}
+              >
+                {t.editor.checkShort}
               </button>
               <span class="preview-result" role="status" />
             </form>
@@ -494,6 +592,11 @@ function DestinationRow(props: {
         {active ? (
           <div class="dest-line">
             <WorkHoursToggle source={source} target={target} direction={direction} />
+          </div>
+        ) : null}
+        {active ? (
+          <div class="dest-line">
+            <OnlyCategories source={source} target={target} direction={direction} />
           </div>
         ) : null}
         {isException && canEdit ? (
@@ -515,7 +618,7 @@ function DestinationRow(props: {
           <div class="cap-note">{t.editor.capNote(t.editor.choices[direction.maxChoice])}</div>
         ) : null}
         {active ? (
-          /* Colour and working hours of the direction; their fields sit in the row above. */
+          /* Colour, working hours and opt-in list; their fields sit in the row above. */
           <form
             method="post"
             action="/rules/direction/details"
@@ -781,6 +884,8 @@ export function Overview(props: { state: EditorState }) {
 
 /** Before two accounts are connected: what to do, with the buttons to do it. */
 function FirstSteps(props: {
+  /** The operator's notice, unless the reconnect banner above already shows it. */
+  operatorNotice?: string;
   connected: number;
   providers: Record<"microsoft" | "google", boolean>;
 }) {
@@ -794,6 +899,7 @@ function FirstSteps(props: {
         <li class={props.connected >= 2 ? "done" : ""}>{t.editor.stepConnectSecond}</li>
         <li>{t.editor.stepChoose}</li>
       </ol>
+      <OperatorNotice text={props.operatorNotice} />
       <div class="actions">
         {providers.map((provider) => (
           <a class="button" href={`/auth/${provider}/connect`}>
@@ -822,6 +928,25 @@ function QuickStart(props: { count: number }) {
   );
 }
 
+/** Accounts without any loaded calendar are missing from the rules, so the page says why. */
+function CalendarsMissingNotice(props: { accounts: EditorAccount[] }) {
+  const { t } = useI18n();
+  const missing = props.accounts.filter((account) => !account.calendar && !account.needsReconnect);
+  if (missing.length === 0) return null;
+  const google = missing.some((account) => account.provider === "google");
+  return (
+    <div class="notice error" role="alert">
+      <p>{t.rules.calendarsMissing(missing.map((account) => account.name).join(", "))}</p>
+      {google ? <p>{t.rules.calendarsMissingGoogle}</p> : null}
+      <form method="post" action="/rules/calendars/refresh">
+        <button type="submit" class="link-button">
+          {t.rules.refreshCalendars}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export function CalendarEditorPage(props: {
   /** Providers that can be connected, for the first steps. */
   providers: Record<"microsoft" | "google", boolean>;
@@ -831,6 +956,7 @@ export function CalendarEditorPage(props: {
   open: string[];
   notice?: Notice;
   status?: Child;
+  operatorNotice?: string;
 }) {
   const { t } = useI18n();
   const ready = props.state.accounts.filter((account) => account.calendar);
@@ -845,10 +971,17 @@ export function CalendarEditorPage(props: {
         </div>
 
         {props.notice ? <p class={`notice ${props.notice.kind}`}>{props.notice.text}</p> : null}
-        <ReconnectNotice accounts={props.state.accounts} />
+        <ReconnectNotice accounts={props.state.accounts} operatorNotice={props.operatorNotice} />
+        <CalendarsMissingNotice accounts={props.state.accounts} />
 
         {ready.length < 2 ? (
-          <FirstSteps connected={ready.length} providers={props.providers} />
+          <FirstSteps
+            connected={ready.length}
+            providers={props.providers}
+            operatorNotice={
+              props.state.accounts.some((a) => a.needsReconnect) ? undefined : props.operatorNotice
+            }
+          />
         ) : (
           <>
             <div class="editor-grid">

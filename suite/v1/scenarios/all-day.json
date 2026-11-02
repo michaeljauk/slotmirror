@@ -1,0 +1,26 @@
+{
+  "id": "all-day",
+  "title": "An all-day event blocks its date in the time zone of the target",
+  "covers": "all-day event",
+  "expectedText": "The Wednesday of the event is busy from midnight to midnight in the target zone, and the days next to it are free.",
+  "calendars": {
+    "source": { "timeZone": "America/New_York" },
+    "target": { "timeZone": "Asia/Tokyo" }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "away",
+      "event": { "start": "week+2d", "end": "week+3d" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busyDates": [["week+2d", "week+3d"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

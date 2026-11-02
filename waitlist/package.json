@@ -1,0 +1,26 @@
+{
+  "name": "slotmirror-waitlist",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Waitlist API for the hosted slotmirror version. Separate Worker with its own D1 database.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "cf-typegen": "wrangler types --strict-vars=false",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.6",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "wrangler": "4.151.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

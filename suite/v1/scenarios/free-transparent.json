@@ -1,0 +1,51 @@
+{
+  "id": "free-transparent",
+  "title": "An event that does not block time leaves the target free",
+  "covers": "free or transparent event",
+  "expectedText": "The free event never blocks the target. A busy event that turns free stops blocking it. The tentative event blocks.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "free",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z", "availability": "free" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "turns-free",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "tentative",
+      "event": { "start": "week+3d@10:00Z", "end": "week+3d@11:00Z", "availability": "tentative" }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+2d@10:00Z", "week+2d@11:00Z"],
+          ["week+3d@10:00Z", "week+3d@11:00Z"]
+        ]
+      }
+    },
+    {
+      "do": "write",
+      "change": "update",
+      "key": "turns-free",
+      "event": { "availability": "free" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+3d@10:00Z", "week+3d@11:00Z"]]
+      }
+    }
+  ]
+}

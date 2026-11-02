@@ -24,6 +24,6 @@ schedule in your other calendars.
 ## Things to know
 
 - The schedule is a source only. Blocks go into the main calendar of each target account.
-- **Skip all-day events** is on by default. If the schedule has all-day entries, such as
-  tournament days, turn it off under **For all calendars**. The setting applies to all your
-  calendars.
+- **Skip all-day events** is off by default, so all-day entries such as tournament days block the
+  whole day. Entries that are marked as free stay out. To leave out all all-day entries, turn the
+  setting on under **For all calendars**. The setting applies to all your calendars.

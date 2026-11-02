@@ -1,0 +1,53 @@
+{
+  "id": "series-exception",
+  "title": "A moved occurrence of a daily series blocks its new time, the others stay",
+  "covers": "series with an exception",
+  "expectedText": "Monday, Tuesday, Thursday and Friday are busy 09:00 to 09:30 UTC. Wednesday is busy 15:00 to 15:30 UTC and free at 09:00.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "daily",
+      "event": {
+        "start": "week@09:00Z",
+        "end": "week@09:30Z",
+        "repeat": { "every": "day", "count": 5 }
+      }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week@09:00Z", "week@09:30Z"],
+          ["week+1d@09:00Z", "week+1d@09:30Z"],
+          ["week+2d@09:00Z", "week+2d@09:30Z"],
+          ["week+3d@09:00Z", "week+3d@09:30Z"],
+          ["week+4d@09:00Z", "week+4d@09:30Z"]
+        ]
+      }
+    },
+    {
+      "do": "write",
+      "change": "update-occurrence",
+      "key": "daily",
+      "occurrence": 2,
+      "event": { "start": "week+2d@15:00Z", "end": "week+2d@15:30Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week@09:00Z", "week@09:30Z"],
+          ["week+1d@09:00Z", "week+1d@09:30Z"],
+          ["week+2d@15:00Z", "week+2d@15:30Z"],
+          ["week+3d@09:00Z", "week+3d@09:30Z"],
+          ["week+4d@09:00Z", "week+4d@09:30Z"]
+        ],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

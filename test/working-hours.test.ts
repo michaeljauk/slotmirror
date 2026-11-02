@@ -270,7 +270,8 @@ describe("working hours: all-day events", () => {
   });
 
   it("applies skipAllDay first", () => {
-    expect(mirrored(allDay("2026-10-27", "2026-10-28"), OFFICE)).toBe(false);
+    const skipping = { ...OFFICE, skipAllDay: true };
+    expect(mirrored(allDay("2026-10-27", "2026-10-28"), skipping)).toBe(false);
   });
 });
 
@@ -289,11 +290,14 @@ describe("working hours: defaults", () => {
   it("keep the blocks of existing rules exactly as main wrote them", async () => {
     // The fixture holds the blocks that main (before working hours) plans for the Graph fixture.
     const scope = { scope: "user" };
-    expect(await desiredBlocks(RULE, events, parseRuleOptions("{}"), scope)).toEqual(
-      mainBlocks.defaults,
-    );
+    const skipping = parseRuleOptions('{"skipAllDay": true}');
+    expect(await desiredBlocks(RULE, events, skipping, scope)).toEqual(mainBlocks.defaults);
     const withAllDay = parseRuleOptions('{"skipAllDay": false}');
     expect(await desiredBlocks(RULE, events, withAllDay, scope)).toEqual(mainBlocks.withAllDay);
+    // A rule without the field mirrors all-day events.
+    expect(await desiredBlocks(RULE, events, parseRuleOptions("{}"), scope)).toEqual(
+      mainBlocks.withAllDay,
+    );
     // Every weekday with a time zone but no time range is still off.
     const zoneOnly = options({ skipAllDay: false, workTimeZone: "Pacific/Kiritimati" });
     expect(await desiredBlocks(RULE, events, zoneOnly, scope)).toEqual(mainBlocks.withAllDay);
@@ -304,7 +308,7 @@ describe("working hours: defaults", () => {
     const scope = { scope: "user" };
     for (const zone of ["Europe/Vienna", "Pacific/Kiritimati", "America/Santiago", "UTC"]) {
       const always = { workDays: [1, 2, 3, 4, 5, 6, 7], workStart: "00:00", workEnd: "24:00" };
-      const active = options({ ...always, workTimeZone: zone });
+      const active = options({ ...always, workTimeZone: zone, skipAllDay: true });
       expect(hasWorkingHours(active)).toBe(true);
       expect(await desiredBlocks(RULE, events, active, scope)).toEqual(mainBlocks.defaults);
       const withAllDay = options({ ...always, workTimeZone: zone, skipAllDay: false });
@@ -499,7 +503,12 @@ describe("working hours: southern hemisphere and far offsets", () => {
 describe("working hours: turning the filter on", () => {
   const events = fixture.value.map(fromGraphEvent).filter((e): e is SourceEvent => e !== null);
   const asExisting = (blocks: DesiredBlock[]): ExistingBlock[] =>
-    blocks.map((block, index) => ({ ...block, ruleTag: "tag", targetId: `target-${index}` }));
+    blocks.map((block, index) => ({
+      ...block,
+      ruleTag: "tag",
+      targetId: `target-${index}`,
+      status: "blocked",
+    }));
 
   it("deletes the blocks outside the hours, and the next run changes nothing", async () => {
     const before = await desiredBlocks(RULE, events, options());
@@ -538,7 +547,12 @@ describe("working hours: with the sync window", () => {
   // On 27 Oct 2026 at 12:00 UTC the sync window runs from 27 Oct to 26 Nov, 00:00 UTC.
   const now = new Date("2026-10-27T12:00:00Z");
   const asExisting = (blocks: DesiredBlock[]): ExistingBlock[] =>
-    blocks.map((block) => ({ ...block, ruleTag: "tag", targetId: `target-${block.start}` }));
+    blocks.map((block) => ({
+      ...block,
+      ruleTag: "tag",
+      targetId: `target-${block.start}`,
+      status: "blocked" as const,
+    }));
 
   it("deletes filtered blocks inside the window only, and the next run changes nothing", async () => {
     const base = options({ skipAllDay: false, daysAhead: 30 });
@@ -606,7 +620,12 @@ describe("working hours: with the sync window", () => {
       for (const pass of [1, 2]) {
         const existing = [...target]
           .filter(([, block]) => inRead(block, read))
-          .map(([targetId, block]) => ({ ...block, targetId, ruleTag: "tag" }));
+          .map(([targetId, block]) => ({
+            ...block,
+            targetId,
+            ruleTag: "tag",
+            status: "blocked" as const,
+          }));
         const plan = planSync(desired, existing, { sync: window, target: read });
         if (pass === 2) expect(plan.actions, new Date(at).toISOString()).toEqual([]);
         for (const action of plan.actions) {

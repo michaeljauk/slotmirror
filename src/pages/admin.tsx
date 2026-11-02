@@ -1,16 +1,19 @@
 import type { Role } from "../access";
-import type { ActivityRow } from "../audit";
+import type { TestAlertOutcome } from "../alerts";
+import { parseDetail, type ActivityRow } from "../audit";
 import type { DetailCaps } from "../detail-policy";
 import { useI18n } from "../i18n";
+import type { CompareRunDetail } from "../sync/compare";
 import type { CurrentUser } from "../users";
-import { ActivityTable } from "./activity";
+import { ActivityTable, describeCompare } from "./activity";
 import { Layout } from "./layout";
+
+/** Rows of the log on the admin page; `/admin/activity` shows all of them. */
+const ADMIN_ACTIVITY_ROWS = 10;
 
 export interface AdminUserRow {
   id: string;
   email: string;
-  /** 0 if Entra deactivated the user over SCIM. */
-  active: number;
   role: Role;
   lastSignInAt: string | null;
   accounts: number;
@@ -22,7 +25,18 @@ export interface AdminUserRow {
 export function AdminPage(props: {
   user: CurrentUser;
   users: AdminUserRow[];
+  /** Calendars with blocks of deleted users. */
+  cleanups: number;
   activity: ActivityRow[];
+  /** The latest comparison per calendar and mode. */
+  compares: ActivityRow[];
+  /** The admin just started comparisons. */
+  /** What the last click on "Start comparison" did, if the page follows one. */
+  compareStart: { started: number; open: number; failed: number } | null;
+  /** True if a webhook is set. Its URL is a secret and never reaches this page. */
+  alertsConfigured: boolean;
+  /** What the last click on "Send test alert" did, if the page follows one. */
+  testAlert: TestAlertOutcome | null;
   caps: DetailCaps;
   /** Domains and Entra tenants whose accounts count as work calendars. */
   org: { domains: string[]; tenantCount: number };
@@ -44,6 +58,16 @@ export function AdminPage(props: {
             <p class="lead">{t.admin.lead}</p>
           </div>
         </div>
+        {props.cleanups > 0 ? (
+          <div class="reconnect-notice" role="status">
+            <p>
+              <span>{t.cleanup.adminLink(props.cleanups)}</span>
+              <a class="button small" href="/cleanup">
+                {t.cleanup.show}
+              </a>
+            </p>
+          </div>
+        ) : null}
         {affected > 0 ? (
           <div class="reconnect-notice" role="status">
             <p>
@@ -52,7 +76,7 @@ export function AdminPage(props: {
           </div>
         ) : null}
         <div class="card">
-          <table class="table">
+          <table class="table stack">
             <thead>
               <tr>
                 <th>{t.admin.email}</th>
@@ -65,27 +89,47 @@ export function AdminPage(props: {
             <tbody>
               {props.users.map((row) => (
                 <tr>
-                  <td>{row.email}</td>
-                  <td>
-                    <span class={row.role === "admin" ? "badge admin" : "badge"}>
-                      {t.roles[row.role]}
+                  <td data-label={t.admin.email}>{row.email}</td>
+                  <td data-label={t.admin.role}>
+                    <span>
+                      <span class={row.role === "admin" ? "badge admin" : "badge"}>
+                        {t.roles[row.role]}
+                      </span>
                     </span>
-                    {row.active === 0 ? <span class="badge">{t.admin.inactive}</span> : null}
                   </td>
-                  <td>
-                    {row.accounts}
-                    {row.needsReconnect > 0 ? (
-                      <span class="badge error">{t.admin.needsReconnect(row.needsReconnect)}</span>
-                    ) : null}
+                  <td data-label={t.admin.accounts}>
+                    <span>
+                      {row.accounts}
+                      {row.needsReconnect > 0 ? (
+                        <span class="badge error">
+                          {t.admin.needsReconnect(row.needsReconnect)}
+                        </span>
+                      ) : null}
+                    </span>
                   </td>
-                  <td class="muted">
+                  <td class="muted" data-label={t.admin.lastSignIn}>
                     {row.lastSignInAt ? formatTimestamp(row.lastSignInAt) : t.admin.never}
                   </td>
                   <td>
                     {row.id === props.user.id ? null : (
-                      <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
-                        {t.admin.deleteUser}
-                      </a>
+                      <>
+                        <form
+                          method="post"
+                          action={`/admin/users/${row.id}/reset-sign-in`}
+                          class="inline-form"
+                        >
+                          <button
+                            type="submit"
+                            class="link-button quiet"
+                            title={t.admin.resetSignInHint}
+                          >
+                            {t.admin.resetSignIn}
+                          </button>
+                        </form>
+                        <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
+                          {t.admin.deleteUser}
+                        </a>
+                      </>
                     )}
                   </td>
                 </tr>
@@ -125,12 +169,80 @@ export function AdminPage(props: {
       <section class="section">
         <div class="section-head">
           <div>
-            <h2>{t.activity.title}</h2>
-            <p class="lead">{t.activity.orgLead}</p>
+            <h2>{t.admin.compareTitle}</h2>
+            <p class="lead">{t.admin.compareLead}</p>
           </div>
+          <form method="post" action="/admin/compare" class="inline-form">
+            <button type="submit" class="button">
+              {t.admin.compareStart}
+            </button>
+          </form>
+        </div>
+        {props.compareStart ? (
+          <p class="notice">
+            {t.admin.compareCounts(
+              props.compareStart.started,
+              props.compareStart.open,
+              props.compareStart.failed,
+            )}
+          </p>
+        ) : null}
+        <div class="card">
+          {props.compares.length === 0 ? (
+            <div class="empty">{t.admin.compareEmpty}</div>
+          ) : (
+            <ul class="compare-list">
+              {props.compares.map((row) => {
+                const { calendarId, mode } = parseDetail(row.detail) as Partial<CompareRunDetail>;
+                return (
+                  <li data-compare={`${calendarId}:${mode}`}>
+                    <span>{describeCompare(row, t)}</span>
+                    <span class="muted">
+                      {mode ? t.admin.compareModes[mode] : ""} · {row.email ?? "–"} ·{" "}
+                      {formatTimestamp(row.createdAt)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <p class="fineprint caps-how">{t.admin.compareHorizon}</p>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.admin.alertsTitle}</h2>
+            <p class="lead">{props.alertsConfigured ? t.admin.alertsLead : t.admin.alertsOff}</p>
+          </div>
+          {props.alertsConfigured ? (
+            <form method="post" action="/admin/test-alert" class="inline-form">
+              <button type="submit" class="button">
+                {t.admin.testAlertSend}
+              </button>
+            </form>
+          ) : null}
+        </div>
+        {props.testAlert ? (
+          <p class="notice test-alert-result" role="status">
+            {t.admin.testAlertResults[props.testAlert]}
+          </p>
+        ) : null}
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.activity.title}</h2>
+            <p class="lead">{t.admin.activityLead(ADMIN_ACTIVITY_ROWS)}</p>
+          </div>
+          <a class="button" href="/admin/activity">
+            {t.admin.activityAll}
+          </a>
         </div>
         <div class="card">
-          <ActivityTable rows={props.activity} showUser />
+          <ActivityTable rows={props.activity.slice(0, ADMIN_ACTIVITY_ROWS)} showUser />
         </div>
       </section>
     </Layout>

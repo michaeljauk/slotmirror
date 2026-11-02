@@ -19,7 +19,11 @@ const ruleOptionsFields = z.object({
   blockTitle: z._default(z.string().check(z.trim(), z.minLength(1), z.maxLength(255)), "Busy"),
   /** How many days ahead to mirror. The window moves forward every day. */
   daysAhead: z._default(z.int().check(z.minimum(1), z.maximum(365)), 90),
-  skipAllDay: z._default(z.boolean(), true),
+  /**
+   * Skip all-day events. A stored value always wins, so that a change of this default leaves rules
+   * with the field alone. An all-day event that shows as free stays out through `skipFree`.
+   */
+  skipAllDay: z._default(z.boolean(), false),
   /** Skip events that do not block time (Graph `showAs: free`, Google `transparency: transparent`). */
   skipFree: z._default(z.boolean(), true),
   skipTentative: z._default(z.boolean(), false),
@@ -29,6 +33,16 @@ const ruleOptionsFields = z.object({
    * event colours. Compared without case.
    */
   skipCategories: z._default(
+    z.array(z.string().check(z.maxLength(100))).check(z.maxLength(50)),
+    [],
+  ),
+  /**
+   * Mirror only events with at least one of these categories, in the form of `skipCategories`. An
+   * event in both lists stays out. Empty: no such filter, so an event without a category stays in.
+   * The editor sets this list per direction, not for all rules of a user: Outlook events have
+   * names and Google events have colours, so one list cannot fit both.
+   */
+  onlyCategories: z._default(
     z.array(z.string().check(z.maxLength(100))).check(z.maxLength(50)),
     [],
   ),
@@ -71,25 +85,6 @@ const ruleOptionsFields = z.object({
    */
   bufferBefore: bufferMinutes,
   bufferAfter: bufferMinutes,
-  /**
-   * Add a note to each block that names the source account, e.g. "From: Work (Microsoft)", or only
-   * the provider for an account without a name. It is the whole description up to detail level
-   * "title_location"; at "full" it follows the copied description. The note is the account's name
-   * only, never event content. Where any detail cap below "full" applies, no note.
-   */
-  showOrigin: z._default(z.boolean(), false),
-  /**
-   * Add a link to the source event below the origin note (Graph `webLink`, Google `htmlLink`).
-   * The link holds IDs only; Google's `eid` encodes the event ID and the calendar ID, which for a
-   * main calendar is the account's address. Without `showOrigin` it has no effect. It needs detail
-   * level "title" or more, and a private source event never gets it.
-   */
-  linkOrigin: z._default(z.boolean(), false),
-  /**
-   * Language of the origin note: the language of the user who turned it on. Without it, or for a
-   * language this deployment no longer has, the note uses the first entry of `LOCALES` ("en").
-   */
-  originLocale: z.optional(z.string().check(z.maxLength(16))),
 });
 
 /**
@@ -128,6 +123,8 @@ export interface SetupStatus {
   providers: Record<Provider, boolean>;
   /** At least one configured provider is allowed for sign-in. */
   signIn: boolean;
+  /** Entries of SIGN_IN_PROVIDERS that name no provider, e.g. "both". Shown on the setup page. */
+  unknownSignInEntries: string[];
   /** True if the dashboard can be used: access, both secrets, and a sign-in provider. */
   ready: boolean;
 }
@@ -144,7 +141,16 @@ export function setupStatus(env: Env): SetupStatus {
   const allowed = signInProviders(env);
   const signIn = allowed.microsoft || allowed.google;
   const ready = accessConfigured && sessionSecret && tokenEncryptionKey && signIn;
-  return { accessConfigured, sessionSecret, tokenEncryptionKey, providers, signIn, ready };
+  const unknownSignInEntries = unknownSignInProviders(env);
+  return {
+    accessConfigured,
+    sessionSecret,
+    tokenEncryptionKey,
+    providers,
+    signIn,
+    unknownSignInEntries,
+    ready,
+  };
 }
 
 /**
@@ -157,15 +163,31 @@ export function signInProviders(env: Env): Record<Provider, boolean> {
     microsoft: Boolean(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET),
     google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
   };
-  const listed = (env.SIGN_IN_PROVIDERS ?? "")
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry.length > 0);
+  const listed = signInEntries(env);
   if (listed.length === 0) return configured;
   return {
     microsoft: configured.microsoft && listed.includes("microsoft"),
     google: configured.google && listed.includes("google"),
   };
+}
+
+function signInEntries(env: Env): string[] {
+  return (env.SIGN_IN_PROVIDERS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Entries of SIGN_IN_PROVIDERS that are neither "microsoft" nor "google". The result is cut to 5
+ * entries of 40 characters each: a wrongly pasted value, such as a secret, would show on the
+ * public setup page.
+ */
+export function unknownSignInProviders(env: Env): string[] {
+  return signInEntries(env)
+    .filter((entry) => entry !== "microsoft" && entry !== "google")
+    .map((entry) => entry.slice(0, 40))
+    .slice(0, 5);
 }
 
 function isBase64Key(value: string | undefined, bytes: number): boolean {

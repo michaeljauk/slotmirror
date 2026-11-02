@@ -5,13 +5,15 @@
 export const en = {
   nav: {
     accounts: "Accounts",
-    rules: "Sync",
+    rules: "Rules",
     activity: "Activity",
     admin: "Admin",
+    main: "Main navigation",
     accountMenu: "Account menu",
     signOut: "Sign out",
     deleteMyData: "Delete my data",
     privacy: "Privacy",
+    version: "Version",
     language: "Language",
   },
   roles: {
@@ -20,18 +22,23 @@ export const en = {
   },
   signIn: {
     title: "Sign in",
-    lead: "Keep your calendars in sync. Others only see that you are busy.",
+    lead: "Keep your calendars in sync. By default, others only see that you are busy.",
     withProvider: (provider: string) => `Sign in with ${provider}`,
-    fineprint: "Titles, attendees and notes never leave the source calendar.",
+    fineprint:
+      "Attendees are never copied. Titles, locations and notes are copied only if a rule asks for it.",
+    googleNotice: "Google will say that the app is not verified.",
+    googleNoticeSteps: "Choose “Advanced”, then “Go to … (unsafe)”.",
   },
   accounts: {
     title: "Accounts",
     lead: "Calendars that this app reads from and writes to.",
-    emptyTitle: "No account connected yet",
-    emptyText: "Connect at least two calendars to mirror busy times between them.",
+    googleNotice: "Google will say that the app is not verified.",
+    googleNoticeSteps: "Choose “Advanced”, then “Go to … (unsafe)”.",
     kindGoogle: "Google Calendar",
     kindMicrosoftWork: "Microsoft 365 · work account",
     kindMicrosoftPersonal: "Microsoft 365 · personal account",
+    operatorNoticeTitle: "Who runs this deployment",
+    operatorNoticeLink: "Privacy statement",
     connectedOn: (date: string) => `connected ${date}`,
     notSynced: "Not synced yet",
     inSync: (time: string) => `In sync · ${time}`,
@@ -43,10 +50,19 @@ export const en = {
     disconnect: "Disconnect",
     rename: "Settings",
     workHoursLabel: "Working hours",
-    workHoursHint: "Applies to everything copied into this account.",
-    workHoursTitle:
-      "You turn it on per calendar in the sync settings. Without working hours the whole day counts.",
-    workHoursNone: "No working hours",
+    workHoursSwitch: "Copy only during working hours",
+    workHoursHint: "Leave both times empty for whole days.",
+    workHoursApply: "Applies to copies from",
+    workHoursNoRules:
+      "Nothing copies into this account yet. Once it does, turn working hours on in the rules.",
+    workHoursInUse: (hours: string, used: number, total: number) =>
+      `Working hours ${hours} · used by ${used} of ${total} ${total === 1 ? "direction" : "directions"}`,
+    workHoursUnused: (hours: string) => `Working hours ${hours} filter nothing yet.`,
+    noCalendars: "No calendars could be loaded.",
+    noCalendarsLink: "Open the rules",
+    workHoursChoose: "Choose directions",
+    workHoursIdle: (hours: string) =>
+      `Working hours ${hours} · nothing copies into this account yet`,
     colorLabel: "Colour",
     colorHint: "Only on these pages, not in your calendars.",
     colorAuto: "Automatic",
@@ -108,6 +124,10 @@ export const en = {
     runNow: "Run now",
     delete: "Delete",
     refreshCalendars: "Reload calendars",
+    calendarsMissing: (names: string) =>
+      `No calendars could be loaded for ${names}, so the rules do not show this account.`,
+    calendarsMissingGoogle:
+      "For a Google account, the operator must turn on the Google Calendar API in the Google Cloud project.",
     noCalendars: "Connect an account first; its calendars appear here.",
     previewResult: (create: number, update: number, remove: number, unchanged: number) =>
       `Preview: ${create} to create, ${update} to update, ${remove} to delete, ${unchanged} unchanged. Nothing was written.`,
@@ -124,7 +144,7 @@ export const en = {
     pausedShort: "Paused",
   },
   editor: {
-    title: "Where your events go",
+    title: "Rules",
     lead: "For each calendar: where its events go and how much shows there.",
     views: "View",
     viewList: "List",
@@ -148,6 +168,7 @@ export const en = {
     exception: "Exception",
     reset: "reset",
     checkReal: "Check with real events",
+    checkShort: "Check",
     capNote: (level: string) => `This deployment's policy allows at most “${level}” here.`,
     readOnly: "slotmirror cannot write to this calendar.",
     readOnlyTurnOff:
@@ -155,7 +176,7 @@ export const en = {
     moreOptions: "More options",
     save: "Save",
     matrixCorner: "From ↓ · to →",
-    matrixHint: "Click a cell to open that calendar on the left.",
+    matrixHint: "Click a cell to open that calendar.",
     cellGroup: "group",
     cellException: "exception",
     manyTargets: (count: number) => `${count} calendars`,
@@ -164,6 +185,10 @@ export const en = {
     stepConnectFirst: "Connect your first calendar account.",
     stepConnectSecond: "Connect a second one, for example your work or your private calendar.",
     stepChoose: "Choose here where the events of each calendar go.",
+    stepChooseRules: "Choose in the rules where the events of each calendar go.",
+    openRules: "Open rules",
+    activeDirections: (count: number) =>
+      count === 1 ? "1 direction is active." : `${count} directions are active.`,
     quickStartTitle: "Quick start",
     quickStartText: (count: number) =>
       `All ${count} calendars block each other as busy. Add detail per direction later.`,
@@ -179,9 +204,35 @@ export const en = {
     blockTitleLabel: "Title of busy blocks",
     blockTitleHint: "Copies at the level “As busy” carry this title.",
     defaultBlockTitle: "Busy",
+    onlyCategoriesSummary: (count: number) =>
+      count === 0
+        ? "Copy only some categories"
+        : count === 1
+          ? "Copies only 1 category"
+          : `Copies only ${count} categories`,
+    onlyColorsSummary: (count: number) =>
+      count === 0
+        ? "Copy only some colours"
+        : count === 1
+          ? "Copies only 1 colour"
+          : `Copies only ${count} colours`,
+    onlyCategoriesHint:
+      "Events without one of these Outlook categories are not copied, and their existing blocks disappear. An empty list copies all events. “Do not copy” wins over this list. Upper and lower case do not matter.",
+    onlyColorsHint:
+      "Events without one of these colours are not copied, and their existing blocks disappear. With no colour chosen, all events are copied. An event in the calendar's default colour has no colour here. “Do not copy” wins over this choice.",
+    onlyCategoriesPlaceholder: "Work, Customer",
+    onlyCategoriesGoogle:
+      "Google events have colours, not categories. Choose colours instead. Nothing was saved.",
+    onlyCategoriesDirection:
+      "This list belongs to a direction that no longer exists. Reload the page. Nothing was saved.",
     skipCategoriesLabel: "Skip events with these categories",
-    skipCategoriesHint: "Outlook category names, separated by commas, for example Private, Focus.",
+    skipCategoriesHint:
+      "Events with one of these Outlook categories are not copied. Upper and lower case do not matter.",
+    skipCategoriesCommas: "Separate names with commas.",
     skipCategoriesPlaceholder: "Private, Focus",
+    skipCategoriesAdd: "Add a category, then press Enter",
+    skipCategoriesRemove: (name: string) => `Remove ${name}`,
+    skipGroupTitle: "Do not copy",
     skipColorsLabel: "Skip Google events with these colours",
     weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
     weekdayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
@@ -262,7 +313,8 @@ export const en = {
     mainCalendar: "Main calendar",
     noSource: "No calendar chosen. Turn on at least one.",
     skipAllDayTitle: "Skip all-day events",
-    skipAllDayHint: "Otherwise holidays and days off block whole days.",
+    skipAllDayHint:
+      "Otherwise holidays and days off block whole days, unless they are marked as free.",
     skipTentativeTitle: "Skip tentative events",
     skipTentativeHint: "“Maybe” answers and tentative events do not block.",
     markPrivateTitle: "Mark copies as private",
@@ -286,17 +338,17 @@ export const en = {
     title: "Privacy",
     operator: (name: string, contact: string) =>
       `This deployment of slotmirror is operated by ${name}. Contact: ${contact}.`,
+    noticeTitle: "Notice from the operator",
     operatorUnknown: "The operator of this deployment has not set a contact address.",
     intro:
       "slotmirror mirrors busy times between calendars. It is open-source software that each operator runs in their own Cloudflare account.",
     storedTitle: "What is stored",
     stored: [
-      "Your email address and, for Microsoft accounts, the tenant ID, to identify you and your connected accounts.",
+      "Your email address and, for Microsoft accounts, the tenant ID and object ID, to identify you and your connected accounts.",
       "OAuth tokens for each connected account, encrypted with AES-256-GCM.",
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
       "A session cookie and a language cookie in your browser.",
-      "For each free/busy feed you create: its calendars, its settings and a hash of its secret address. Whoever has the address sees your busy times, without content. The last rendered feed, busy times only, is kept with the feed and in Cloudflare's cache to answer the next fetches.",
     ],
     notStoredTitle: "What is not stored",
     notStored:
@@ -306,13 +358,16 @@ export const en = {
       "On Cloudflare Workers, D1 and Durable Objects in the operator's Cloudflare account, and at Microsoft and Google when calendars are read and written.",
     deleteTitle: "How to delete your data",
     delete:
-      "Disconnecting an account deletes the blocks slotmirror wrote for it, then its tokens. To delete your user and all its data, use “Delete my data” in the account menu.",
+      "Disconnecting an account deletes the blocks slotmirror wrote for it, then its tokens. If blocks cannot be removed, the calendar name, the calendar ID, the block title, the block count, the period and the marker stay for 90 days, so that you can delete them by hand. The calendar ID of a primary Google calendar is your email address. To delete your user and all its data, use “Delete my data” in the account menu.",
     googleTitle: "Google user data",
     google:
       "slotmirror's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Data is used only to show and mirror busy times as configured by you, and is never sold, used for advertising or read by humans.",
     noTracking: "There is no tracking, no analytics and no advertising.",
   },
   admin: {
+    activityLead: (count: number) =>
+      `The last ${count} events of everyone in this deployment. Metadata only.`,
+    activityAll: "Show all",
     title: "Users",
     lead: "Everyone who signed in to this deployment. Calendar contents stay private to each user.",
     email: "Email",
@@ -322,7 +377,9 @@ export const en = {
     never: "never",
     onlyAdmins: "Only admins can open this page.",
     deleteUser: "Delete",
-    inactive: "deactivated",
+    resetSignIn: "Reset sign-in",
+    resetSignInHint:
+      "Unbinds the user from their Microsoft or Google account and ends their sessions. For 24 hours, a sign-in under a verified address binds them to a new account; the previous account stays refused. After that, reset again.",
     needsReconnect: (count: number) =>
       count === 1 ? "1 needs reconnecting" : `${count} need reconnecting`,
     reconnectSummary: (count: number) =>
@@ -343,12 +400,37 @@ export const en = {
     capAtMost: (level: string) => `At most “${level}”`,
     capsHow:
       "Change with the Worker variables MAX_DETAIL_TO_EXTERNAL and MAX_DETAIL_FROM_EXTERNAL.",
+    compareTitle: "Comparison",
+    compareLead:
+      "Checks each target calendar against its sources: blocks that are missing, left over, different or doubled.",
+    alertsTitle: "Alerts",
+    alertsLead: "Send a test message to the webhook of this deployment. One per minute.",
+    alertsOff: "This deployment has no alert webhook, so it sends no alerts.",
+    testAlertSend: "Send test alert",
+    testAlertResults: {
+      sent: "The webhook accepted the test alert.",
+      off: "This deployment has no alert webhook. Nothing was sent.",
+      failed: "The webhook did not accept the test alert. The Worker log has the reason.",
+      limited: "A test alert was requested less than a minute ago. Try again in a minute.",
+    },
+    compareStart: "Start comparison",
+    compareCounts: (started: number, open: number, failed: number) =>
+      `${started} started, ${open} still open, ${failed} failed. A calendar stays open until its comparison ends. Results appear here within minutes.`,
+    compareEmpty: "No comparison yet.",
+    compareHorizon:
+      "A comparison leaves out the all-day blocks of today and the last day of each sync window. It counts a finding only if the finding stays after a successful sync run. A comparison of the whole window also reads writable calendars without a rule: every block of slotmirror there is left over.",
+    compareModes: {
+      full: "Whole window",
+      near: "Next 7 days",
+      leftover: "Calendar without a rule",
+    },
   },
   activity: {
     title: "Activity",
     lead: "Your last 100 events: sign-ins, changes and sync runs. Event contents are never logged.",
     orgLead: "The last 100 events of everyone in this deployment. Metadata only.",
     time: "Time",
+    account: "Account",
     event: "Event",
     details: "Details",
     empty: "Nothing happened yet.",
@@ -356,9 +438,12 @@ export const en = {
     kinds: {
       sign_in: "Signed in",
       sign_in_refused: "Sign-in refused",
+      sign_in_reset: "Sign-in binding reset",
       sign_out: "Signed out",
       account_connected: "Account connected",
       account_disconnected: "Account disconnected",
+      account_disconnect_failed: "Disconnect failed",
+      cleanup_finished: "Block removal finished",
       account_renamed: "Account renamed",
       token_refresh_failed: "Token refresh failed",
       rule_created: "Rule created",
@@ -368,77 +453,135 @@ export const en = {
       rule_updated: "Rule changed",
       group_changed: "Block group changed",
       settings_changed: "Sync settings changed",
-      user_provisioned: "User provisioned",
-      user_deactivated: "User deactivated",
-      user_reactivated: "User reactivated",
       user_deleted: "User deleted",
       sync_run: "Sync run",
       sync_failed: "Sync failed",
-      feed_created: "Free/busy feed created",
-      feed_rotated: "Free/busy feed address renewed",
-      feed_deleted: "Free/busy feed deleted",
+      sync_run_aborted: "Sync run aborted",
+      account_paused: "Account paused",
+      account_resumed: "Account resumed",
+      alert_sent: "Alert sent to the operator",
+      alert_test: "Test alert requested",
+      compare_run: "Comparison finished",
+      compare_failed: "Comparison failed",
     },
     changes: (create: number, update: number, remove: number) =>
-      `+${create} / ~${update} / −${remove}`,
+      `${create} new, ${update} changed, ${remove} removed`,
     preview: (changes: string) => `Preview ${changes}`,
     failedCount: (count: number) => `${count} failed`,
     throttledCount: (count: number) => `${count} throttled, retried after the wait`,
     statuses: (list: string) => `HTTP ${list}`,
     remainingCount: (count: number) => `${count} left`,
+    abortedDetail: "Ended without a recorded result",
+    alertDetails: {
+      rule_silent: "A rule had no successful run",
+      run_aborted: "A run ended without a result",
+      check_blind: "The hourly rule check could not look at the rules",
+      compare_deviation: "A comparison confirmed deviations",
+    },
+    disconnectFailedDetail:
+      "The disconnect failed and the account stays. Its rules run again and write back any block that was removed.",
+    cleanupRemoved: (count: number) =>
+      count === 1 ? "1 block removed" : `${count} blocks removed`,
+    cleanupLeft: (count: number) => (count === 1 ? "1 block left" : `${count} blocks left`),
+    cleanupAbout: (count: number) =>
+      count === 1 ? "about 1 block left" : `about ${count} blocks left`,
+    cleanupReasons: {
+      incomplete: "the provider kept failing, delete the rest by hand",
+      token_refused: "the provider refused the tokens, delete the rest by hand",
+      no_tokens: "the account has no tokens, delete the rest by hand",
+      deadline: "the account was not reconnected in time, delete the rest by hand",
+      not_started:
+        "the state of the removal is not known, a reconnect can still finish it, otherwise delete the rest by hand",
+      kept: "the removal could not start, and the rule keeps its blocks",
+    },
+    pausedDetail: (code: string) => `Waits for a reconnect (${code})`,
+    resumedDetail: "Syncs again",
+    compareClean: (count: number) =>
+      count === 1 ? "No deviation in 1 block" : `No deviation in ${count} blocks`,
+    compareFound: (missing: number, surplus: number, mismatched: number, duplicates: number) =>
+      `${missing} missing, ${surplus} left over, ${mismatched} different, ${duplicates} doubled`,
+    compareCleared: (count: number, found: string) =>
+      `${count} found, then gone after a sync run (${found})`,
+    compareUnconfirmed: (count: number) => `${count} found once, not confirmed`,
+    compareCapped: "list cut off",
+    compareNothing: "Nothing to compare: no block wanted, none found",
+    compareNoLeftovers: "No block left over",
+    compareReasons: {
+      removal_queue: "Blocks are still being removed from this calendar",
+      token_lost: "An account refused its token",
+      paused: "An account waits for a reconnect",
+      throttled: "The provider throttled the read",
+      config_changed: "A rule changed during the comparison",
+      source_unavailable: "A source calendar cannot be read any more",
+      read_failed: "A calendar could not be read",
+      slice_too_large: "One day holds too many events to compare",
+      empty_horizon: "The sync windows are too short to compare",
+      timeout: "The comparison did not end within a day",
+      superseded: "A comparison of the whole window replaced this one",
+      owner_not_admitted: "The owner of this calendar no longer has access",
+    },
   },
-  feeds: {
-    title: "Free/busy feed",
-    lead: "A secret calendar address for people outside this deployment. It shows when you are busy, never what you do.",
-    empty: "No feed yet.",
-    noCalendars:
-      "Your calendars are listed here once you open the sync settings after connecting an account.",
-    feedTitle: (date: string) => `Feed from ${date}`,
-    renewedOn: (date: string) => `new address ${date}`,
-    daysAhead: (count: number) => `${count} days ahead`,
-    withAllDay: "with all-day events",
-    cut: (date: string) =>
-      `Too many busy times: the feed ends before ${date}. Choose fewer days or calendars.`,
-    calendarUnreadable: (name: string) =>
-      `“${name}” cannot be read any more, so subscribers get no update. Remove it from the feed.`,
-    removeCalendar: "Remove calendar",
-    create: "New feed",
-    calendarsLabel: (max: number) => `Calendars, at most ${max}`,
-    daysLabel: "Days ahead",
-    allDayLabel: "Include all-day events",
-    shares:
-      "Subscribers see when you are busy, from 7 days ago on: blocks titled “Busy”, marked private, where overlapping events form one block. Titles, places, notes and attendees stay out, and so do free and declined events. Only calendars your accounts own can be chosen.",
-    submit: "Create feed",
-    rotate: "New address",
-    rotateText:
-      "The current address stops working at once. Everyone who subscribed needs the new one.",
-    rotateConfirm: "Make a new address",
-    remove: "Delete",
-    removeText: "The address stops working at once. Subscribers no longer see your busy times.",
-    removeConfirm: "Delete feed",
-    urlTitle: "Your feed address",
-    urlLead: "Copy the address now. It is shown only once; slotmirror keeps only a hash of it.",
-    urlHint:
-      "Anyone with this address sees your busy times. Share it only with people who should. They subscribe to it by URL in their calendar app. A change shows within about 15 minutes, plus the refresh interval of their app.",
-    copy: "Copy",
-    copied: "Copied",
-    back: "Back to the accounts",
-    errorTitle: "Feed not created",
-    noCalendar: "Choose at least one calendar.",
-    tooManyCalendars: (max: number) => `Choose at most ${max} calendars.`,
-    tooManyFeeds: (max: number) => `You already have ${max} feeds. Delete one first.`,
-    calendarName: "Busy times",
-    eventTitle: "Busy",
+  cleanup: {
+    title: "Blocks left in calendars",
+    lead: "slotmirror could not confirm the removal of these blocks after an account or a user went. Delete what is left by hand in the calendar.",
+    reconnectDoesNotHelp:
+      "Connecting the account again removes them only if the entry says that it can.",
+    runningTitle: "Removals in progress",
+    runningLead: "slotmirror is still removing these blocks.",
+    running: (date: string) => `If the account waits for a reconnect, it ends around ${date}.`,
+    runningNotice: (count: number) =>
+      count === 1
+        ? "slotmirror is still removing blocks from 1 calendar."
+        : `slotmirror is still removing blocks from ${count} calendars.`,
+    othersTitle: "Deleted users",
+    othersLead:
+      "These users cannot see this page. Their blocks stay in their calendars until someone deletes them.",
+    empty: "No blocks are left.",
+    unnamedCalendar: "A calendar without a stored name",
+    count: (count: number) => (count === 1 ? "1 block left" : `${count} blocks left`),
+    aboutCount: (count: number) =>
+      count === 1
+        ? "About 1 block left, from the last sync"
+        : `About ${count} blocks left, from the last sync`,
+    unknownCount: "The number of blocks is not known",
+    period: (from: string, to: string) => `Between ${from} and ${to}`,
+    marker: (tag: string, title: string) => `Title “${title}”, marker ${tag}`,
+    markerOnly: (tag: string) => `Marker ${tag}`,
+    markerHelp:
+      "The marker is a hidden property of each block. Calendar apps do not show it, but the provider's API returns it. Past blocks stay as a record.",
+    reasons: {
+      incomplete: "The provider kept failing.",
+      token_refused: "The provider refused the tokens.",
+      no_tokens: "The account has no tokens.",
+      deadline: "The account was not reconnected in time.",
+      not_started:
+        "The state of this removal is not known. Blocks may be left. Connecting the account again can still finish the removal. Otherwise delete them by hand.",
+    },
+    notice: (count: number) =>
+      count === 1 ? "Blocks are left in 1 calendar." : `Blocks are left in ${count} calendars.`,
+    show: "Show them",
+    adminLink: (count: number) =>
+      count === 1
+        ? "Blocks of a deleted user are left in 1 calendar"
+        : `Blocks of deleted users are left in ${count} calendars`,
   },
   setup: {
     title: "Finish the setup",
-    lead: "Set the missing values as Worker variables or secrets or in the Cloudflare dashboard, then reload this page.",
+    lead: "Set the missing values as variables or secrets in the Cloudflare dashboard (your Worker, Settings, Variables and Secrets), then reload this page.",
     set: "Set",
     accessHint:
       "Who may sign in. Your own address for a personal deployment, your email domain for a team.",
-    sessionHint: "At least 32 characters. Generate with: openssl rand -base64 48",
-    keyHint: "A base64-encoded 32-byte key. Generate with: openssl rand -base64 32",
+    sessionHint:
+      "At least 32 characters. With openssl: openssl rand -base64 48. Without it, the quickstart shows a way for Windows.",
+    keyHint:
+      "A base64-encoded 32-byte key. With openssl: openssl rand -base64 32. Without it, the quickstart shows a way for Windows.",
     providerHint:
-      "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. See the README for the app registration steps.",
+      "At least one provider that SIGN_IN_PROVIDERS allows for sign-in. The quickstart shows the app registration steps.",
+    providerInvalidHint: (value: string) =>
+      `SIGN_IN_PROVIDERS is set to "${value}". Valid entries are microsoft and google. Write both as: microsoft,google. Or remove the variable to allow every configured provider.`,
+    jurisdictionNote:
+      "To keep the data in the EU, set DATA_JURISDICTION to eu now, before you connect the first account. Changing it later disconnects every account. Also set PUBLIC_URL to the address of this Worker for fast updates.",
+    docsLink: "Open the quickstart",
   },
   deleteUser: {
     titleSelf: "Delete my data",
@@ -459,9 +602,45 @@ export const en = {
     doneTitle: "Your data is deleted",
     doneText: "The blocks disappear from your calendars within a few minutes.",
   },
+  oauthError: {
+    codeLabel: "Error code",
+    referenceLabel: "Reference",
+    help: "What this code means",
+    tryAgain: "Try again",
+    back: "Back",
+    consentTitle: (provider: string) => `${provider} needs permission first`,
+    consentLead: (provider: string) =>
+      `${provider} did not let slotmirror continue. You may have cancelled, or your organisation may not allow people to approve apps themselves.`,
+    consentSteps:
+      "If you cancelled, try again. If your organisation blocks the approval, send the request below to your IT administrator. After the administrator approves, try again.",
+    googleConsentSteps: "If you cancelled, try again and approve the access that Google asks for.",
+    requestTitle: "Request for your administrator",
+    copy: "Copy",
+    copied: "Copied",
+    adminRequest: (params: {
+      appName: string;
+      clientId: string;
+      permissions: string;
+      link: string;
+    }) =>
+      `Please approve the app "${params.appName}" for our Microsoft 365 organisation.\n\n` +
+      `Application (client) ID: ${params.clientId}\n` +
+      `Permissions (delegated): ${params.permissions}\n` +
+      `Purpose: it reads the busy times of calendars and writes "Busy" blocks into other calendars. Attendees are never copied. Titles, locations and notes are copied only if a rule asks for it.\n\n` +
+      `Approve for the whole organisation: ${params.link}\n` +
+      `You need the Global Administrator, Privileged Role Administrator or Cloud Application Administrator role.`,
+    adminConsentTitle: "Back from Microsoft",
+    adminConsentText:
+      "If you approved the app, people in your organisation can try again now. This page does not confirm the approval and does not sign you in.",
+    tenantTitle: "This account is not in the organisation",
+    tenantLead:
+      "Microsoft says that the account does not exist in the directory that this app signs in to. Sign in with an account of that organisation, or ask the administrator to invite you as a guest.",
+  },
   messages: {
     back: "Back to the start page",
     notAllowed: "Not allowed",
+    crossSiteRequest:
+      "This request came from another website. Open slotmirror directly and try again.",
     notAvailable: "Not available yet",
     errorTitle: "Something went wrong",
     errorText: "The request failed. Try again in a moment.",
@@ -473,8 +652,14 @@ export const en = {
     signInFailed: "Sign-in failed",
     noCode: (provider: string) => `${provider} returned no authorization code.`,
     exchangeFailed: (provider: string) =>
-      `The token exchange with ${provider} failed. See the Worker logs.`,
+      `The token exchange with ${provider} failed. If you ask for help, quote the code and the reference below.`,
+    providerRefusedText: (provider: string) =>
+      `${provider} sent an error. This page shows only its code, not its text. If you ask for help, quote the code and the reference below.`,
     notAllowedToSignIn: (email: string) => `${email} may not sign in to this deployment.`,
+    otherIdentity: (email: string, provider: string) =>
+      `In this deployment, ${email} belongs to a different ${provider} account. Sign in with the account you used before, or ask the administrator.`,
+    useOtherProvider: (email: string, provider: string) =>
+      `${email} signs in to this deployment with ${provider}. Use the ${provider} sign-in, or ask the administrator.`,
     connectFailed: "Connect failed",
     noRefreshToken: (provider: string) =>
       `${provider} returned no refresh token (offline_access missing).`,
@@ -484,18 +669,25 @@ export const en = {
     alreadyConnectedText: (email: string) =>
       `${email} is already connected by another user of this deployment.`,
   },
-  /** Text that the sync writes into mirrored blocks, in the language of the rule's owner. */
-  mirror: {
-    origin: (account: string, provider: string) => `From: ${account} (${provider})`,
-    /** For an account without a name: the provider only, never the address. */
-    originAccount: (provider: string) => `From: ${provider} account`,
-    microsoft: "Microsoft",
-    google: "Google",
-  },
   /** Texts for ALERT_WEBHOOK_URL. They go to the operator, in the first locale. */
   alerts: {
+    test: (url: string) =>
+      `slotmirror: this is a test alert from the admin page. The webhook works.${url ? ` ${url}` : ""}`,
     reconnect: (provider: string, url: string) =>
       `slotmirror: a ${provider} account needs reconnecting. Its calendars do not sync until its user reconnects it. The admin page lists the affected users.${url ? ` ${url}` : ""}`,
+    silentRules: (count: number, hours: number, idle: string, failing: string, url: string) =>
+      `slotmirror: ${count} active sync ${count === 1 ? "rule" : "rules"} had no successful run for ${hours} hours. They should run every hour, and their accounts are connected.${idle ? ` No run: ${idle}.` : ""}${failing ? ` Runs with errors: ${failing}.` : ""} The activity log on the admin page shows each run.${url ? ` ${url}` : ""}`,
+    checkBlind: (reason: string, url: string) =>
+      `slotmirror: the hourly check of the sync rules cannot do its work. ${reason} Until this ends, a rule can stop without an alert.${url ? ` ${url}` : ""}`,
+    blindCauses: {
+      scanLimit: "The audit log holds too many recent rows for one check.",
+      database: "A database read failed.",
+      access: "The access settings admit no owner of an active rule.",
+    },
+    abortedRuns: (count: number, ruleIds: string, url: string) =>
+      `slotmirror: a sync run of ${count} ${count === 1 ? "rule" : "rules"} stopped before its end, for example at a platform limit. The next run can repair this by itself. Rule IDs: ${ruleIds}. The activity log on the admin page shows each run.${url ? ` ${url}` : ""}`,
+    compareDeviations: (count: number, withRules: string, leftover: string, url: string) =>
+      `slotmirror: a comparison confirmed deviations in ${count} ${count === 1 ? "calendar" : "calendars"}.${withRules ? ` These stayed after a successful run: ${withRules}.` : ""}${leftover ? ` Two scans found blocks in calendars without an active rule: ${leftover}.` : ""} The admin page shows each comparison.${url ? ` ${url}` : ""}`,
   },
 };
 

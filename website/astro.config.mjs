@@ -6,25 +6,12 @@ const repo = "https://github.com/michaeljauk/slotmirror";
 // The only place that sets where the site lives. Pages build links from these two values.
 const site = "https://slotmirror.com";
 const base = "";
-// Cloudflare Web Analytics. The beacon token is public; the Pages workflow passes it from the
-// repository variable CF_ANALYTICS_TOKEN. Without it, the site loads no analytics script.
-const analyticsToken = process.env.PUBLIC_CF_ANALYTICS_TOKEN;
 
 /** @type {import("@astrojs/starlight/types").StarlightUserConfig["head"]} */
 const head = [
   { tag: "meta", attrs: { property: "og:image", content: `${site}${base}/social-preview.png` } },
   { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
 ];
-if (analyticsToken) {
-  head.push({
-    tag: "script",
-    attrs: {
-      defer: true,
-      src: "https://static.cloudflareinsights.com/beacon.min.js",
-      "data-cf-beacon": JSON.stringify({ token: analyticsToken }),
-    },
-  });
-}
 
 export default defineConfig({
   site,
@@ -34,7 +21,7 @@ export default defineConfig({
     starlight({
       title: "slotmirror",
       description:
-        "Keep Microsoft 365 and Google calendars in sync as busy blocks. Self-hosted on Cloudflare Workers, free plan.",
+        "Stop getting double-booked across Microsoft 365 and Google calendars. By default only Busy leaves a calendar. Self-hosted on Cloudflare Workers, free plan.",
       logo: {
         light: "../design/logo/lockup-light-bg.svg",
         dark: "../design/logo/lockup-dark-bg.svg",
@@ -43,6 +30,7 @@ export default defineConfig({
       },
       favicon: "/favicon.svg",
       head,
+      components: { Head: "./src/components/Head.astro" },
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/website/` },
       customCss: ["./src/styles/custom.css"],
@@ -61,6 +49,7 @@ export default defineConfig({
             { label: "Microsoft Entra app", slug: "docs/entra-setup" },
             { label: "Google OAuth client", slug: "docs/google-setup" },
             { label: "Push notifications", slug: "docs/push-notifications" },
+            { label: "Updating your deployment", slug: "docs/updating" },
           ],
         },
         {
@@ -74,6 +63,7 @@ export default defineConfig({
           label: "Reference",
           items: [
             { label: "Limits", slug: "docs/limits" },
+            { label: "Troubleshooting", slug: "docs/troubleshooting" },
             { label: "FAQ", slug: "docs/faq" },
             { label: "Local development and load tests", slug: "docs/development" },
           ],

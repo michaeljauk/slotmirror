@@ -38,6 +38,17 @@ export function providerErrorMessage(
 }
 
 /**
+ * The parts of a `providerErrorMessage`, or null for any other message. An error that crosses a
+ * Durable Object RPC boundary keeps only its message, so this is all that is left of it.
+ */
+export function parseProviderErrorMessage(
+  message: string,
+): { provider: string; status: number; reason: string | undefined } | null {
+  const match = /^(Graph|Google) .* failed: (\d{3})(?: (\w+))?$/.exec(message);
+  return match?.[1] ? { provider: match[1], status: Number(match[2]), reason: match[3] } : null;
+}
+
+/**
  * Wait this long when a throttled response has no `Retry-After`. Google sends none and recommends
  * exponential backoff up to 32 or 64 seconds; one fixed wait in that range keeps no retry state.
  */
@@ -73,6 +84,10 @@ export interface BatchResult {
   statuses: Record<string, number>;
   /** The longest `Retry-After` of the throttled actions, if the provider sent one. */
   retryAfterMs?: number;
+  /** Creates and updates of all-day blocks that the provider refused with 400, if any. */
+  allDayRefused?: number;
+  /** Creates and updates of all-day blocks that the provider accepted, if any. */
+  allDayAccepted?: number;
   /**
    * IDs of the events this batch created, updated or deleted, where the provider reports them.
    * They let the Worker recognise change notifications about its own writes.
@@ -97,10 +112,17 @@ export function summarizeBatch(
   const result: BatchResult = { failed: 0, throttled: 0, statuses: {} };
   actions.forEach((action, index) => {
     const { status = 0, reason, retryAfterMs } = outcome(index);
-    if (status >= 200 && status < 400) return;
+    const writesAllDay = action.kind !== "delete" && action.block.allDay;
+    if (status >= 200 && status < 400) {
+      if (writesAllDay) result.allDayAccepted = (result.allDayAccepted ?? 0) + 1;
+      return;
+    }
     if (action.kind === "delete" && (status === 404 || status === 410)) return;
     const key = reason ? `${status} ${reason}` : String(status);
     result.statuses[key] = (result.statuses[key] ?? 0) + 1;
+    if (status === 400 && writesAllDay) {
+      result.allDayRefused = (result.allDayRefused ?? 0) + 1;
+    }
     if (isThrottled(status, reason)) {
       result.throttled++;
       if (retryAfterMs !== undefined) {
@@ -136,6 +158,6 @@ export function throttleDelayMs(error: unknown): number | null {
   if (typeof status === "number") {
     return isThrottled(status, typeof reason === "string" ? reason : undefined) ? delay : null;
   }
-  const match = /^(?:Graph|Google) .* failed: (\d{3})(?: (\w+))?$/.exec(error.message);
-  return match && isThrottled(Number(match[1]), match[2]) ? delay : null;
+  const parsed = parseProviderErrorMessage(error.message);
+  return parsed && isThrottled(parsed.status, parsed.reason) ? delay : null;
 }

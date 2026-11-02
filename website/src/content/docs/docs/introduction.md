@@ -10,7 +10,8 @@ plan.
 
 It is for people with more than one calendar: consultants with client tenants, founders with two
 companies, anyone with a work and a private calendar. You host it yourself, so your calendar
-tokens stay with you and not with a sync service.
+tokens stay with you and not with a sync service. If someone else runs a deployment, that
+operator holds the tokens. The deployment then shows who runs it before you connect an account.
 
 :::caution[Early version]
 The version is below 1.0. Settings and the database can still change between releases.
@@ -26,7 +27,7 @@ The version is below 1.0. Settings and the database can still change between rel
   with title, or everything.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
-- **Changes within seconds.** Microsoft and Google notify your deployment when a calendar
+- **Changes arrive by push.** Microsoft and Google notify your deployment when a calendar
   changes. See [Push notifications](../push-notifications/).
 - **Recurring events are exact.** Each occurrence is mirrored on its own.
 - **Only differences are written.** Every run compares what each target should contain with what

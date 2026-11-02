@@ -3,20 +3,37 @@ import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
 import * as z from "zod/mini";
+import {
+  alertsConfigured,
+  checkSilentRules,
+  sendTestAlert,
+  silenceCheckCost,
+  TEST_ALERT_OUTCOMES,
+} from "./alerts";
+import { cleanupsOfOthers, NO_CLEANUPS, ownCleanups } from "./cleanup";
+import {
+  accountsToTick,
+  CRON_FIXED_SUBREQUESTS,
+  MAX_CRON_SUBREQUESTS,
+  spareSubrequests,
+} from "./cron";
 import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
   errorCode,
   errorLogFields,
+  latestCompares,
   latestRuleOutcomes,
   orgActivity,
   purgeAuditEvents,
   userActivity,
 } from "./audit";
 import { setupStatus, signInProviders } from "./config";
+import { operatorNotice } from "./operator-notice";
 import { i18nFromContext, LOCALES } from "./i18n";
-import { ActivityPage } from "./pages/activity";
+import { ActivityPage, OrgActivityPage } from "./pages/activity";
 import { AdminPage, type AdminUserRow } from "./pages/admin";
+import { CleanupPage } from "./pages/cleanup";
 import { DeleteUserPage } from "./pages/delete-user";
 import { DisconnectPage } from "./pages/disconnect";
 import { HomePage, SignInPage, type AccountRow, type AccountSettingsDraft } from "./pages/home";
@@ -36,23 +53,36 @@ import {
   renameAccount,
   setAccountColor,
   setAccountWorkHours,
+  setRuleDetails,
   type AccountWorkHours,
 } from "./editor";
 import { SESSION_COOKIE, verifySession } from "./session";
-import { loadUser, type CurrentUser } from "./users";
+import { loadUser, resetSignInBinding, type CurrentUser } from "./users";
 import { policyFromEnv } from "./access";
 import { detailCapsFromEnv } from "./detail-policy";
 import { accountSync } from "./durable";
 import { isValidToken, notifyChange } from "./webhooks";
-import { deleteUser, removeAccounts } from "./offboarding";
-import { scim } from "./routes/scim";
-import { feeds } from "./routes/feeds";
-import { feedResponse, listFeeds } from "./feeds";
-import { userCalendars } from "./calendars";
+import {
+  deleteUser,
+  heldRulesStatement,
+  releaseHeldRules,
+  removeAccounts,
+  type HeldRule,
+} from "./offboarding";
+import { crossSiteGuard, securityHeaders } from "./request-guard";
 
 export { AccountSync } from "./account-sync";
 
+/** A count from a query string, or 0 if it is none. */
+function countParam(value: string | undefined): number {
+  const count = Number.parseInt(value ?? "", 10);
+  return Number.isSafeInteger(count) && count > 0 ? count : 0;
+}
+
 const app = new Hono<AppEnv>();
+
+// First, so that every answer of the Worker carries the headers, also errors and redirects.
+app.use("*", securityHeaders);
 
 app.get("/healthz", (c) => c.text("ok"));
 
@@ -100,12 +130,6 @@ app.post("/webhooks/google", async (c) => {
   return c.body(null, 200);
 });
 
-// Private free/busy feeds for calendar apps. Before the language detector, which sets a cookie,
-// and before the session middleware: the secret in the address is the only credential.
-app.get("/ics/:feedId/:file", (c) =>
-  feedResponse(c.env, c.req.param("feedId"), c.req.param("file"), new URL(c.req.url).origin),
-);
-
 // Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
 app.use(
   "*",
@@ -120,16 +144,25 @@ app.use(
   }),
 );
 
-// SCIM provisioning from Entra: its own bearer token, independent of sessions and the setup.
-app.route("/scim/v2", scim);
+// After the language, so that a refusal speaks it. The webhooks above answer before this runs,
+// and the guard exempts them by path as well.
+app.use("*", crossSiteGuard);
+
+/** The signed-in user of the request, or null. Needs a finished setup. */
+async function sessionUser(c: Context<AppEnv>): Promise<CurrentUser | null> {
+  const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
+  return session ? loadUser(c.env, session.userId, session.version ?? 0) : null;
+}
 
 // Public, also before the setup is finished: Google requires a reachable privacy statement.
-app.get("/privacy", (c) =>
+app.get("/privacy", async (c) =>
   render(
     c,
     <PrivacyPage
+      user={setupStatus(c.env).ready ? await sessionUser(c) : null}
       operator={c.env.ORG_NAME?.trim() || "the operator"}
       contact={c.env.PRIVACY_CONTACT?.trim() ?? ""}
+      notice={operatorNotice(c.env)}
     />,
   ),
 );
@@ -140,29 +173,35 @@ app.use("*", async (c, next) => {
   if (!status.ready) {
     return render(c, <SetupPage status={status} />, 503);
   }
-  const session = await verifySession(getCookie(c, SESSION_COOKIE), c.env.SESSION_SECRET);
-  c.set("user", session ? await loadUser(c.env, session.userId) : null);
+  c.set("user", await sessionUser(c));
   await next();
 });
 
 app.route("/auth", auth);
 app.route("/rules", rules);
 app.route("/dev", dev);
-app.route("/feeds", feeds);
 
 app.get("/", async (c) => {
   const user = c.get("user");
   if (!user) {
     return render(c, <SignInPage providers={signInProviders(c.env)} />);
   }
-  return renderHome(c, user, { openSettings: c.req.query("settings") });
+  return renderHome(c, user, {
+    openSettings: c.req.query("settings"),
+    returnSource: c.req.query("from"),
+  });
 });
 
 /** The home page, with a notice and an account's settings open if given. */
 async function renderHome(
   c: Context<AppEnv>,
   user: CurrentUser,
-  options: { notice?: Notice; openSettings?: string; draft?: AccountSettingsDraft } = {},
+  options: {
+    notice?: Notice;
+    openSettings?: string;
+    draft?: AccountSettingsDraft;
+    returnSource?: string;
+  } = {},
   status: 200 | 400 = 200,
 ) {
   const { providers } = setupStatus(c.env);
@@ -173,11 +212,10 @@ async function renderHome(
   )
     .bind(user.id)
     .all<AccountRow>();
-  const [outcomes, editor, userFeeds, calendars] = await Promise.all([
+  const [outcomes, editor, cleanups] = await Promise.all([
     latestRuleOutcomes(c.env.DB, user.id),
     loadEditorState(c.env, user.id),
-    listFeeds(c.env.DB, user.id),
-    userCalendars(c.env.DB, user.id),
+    ownCleanups(c.env.DB, user.id),
   ]);
   return render(
     c,
@@ -185,13 +223,15 @@ async function renderHome(
       user={user}
       accounts={results}
       providers={providers}
+      operatorNotice={operatorNotice(c.env)}
       statuses={accountStatuses(outcomes)}
       editor={editor}
-      feeds={userFeeds}
-      calendars={calendars}
+      cleanups={cleanups.left.length}
+      cleanupsRunning={cleanups.running.length}
       notice={options.notice}
       openSettings={options.openSettings}
       draft={options.draft}
+      returnSource={options.returnSource}
     />,
     status,
   );
@@ -201,11 +241,13 @@ async function renderHome(
 const accountColorField = z.enum(["auto", ...ACCOUNT_COLOR_KEYS]);
 
 /**
- * Working hours from the account settings form. No weekday and no time, or the button "No working
- * hours", mean none. A time field cannot hold 24:00; "until midnight" stands for it.
+ * Working hours from the account settings form. The switch off, no weekday and no time, or the
+ * button "No working hours" of an older page, mean none. A time field cannot hold 24:00; "until
+ * midnight" stands for it.
  */
 function workHoursFrom(form: FormData): AccountWorkHours | null {
   if (form.get("workHours") === "none") return null;
+  if (form.has("workHoursSwitch") && !form.has("workHoursOn")) return null;
   const text = (name: string) => {
     const value = form.get(name);
     return typeof value === "string" ? value.trim() : "";
@@ -229,6 +271,8 @@ function settingsDraft(accountId: string, form: FormData): AccountSettingsDraft 
     color: text("color") || "auto",
     hours: form.has("workHoursShown")
       ? {
+          on: form.has("workHoursOn") || !form.has("workHoursSwitch"),
+          applyFrom: form.getAll("applyFrom").filter((value) => typeof value === "string"),
           workDays: form.getAll("workDays").map((value) => Number(value)),
           workStart: text("workStart"),
           workEnd: text("workEnd"),
@@ -253,6 +297,8 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     const color = form.has("color") ? accountColorField.safeParse(form.get("color")) : null;
     if (color && !color.success) return c.text("Bad colour", 400);
     const hours = form.has("workHoursShown") ? accountWorkHours(c.env, workHoursFrom(form)) : null;
+    const back = form.get("returnSource");
+    const returnSource = typeof back === "string" ? back : "";
     const refuse = (text: string) =>
       renderHome(
         c,
@@ -261,6 +307,7 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
           notice: { kind: "error", text },
           openSettings: accountId,
           draft: settingsDraft(accountId, form),
+          returnSource: returnSource || undefined,
         },
         400,
       );
@@ -272,6 +319,16 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     if (hours) {
       try {
         await setAccountWorkHours(c.env, user, accountId, hours.hours);
+        // Hours filter only the directions that use them, so the form sets both. Without hours
+        // the write above already cleared every rule.
+        const applyFrom = new Set(form.getAll("applyFrom"));
+        const workHours = form
+          .getAll("applyFromShown")
+          .filter((from) => typeof from === "string")
+          .map((from) => ({ from, to: accountId, on: applyFrom.has(from) }));
+        if (hours.hours && workHours.length > 0) {
+          await setRuleDetails(c.env, user, { workHours });
+        }
       } catch (error) {
         if (error instanceof EditorConflict) return refuse(t.editor.saveConflict);
         throw error;
@@ -284,6 +341,7 @@ for (const path of ["/accounts/:id/settings", "/accounts/:id/name"]) {
     if (form.has("name")) {
       await renameAccount(c.env, user, accountId, typeof name === "string" ? name : "");
     }
+    if (returnSource) return c.redirect(`/rules?open=${encodeURIComponent(returnSource)}`);
     return c.redirect(`/#account-${encodeURIComponent(accountId)}`);
   });
 }
@@ -398,6 +456,27 @@ app.post("/admin/users/:id/delete", async (c) => {
   return c.redirect("/admin");
 });
 
+app.post("/admin/users/:id/reset-sign-in", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const target = await deletableUser(c.env, user, c.req.param("id"));
+  if (!target) return c.notFound();
+  await resetSignInBinding(c.env, { id: target.id, orgId: user.orgId }, "admin");
+  return c.redirect("/admin");
+});
+
+// What an offboarding could not remove. An admin also sees the rest of users who cannot sign in.
+app.get("/cleanup", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  const [own, others] = await Promise.all([
+    ownCleanups(c.env.DB, user.id),
+    user.role === "admin" ? cleanupsOfOthers(c.env.DB, user.orgId) : NO_CLEANUPS,
+  ]);
+  return render(c, <CleanupPage user={user} own={own} others={others} />);
+});
+
 app.get("/activity", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
@@ -411,13 +490,13 @@ app.get("/admin", async (c) => {
     const { t } = i18nFromContext(c);
     return render(
       c,
-      <MessagePage title={t.messages.notAllowed} message={t.admin.onlyAdmins} />,
+      <MessagePage user={user} title={t.messages.notAllowed} message={t.admin.onlyAdmins} />,
       403,
     );
   }
   // Metadata only: no calendar contents, no tokens.
   const { results } = await c.env.DB.prepare(
-    `SELECT u.id, u.email, u.role, u.active, u.last_sign_in_at AS lastSignInAt,
+    `SELECT u.id, u.email, u.role, u.last_sign_in_at AS lastSignInAt,
             COUNT(a.id) AS accounts,
             COALESCE(SUM(a.needs_reconnect), 0) AS needsReconnect
      FROM users u LEFT JOIN accounts a ON a.user_id = u.id
@@ -428,12 +507,27 @@ app.get("/admin", async (c) => {
     .bind(user.orgId)
     .all<AdminUserRow>();
   const activity = await orgActivity(c.env.DB, user.orgId);
+  const compares = await latestCompares(c.env.DB, user.orgId);
+  const cleanups = await cleanupsOfOthers(c.env.DB, user.orgId);
   return render(
     c,
     <AdminPage
       user={user}
       users={results}
+      cleanups={cleanups.left.length}
       activity={activity}
+      compares={compares}
+      compareStart={
+        c.req.query("compare") === "requested"
+          ? {
+              started: countParam(c.req.query("started")),
+              open: countParam(c.req.query("open")),
+              failed: countParam(c.req.query("failed")),
+            }
+          : null
+      }
+      alertsConfigured={alertsConfigured(c.env)}
+      testAlert={TEST_ALERT_OUTCOMES.find((outcome) => outcome === c.req.query("alert")) ?? null}
       caps={detailCapsFromEnv(c.env)}
       org={{
         domains: policyFromEnv(c.env).allowedDomains,
@@ -441,6 +535,51 @@ app.get("/admin", async (c) => {
       }}
     />,
   );
+});
+
+app.get("/admin/activity", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  return render(c, <OrgActivityPage user={user} rows={await orgActivity(c.env.DB, user.orgId)} />);
+});
+
+// Start a comparison of every calendar of the org that a rule writes into, and of the writable
+// calendars without a rule. It costs one call per account, as the cron does; alarms read the
+// calendars. The redirect names what happened, because a calendar can stay open or refuse.
+app.post("/admin/compare", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const { results } = await c.env.DB.prepare(
+    `SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.org_id = ?`,
+  )
+    .bind(user.orgId)
+    .all<{ id: string }>();
+  const total = { started: 0, open: 0, failed: 0 };
+  for (const { id } of results) {
+    // One failing account must not stop the others.
+    try {
+      const { started, open, failed } = await accountSync(c.env, id).startCompares("full");
+      total.started += started;
+      total.open += open;
+      total.failed += failed;
+    } catch (error) {
+      console.error("Starting a comparison failed", id, errorCode(error));
+      total.failed++;
+    }
+  }
+  const { started, open, failed } = total;
+  return c.redirect(`/admin?compare=requested&started=${started}&open=${open}&failed=${failed}`);
+});
+
+// Post a test alert. The crossSiteGuard above covers this route, and D1 limits it to one per minute.
+app.post("/admin/test-alert", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (user.role !== "admin") return c.notFound();
+  const outcome = await sendTestAlert(c.env, { orgId: user.orgId, userId: user.id });
+  return c.redirect(`/admin?alert=${outcome}`);
 });
 
 // An unexpected error gets a page in the user's language, or a short text for the editor
@@ -458,20 +597,46 @@ app.onError((error, c) => {
   );
 });
 
-async function scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-  const { results } = await env.DB.prepare("SELECT id FROM accounts").all<{ id: string }>();
-  for (const { id } of results) {
+async function scheduled(controller: ScheduledController, env: Env): Promise<void> {
+  // Before the ticks: it must still run if they use up the subrequests of this invocation.
+  const checkCost = silenceCheckCost(env, controller.scheduledTime);
+  if (checkCost > 0) {
+    try {
+      await checkSilentRules(env, controller.scheduledTime);
+    } catch (error) {
+      console.error("Silence check failed", errorCode(error));
+    }
+  }
+  const { results } = await env.DB.prepare("SELECT id FROM accounts ORDER BY id").all<{
+    id: string;
+  }>();
+  const tickLimit = MAX_CRON_SUBREQUESTS - CRON_FIXED_SUBREQUESTS - checkCost;
+  if (results.length > tickLimit) {
+    console.error("Cron ticks rotate at the subrequest limit", tickLimit, results.length);
+  }
+  const spare = spareSubrequests(results.length, tickLimit);
+  let held: HeldRule[] = [];
+  try {
+    const now = controller.scheduledTime;
+    held = await purgeAuditEvents<HeldRule>(env.DB, heldRulesStatement(env, now, spare), now);
+  } catch (error) {
+    console.error("Audit purge failed", errorCode(error));
+  }
+  let holdsCost = 0;
+  try {
+    holdsCost = await releaseHeldRules(env, held, controller.scheduledTime, spare);
+  } catch (error) {
+    holdsCost = spare;
+    console.error("Releasing held rules failed", errorCode(error));
+  }
+  const ids = results.map(({ id }) => id);
+  for (const id of accountsToTick(ids, controller.scheduledTime, tickLimit - holdsCost)) {
     // One failing account must not stop the ticks of the others.
     try {
       await accountSync(env, id).tick();
     } catch (error) {
       console.error("Cron tick failed", id, errorCode(error));
     }
-  }
-  try {
-    await purgeAuditEvents(env.DB);
-  } catch (error) {
-    console.error("Audit purge failed", errorCode(error));
   }
 }
 

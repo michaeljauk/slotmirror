@@ -3,13 +3,15 @@ import type { Messages } from "./en";
 export const de: Messages = {
   nav: {
     accounts: "Konten",
-    rules: "Sync",
+    rules: "Regeln",
     activity: "Aktivität",
     admin: "Verwaltung",
+    main: "Hauptnavigation",
     accountMenu: "Kontomenü",
     signOut: "Abmelden",
     deleteMyData: "Meine Daten löschen",
     privacy: "Datenschutz",
+    version: "Version",
     language: "Sprache",
   },
   roles: {
@@ -18,18 +20,23 @@ export const de: Messages = {
   },
   signIn: {
     title: "Anmelden",
-    lead: "Halte deine Kalender synchron. Andere sehen nur, dass du belegt bist.",
+    lead: "Halte deine Kalender synchron. Standardmäßig sehen andere nur, dass du belegt bist.",
     withProvider: (provider) => `Mit ${provider} anmelden`,
-    fineprint: "Titel, Teilnehmer und Notizen verlassen nie den Quellkalender.",
+    googleNotice: "Google zeigt gleich, dass die App nicht überprüft ist.",
+    googleNoticeSteps: "Öffne dort die erweiterten Optionen und gehe über den Link weiter zur App.",
+    fineprint:
+      "Teilnehmer werden nie kopiert. Titel, Orte und Notizen werden nur kopiert, wenn eine Regel das verlangt.",
   },
   accounts: {
     title: "Konten",
     lead: "Kalender, aus denen diese App liest und in die sie schreibt.",
-    emptyTitle: "Noch kein Konto verbunden",
-    emptyText: "Verbinde mindestens zwei Kalender, um Belegt-Zeiten zwischen ihnen zu spiegeln.",
+    googleNotice: "Google zeigt gleich, dass die App nicht überprüft ist.",
+    googleNoticeSteps: "Öffne dort die erweiterten Optionen und gehe über den Link weiter zur App.",
     kindGoogle: "Google Kalender",
     kindMicrosoftWork: "Microsoft 365 · Geschäftskonto",
     kindMicrosoftPersonal: "Microsoft 365 · privates Konto",
+    operatorNoticeTitle: "Wer diese Installation betreibt",
+    operatorNoticeLink: "Datenschutzerklärung",
     connectedOn: (date) => `verbunden am ${date}`,
     inSync: (time: string) => `Synchron · ${time}`,
     partlySynced: (time: string) => `Teilweise synchron · ${time}`,
@@ -42,10 +49,18 @@ export const de: Messages = {
     disconnect: "Trennen",
     rename: "Einstellungen",
     workHoursLabel: "Arbeitszeit",
-    workHoursHint: "Gilt für alles, was in dieses Konto kopiert wird.",
-    workHoursTitle:
-      "Im Sync schaltest du sie pro Kalender ein. Ohne Arbeitszeit zählt der ganze Tag.",
-    workHoursNone: "Keine Arbeitszeit",
+    workHoursSwitch: "Nur während der Arbeitszeit kopieren",
+    workHoursHint: "Lass beide Zeiten leer für ganze Tage.",
+    workHoursApply: "Gilt für Kopien von",
+    workHoursNoRules:
+      "Noch kopiert nichts in dieses Konto. Sobald das so ist, schalte die Arbeitszeit in den Regeln ein.",
+    workHoursInUse: (hours, used, total) =>
+      `Arbeitszeit ${hours} · gilt für ${used} von ${total} ${total === 1 ? "Richtung" : "Richtungen"}`,
+    workHoursUnused: (hours) => `Arbeitszeit ${hours} filtert noch nichts.`,
+    noCalendars: "Es liessen sich keine Kalender laden.",
+    noCalendarsLink: "Regeln öffnen",
+    workHoursChoose: "Richtungen wählen",
+    workHoursIdle: (hours) => `Arbeitszeit ${hours} · noch kopiert nichts in dieses Konto`,
     colorLabel: "Farbe",
     colorHint: "Nur auf diesen Seiten, nicht in deinen Kalendern.",
     colorAuto: "Automatisch",
@@ -107,6 +122,10 @@ export const de: Messages = {
     runNow: "Jetzt ausführen",
     delete: "Löschen",
     refreshCalendars: "Kalender neu laden",
+    calendarsMissing: (names) =>
+      `Für ${names} liessen sich keine Kalender laden. Die Regeln zeigen dieses Konto deshalb nicht.`,
+    calendarsMissingGoogle:
+      "Bei einem Google-Konto muss der Betreiber im Google-Cloud-Projekt die Google Calendar API aktivieren.",
     noCalendars: "Verbinde zuerst ein Konto, dann erscheinen hier seine Kalender.",
     previewResult: (create, update, remove, unchanged) =>
       `Vorschau: ${create} anlegen, ${update} ändern, ${remove} löschen, ${unchanged} unverändert. Es wurde nichts geschrieben.`,
@@ -125,7 +144,7 @@ export const de: Messages = {
     pausedShort: "Pausiert",
   },
   editor: {
-    title: "Wohin deine Termine gehen",
+    title: "Regeln",
     lead: "Pro Kalender: wohin seine Termine gehen und wie viel man dort sieht.",
     views: "Ansicht",
     viewList: "Liste",
@@ -149,6 +168,7 @@ export const de: Messages = {
     exception: "Ausnahme",
     reset: "zurücksetzen",
     checkReal: "Mit echten Terminen prüfen",
+    checkShort: "Prüfen",
     capNote: (level: string) =>
       `Die Richtlinie dieser Installation erlaubt hier höchstens „${level}“.`,
     readOnly: "slotmirror kann in diesen Kalender nicht schreiben.",
@@ -157,7 +177,7 @@ export const de: Messages = {
     moreOptions: "Mehr Optionen",
     save: "Speichern",
     matrixCorner: "Von ↓ · nach →",
-    matrixHint: "Klick auf ein Feld öffnet den Kalender links.",
+    matrixHint: "Klick auf ein Feld öffnet diesen Kalender.",
     cellGroup: "Gruppe",
     cellException: "Ausnahme",
     manyTargets: (count: number) => `${count} Kalender`,
@@ -166,6 +186,10 @@ export const de: Messages = {
     stepConnectFirst: "Verbinde dein erstes Kalenderkonto.",
     stepConnectSecond: "Verbinde ein zweites, zum Beispiel deinen Arbeits- oder Privatkalender.",
     stepChoose: "Lege hier fest, wohin die Termine jedes Kalenders gehen.",
+    stepChooseRules: "Lege in den Regeln fest, wohin die Termine jedes Kalenders gehen.",
+    openRules: "Regeln öffnen",
+    activeDirections: (count) =>
+      count === 1 ? "1 Richtung ist aktiv." : `${count} Richtungen sind aktiv.`,
     quickStartTitle: "Schnellstart",
     quickStartText: (count: number) =>
       `Alle ${count} Kalender blocken sich gegenseitig als „Belegt“. Details stellst du danach ein.`,
@@ -181,9 +205,35 @@ export const de: Messages = {
     blockTitleLabel: "Titel belegter Blöcke",
     blockTitleHint: "Diesen Titel tragen Kopien mit der Stufe „Als belegt“.",
     defaultBlockTitle: "Belegt",
+    onlyCategoriesSummary: (count) =>
+      count === 0
+        ? "Nur bestimmte Kategorien kopieren"
+        : count === 1
+          ? "Kopiert nur 1 Kategorie"
+          : `Kopiert nur ${count} Kategorien`,
+    onlyColorsSummary: (count) =>
+      count === 0
+        ? "Nur bestimmte Farben kopieren"
+        : count === 1
+          ? "Kopiert nur 1 Farbe"
+          : `Kopiert nur ${count} Farben`,
+    onlyCategoriesHint:
+      "Termine ohne eine dieser Outlook-Kategorien werden nicht kopiert, und ihre vorhandenen Blöcke verschwinden. Eine leere Liste kopiert alle Termine. „Nicht kopieren“ hat Vorrang vor dieser Liste. Groß- und Kleinschreibung zählt nicht.",
+    onlyColorsHint:
+      "Termine ohne eine dieser Farben werden nicht kopiert, und ihre vorhandenen Blöcke verschwinden. Ohne gewählte Farbe werden alle Termine kopiert. Ein Termin in der Standardfarbe des Kalenders hat hier keine Farbe. „Nicht kopieren“ hat Vorrang vor dieser Auswahl.",
+    onlyCategoriesPlaceholder: "Arbeit, Kunde",
+    onlyCategoriesGoogle:
+      "Google-Termine haben Farben, keine Kategorien. Wähle stattdessen Farben. Es wurde nichts gespeichert.",
+    onlyCategoriesDirection:
+      "Diese Liste gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
-    skipCategoriesHint: "Outlook-Kategorien, durch Kommas getrennt, zum Beispiel Privat, Fokus.",
+    skipCategoriesHint:
+      "Termine mit einer dieser Outlook-Kategorien werden nicht kopiert. Gross- und Kleinschreibung zählt nicht.",
+    skipCategoriesCommas: "Trenne Namen durch Kommas.",
     skipCategoriesPlaceholder: "Privat, Fokus",
+    skipCategoriesAdd: "Kategorie eingeben, dann Enter",
+    skipCategoriesRemove: (name) => `${name} entfernen`,
+    skipGroupTitle: "Nicht kopieren",
     skipColorsLabel: "Google-Termine mit diesen Farben auslassen",
     weekdays: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
     weekdayNames: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
@@ -265,7 +315,8 @@ export const de: Messages = {
     mainCalendar: "Hauptkalender",
     noSource: "Kein Kalender gewählt. Schalte mindestens einen ein.",
     skipAllDayTitle: "Ganztägige Termine auslassen",
-    skipAllDayHint: "Sonst blocken Urlaub und Feiertage ganze Tage.",
+    skipAllDayHint:
+      "Sonst blocken Urlaub und Feiertage ganze Tage, außer sie sind als frei markiert.",
     skipTentativeTitle: "Termine mit Vorbehalt auslassen",
     skipTentativeHint: "„Vielleicht“-Antworten und vorläufige Termine blocken nicht.",
     markPrivateTitle: "Kopien als privat markieren",
@@ -289,17 +340,17 @@ export const de: Messages = {
     title: "Datenschutz",
     operator: (name, contact) =>
       `Diese Installation von slotmirror betreibt ${name}. Kontakt: ${contact}.`,
+    noticeTitle: "Hinweis des Betreibers",
     operatorUnknown: "Der Betreiber dieser Installation hat keine Kontaktadresse hinterlegt.",
     intro:
       "slotmirror spiegelt Belegt-Zeiten zwischen Kalendern. Es ist Open-Source-Software, die jeder Betreiber in seinem eigenen Cloudflare-Konto betreibt.",
     storedTitle: "Was gespeichert wird",
     stored: [
-      "Deine E-Mail-Adresse und bei Microsoft-Konten die Tenant-ID, um dich und deine verbundenen Konten zu erkennen.",
+      "Deine E-Mail-Adresse und bei Microsoft-Konten die Tenant-ID und Objekt-ID, um dich und deine verbundenen Konten zu erkennen.",
       "OAuth-Tokens je verbundenem Konto, verschlüsselt mit AES-256-GCM.",
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
       "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
-      "Für jeden Frei/Belegt-Feed, den du anlegst: seine Kalender, seine Einstellungen und ein Hash seiner geheimen Adresse. Wer die Adresse hat, sieht deine Belegt-Zeiten, ohne Inhalte. Der zuletzt erzeugte Feed, nur Belegt-Zeiten, wird beim Feed und im Cache von Cloudflare gehalten, um die nächsten Abrufe zu beantworten.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:
@@ -309,13 +360,16 @@ export const de: Messages = {
       "In Cloudflare Workers, D1 und Durable Objects im Cloudflare-Konto des Betreibers sowie bei Microsoft und Google, wenn Kalender gelesen und geschrieben werden.",
     deleteTitle: "Wie du deine Daten löschst",
     delete:
-      "Trennst du ein Konto, löscht slotmirror die dafür geschriebenen Blöcke und danach seine Tokens. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
+      "Trennst du ein Konto, löscht slotmirror die dafür geschriebenen Blöcke und danach seine Tokens. Lassen sich Blöcke nicht entfernen, bleiben Kalendername, Kalender-ID, Blocktitel, Anzahl, Zeitraum und Marker 90 Tage gespeichert, damit du sie von Hand löschen kannst. Die Kalender-ID eines primären Google-Kalenders ist deine E-Mail-Adresse. Um deinen Nutzer mit allen Daten zu löschen, nutze „Meine Daten löschen“ im Kontomenü.",
     googleTitle: "Nutzerdaten von Google",
     google:
       "Die Nutzung und Weitergabe von Informationen aus Google APIs durch slotmirror entspricht der Google API Services User Data Policy, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use). Daten werden nur genutzt, um Belegt-Zeiten nach deinen Regeln anzuzeigen und zu spiegeln, und werden nie verkauft, für Werbung genutzt oder von Menschen gelesen.",
     noTracking: "Es gibt kein Tracking, keine Analyse und keine Werbung.",
   },
   admin: {
+    activityLead: (count) =>
+      `Die letzten ${count} Ereignisse aller Nutzer dieser Instanz. Nur Metadaten.`,
+    activityAll: "Alle anzeigen",
     title: "Nutzer",
     lead: "Alle, die sich bei dieser Installation angemeldet haben. Kalenderinhalte bleiben privat.",
     email: "E-Mail",
@@ -325,7 +379,9 @@ export const de: Messages = {
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
     deleteUser: "Löschen",
-    inactive: "deaktiviert",
+    resetSignIn: "Anmeldung zurücksetzen",
+    resetSignInHint:
+      "Löst die Bindung an das Microsoft- oder Google-Konto und beendet die Sitzungen. 24 Stunden lang bindet eine Anmeldung unter einer bestätigten Adresse die Person an ein neues Konto; das bisherige Konto bleibt gesperrt. Danach ist ein neuer Reset nötig.",
     needsReconnect: (count) =>
       count === 1 ? "1 muss neu verbunden werden" : `${count} müssen neu verbunden werden`,
     reconnectSummary: (count) =>
@@ -346,12 +402,38 @@ export const de: Messages = {
     capAtMost: (level: string) => `Höchstens „${level}“`,
     capsHow:
       "Ändern über die Worker-Variablen MAX_DETAIL_TO_EXTERNAL und MAX_DETAIL_FROM_EXTERNAL.",
+    compareTitle: "Vergleich",
+    compareLead:
+      "Prüft jeden Zielkalender gegen seine Quellen: Blöcke, die fehlen, übrig sind, abweichen oder doppelt vorkommen.",
+    alertsTitle: "Alarme",
+    alertsLead: "Sende eine Testnachricht an den Webhook dieser Installation. Eine pro Minute.",
+    alertsOff: "Diese Installation hat keinen Alarm-Webhook und sendet deshalb keine Alarme.",
+    testAlertSend: "Test-Alarm senden",
+    testAlertResults: {
+      sent: "Der Webhook hat den Test-Alarm angenommen.",
+      off: "Diese Installation hat keinen Alarm-Webhook. Es wurde nichts gesendet.",
+      failed: "Der Webhook hat den Test-Alarm nicht angenommen. Das Worker-Log nennt den Grund.",
+      limited:
+        "Ein Test-Alarm wurde vor weniger als einer Minute angefordert. Versuche es in einer Minute wieder.",
+    },
+    compareStart: "Vergleich starten",
+    compareCounts: (started: number, open: number, failed: number) =>
+      `${started} gestartet, ${open} noch offen, ${failed} fehlgeschlagen. Ein Kalender bleibt offen, bis sein Vergleich endet. Ergebnisse erscheinen in wenigen Minuten hier.`,
+    compareEmpty: "Noch kein Vergleich.",
+    compareHorizon:
+      "Ein Vergleich lässt die ganztägigen Blöcke von heute und den letzten Tag jedes Sync-Fensters aus. Ein Treffer zählt erst, wenn er nach einem erfolgreichen Sync-Lauf bleibt. Ein Vergleich des ganzen Fensters liest auch beschreibbare Kalender ohne Regel: Jeder slotmirror-Block dort ist übrig.",
+    compareModes: {
+      full: "Ganzes Fenster",
+      near: "Nächste 7 Tage",
+      leftover: "Kalender ohne Regel",
+    },
   },
   activity: {
     title: "Aktivität",
     lead: "Deine letzten 100 Ereignisse: Anmeldungen, Änderungen und Synchronisierungen. Inhalte von Terminen werden nie protokolliert.",
     orgLead: "Die letzten 100 Ereignisse aller Personen dieser Installation. Nur Metadaten.",
     time: "Zeit",
+    account: "Konto",
     event: "Ereignis",
     details: "Details",
     empty: "Noch nichts passiert.",
@@ -362,6 +444,8 @@ export const de: Messages = {
       sign_out: "Abgemeldet",
       account_connected: "Konto verbunden",
       account_disconnected: "Konto getrennt",
+      account_disconnect_failed: "Trennen fehlgeschlagen",
+      cleanup_finished: "Entfernen der Blöcke beendet",
       account_renamed: "Konto umbenannt",
       token_refresh_failed: "Token-Erneuerung fehlgeschlagen",
       rule_created: "Regel erstellt",
@@ -371,79 +455,137 @@ export const de: Messages = {
       rule_updated: "Regel geändert",
       group_changed: "Gruppe geändert",
       settings_changed: "Sync-Einstellungen geändert",
-      user_provisioned: "Nutzer angelegt",
-      user_deactivated: "Nutzer deaktiviert",
-      user_reactivated: "Nutzer reaktiviert",
       user_deleted: "Nutzer gelöscht",
+      sign_in_reset: "Anmeldebindung zurückgesetzt",
       sync_run: "Synchronisierung",
       sync_failed: "Synchronisierung fehlgeschlagen",
-      feed_created: "Frei/Belegt-Feed erstellt",
-      feed_rotated: "Adresse des Frei/Belegt-Feeds erneuert",
-      feed_deleted: "Frei/Belegt-Feed gelöscht",
+      sync_run_aborted: "Sync-Lauf abgebrochen",
+      account_paused: "Konto pausiert",
+      account_resumed: "Konto wieder aktiv",
+      alert_sent: "Alarm an den Betreiber gesendet",
+      alert_test: "Test-Alarm angefordert",
+      compare_run: "Vergleich abgeschlossen",
+      compare_failed: "Vergleich fehlgeschlagen",
     },
     changes: (create: number, update: number, remove: number) =>
-      `+${create} / ~${update} / −${remove}`,
+      `${create} neu, ${update} geändert, ${remove} entfernt`,
     preview: (changes: string) => `Vorschau ${changes}`,
     failedCount: (count: number) => `${count} fehlgeschlagen`,
     throttledCount: (count: number) => `${count} gedrosselt, neuer Versuch nach der Wartezeit`,
     statuses: (list: string) => `HTTP ${list}`,
     remainingCount: (count: number) => `${count} offen`,
+    abortedDetail: "Ohne erfasstes Ergebnis beendet",
+    alertDetails: {
+      rule_silent: "Eine Regel hatte keinen erfolgreichen Lauf",
+      run_aborted: "Ein Lauf endete ohne Ergebnis",
+      check_blind: "Die stündliche Prüfung konnte die Regeln nicht ansehen",
+      compare_deviation: "Ein Vergleich hat Abweichungen bestätigt",
+    },
+    disconnectFailedDetail:
+      "Das Trennen ist gescheitert, das Konto bleibt. Seine Regeln laufen wieder und schreiben entfernte Blöcke zurück.",
+    cleanupRemoved: (count: number) =>
+      count === 1 ? "1 Block entfernt" : `${count} Blöcke entfernt`,
+    cleanupLeft: (count: number) => (count === 1 ? "1 Block übrig" : `${count} Blöcke übrig`),
+    cleanupAbout: (count: number) =>
+      count === 1 ? "etwa 1 Block übrig" : `etwa ${count} Blöcke übrig`,
+    cleanupReasons: {
+      incomplete: "der Anbieter antwortet weiter mit Fehlern, lösche den Rest von Hand",
+      token_refused: "der Anbieter lehnt die Tokens ab, lösche den Rest von Hand",
+      no_tokens: "das Konto hat keine Tokens, lösche den Rest von Hand",
+      deadline: "das Konto wurde nicht rechtzeitig neu verbunden, lösche den Rest von Hand",
+      not_started:
+        "der Stand der Entfernung ist nicht bekannt, neues Verbinden kann sie noch abschließen, sonst lösche den Rest von Hand",
+      kept: "die Entfernung konnte nicht starten, die Regel behält ihre Blöcke",
+    },
+    pausedDetail: (code: string) => `Wartet auf neue Verbindung (${code})`,
+    resumedDetail: "Synchronisiert wieder",
+    compareClean: (count: number) =>
+      count === 1 ? "Keine Abweichung in 1 Block" : `Keine Abweichung in ${count} Blöcken`,
+    compareFound: (missing: number, surplus: number, mismatched: number, duplicates: number) =>
+      `${missing} fehlen, ${surplus} übrig, ${mismatched} abweichend, ${duplicates} doppelt`,
+    compareCleared: (count: number, found: string) =>
+      `${count} gefunden, nach einem Sync-Lauf nicht mehr da (${found})`,
+    compareUnconfirmed: (count: number) => `${count} einmal gefunden, nicht bestätigt`,
+    compareCapped: "Liste gekürzt",
+    compareNothing: "Nichts zu vergleichen: kein Block gewünscht, keiner gefunden",
+    compareNoLeftovers: "Kein Block übrig",
+    compareReasons: {
+      removal_queue: "Aus diesem Kalender werden noch Blöcke entfernt",
+      token_lost: "Ein Konto hat sein Token verloren",
+      paused: "Ein Konto wartet auf neue Verbindung",
+      throttled: "Der Anbieter hat das Lesen gedrosselt",
+      config_changed: "Eine Regel hat sich während des Vergleichs geändert",
+      source_unavailable: "Ein Quellkalender ist nicht mehr lesbar",
+      read_failed: "Ein Kalender konnte nicht gelesen werden",
+      slice_too_large: "Ein Tag enthält zu viele Termine für den Vergleich",
+      empty_horizon: "Die Sync-Fenster sind für einen Vergleich zu kurz",
+      timeout: "Der Vergleich endete nicht innerhalb eines Tages",
+      superseded: "Ein Vergleich des ganzen Fensters hat diesen abgelöst",
+      owner_not_admitted: "Der Inhaber dieses Kalenders hat keinen Zugang mehr",
+    },
   },
-  feeds: {
-    title: "Frei/Belegt-Feed",
-    lead: "Eine geheime Kalenderadresse für Personen außerhalb dieser Installation. Sie zeigt, wann du belegt bist, nie, was du tust.",
-    empty: "Noch kein Feed.",
-    noCalendars:
-      "Deine Kalender erscheinen hier, sobald du nach dem Verbinden eines Kontos die Sync-Einstellungen öffnest.",
-    feedTitle: (date) => `Feed vom ${date}`,
-    renewedOn: (date) => `neue Adresse ${date}`,
-    daysAhead: (count) => `${count} Tage voraus`,
-    withAllDay: "mit ganztägigen Terminen",
-    cut: (date) =>
-      `Zu viele Belegt-Zeiten: Der Feed endet vor dem ${date}. Wähle weniger Tage oder Kalender.`,
-    calendarUnreadable: (name) =>
-      `„${name}“ lässt sich nicht mehr lesen, Abonnenten bekommen keine Aktualisierung. Entferne den Kalender aus dem Feed.`,
-    removeCalendar: "Kalender entfernen",
-    create: "Neuer Feed",
-    calendarsLabel: (max) => `Kalender, höchstens ${max}`,
-    daysLabel: "Tage voraus",
-    allDayLabel: "Ganztägige Termine einschließen",
-    shares:
-      "Abonnenten sehen, wann du belegt bist, ab 7 Tagen in der Vergangenheit: Blöcke mit dem Titel „Belegt“, als privat markiert, wobei überlappende Termine einen Block bilden. Titel, Orte, Notizen und Teilnehmer bleiben draußen, ebenso freie und abgelehnte Termine. Wählbar sind nur Kalender, die deinen Konten gehören.",
-    submit: "Feed erstellen",
-    rotate: "Neue Adresse",
-    rotateText:
-      "Die bisherige Adresse funktioniert sofort nicht mehr. Wer sie abonniert hat, braucht die neue.",
-    rotateConfirm: "Neue Adresse erstellen",
-    remove: "Löschen",
-    removeText:
-      "Die Adresse funktioniert sofort nicht mehr. Abonnenten sehen deine Belegt-Zeiten nicht mehr.",
-    removeConfirm: "Feed löschen",
-    urlTitle: "Deine Feed-Adresse",
-    urlLead:
-      "Kopiere die Adresse jetzt. Sie wird nur einmal angezeigt; slotmirror speichert nur einen Hash davon.",
-    urlHint:
-      "Wer diese Adresse hat, sieht deine Belegt-Zeiten. Gib sie nur Personen, die sie sehen sollen. Sie abonnieren sie per URL in ihrer Kalender-App. Eine Änderung erscheint nach etwa 15 Minuten, plus dem Aktualisierungsintervall ihrer App.",
-    copy: "Kopieren",
-    copied: "Kopiert",
-    back: "Zurück zu den Konten",
-    errorTitle: "Feed nicht erstellt",
-    noCalendar: "Wähle mindestens einen Kalender.",
-    tooManyCalendars: (max) => `Wähle höchstens ${max} Kalender.`,
-    tooManyFeeds: (max) => `Du hast bereits ${max} Feeds. Lösche zuerst einen.`,
-    calendarName: "Belegt-Zeiten",
-    eventTitle: "Belegt",
+  cleanup: {
+    title: "Verbliebene Blöcke in Kalendern",
+    lead: "slotmirror konnte die Entfernung dieser Blöcke nicht bestätigen, nachdem ein Konto oder ein Nutzer gegangen ist. Lösche, was übrig ist, von Hand im Kalender.",
+    reconnectDoesNotHelp:
+      "Ein erneutes Verbinden des Kontos entfernt sie nur, wenn der Eintrag das nennt.",
+    runningTitle: "Laufende Entfernungen",
+    runningLead: "slotmirror entfernt diese Blöcke noch.",
+    running: (date: string) =>
+      `Wartet das Konto auf eine neue Verbindung, endet sie um den ${date}.`,
+    runningNotice: (count: number) =>
+      count === 1
+        ? "slotmirror entfernt noch Blöcke aus 1 Kalender."
+        : `slotmirror entfernt noch Blöcke aus ${count} Kalendern.`,
+    othersTitle: "Gelöschte Nutzer",
+    othersLead:
+      "Diese Nutzer sehen diese Seite nicht. Ihre Blöcke bleiben in ihren Kalendern, bis jemand sie löscht.",
+    empty: "Es sind keine Blöcke übrig.",
+    unnamedCalendar: "Ein Kalender ohne gespeicherten Namen",
+    count: (count: number) => (count === 1 ? "1 Block übrig" : `${count} Blöcke übrig`),
+    aboutCount: (count: number) =>
+      count === 1
+        ? "Etwa 1 Block übrig, laut letzter Synchronisierung"
+        : `Etwa ${count} Blöcke übrig, laut letzter Synchronisierung`,
+    unknownCount: "Die Anzahl der Blöcke ist nicht bekannt",
+    period: (from: string, to: string) => `Zwischen ${from} und ${to}`,
+    marker: (tag: string, title: string) => `Titel „${title}“, Marker ${tag}`,
+    markerOnly: (tag: string) => `Marker ${tag}`,
+    markerHelp:
+      "Der Marker ist eine versteckte Eigenschaft jedes Blocks. Kalender-Apps zeigen ihn nicht, die API des Anbieters liefert ihn. Vergangene Blöcke bleiben als Nachweis stehen.",
+    reasons: {
+      incomplete: "Der Anbieter antwortete weiter mit Fehlern.",
+      token_refused: "Der Anbieter lehnte die Tokens ab.",
+      no_tokens: "Das Konto hat keine Tokens.",
+      deadline: "Das Konto wurde nicht rechtzeitig neu verbunden.",
+      not_started:
+        "Der Stand dieser Entfernung ist nicht bekannt, es können Blöcke übrig sein. Ein erneutes Verbinden des Kontos kann die Entfernung noch abschließen. Sonst lösche sie von Hand.",
+    },
+    notice: (count: number) =>
+      count === 1 ? "In 1 Kalender sind Blöcke übrig." : `In ${count} Kalendern sind Blöcke übrig.`,
+    show: "Anzeigen",
+    adminLink: (count: number) =>
+      count === 1
+        ? "In 1 Kalender sind Blöcke gelöschter Nutzer übrig"
+        : `In ${count} Kalendern sind Blöcke gelöschter Nutzer übrig`,
   },
   setup: {
     title: "Einrichtung abschließen",
-    lead: "Setze die fehlenden Werte als Worker-Variablen oder Secrets oder im Cloudflare-Dashboard und lade die Seite neu.",
+    lead: "Setze die fehlenden Werte als Variablen oder Secrets im Cloudflare-Dashboard (dein Worker, Settings, Variables and Secrets) und lade die Seite neu.",
     set: "Gesetzt",
     accessHint:
       "Wer sich anmelden darf. Deine eigene Adresse für eine persönliche Installation, deine E-Mail-Domain für ein Team.",
-    sessionHint: "Mindestens 32 Zeichen. Erzeugen mit: openssl rand -base64 48",
-    keyHint: "Ein Base64-kodierter 32-Byte-Schlüssel. Erzeugen mit: openssl rand -base64 32",
+    sessionHint:
+      "Mindestens 32 Zeichen. Mit openssl: openssl rand -base64 48. Ohne openssl zeigt der Quickstart einen Weg für Windows.",
+    keyHint:
+      "Ein Base64-kodierter 32-Byte-Schlüssel. Mit openssl: openssl rand -base64 32. Ohne openssl zeigt der Quickstart einen Weg für Windows.",
     providerHint:
-      "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Die Schritte zur App-Registrierung stehen in der README.",
+      "Mindestens ein Anbieter, den SIGN_IN_PROVIDERS für die Anmeldung erlaubt. Der Quickstart zeigt die Schritte zur App-Registrierung.",
+    providerInvalidHint: (value: string) =>
+      `SIGN_IN_PROVIDERS steht auf „${value}“. Gültige Einträge sind microsoft und google. Beide schreibst du so: microsoft,google. Oder entferne die Variable, dann gilt jeder eingerichtete Anbieter.`,
+    jurisdictionNote:
+      "Wenn die Daten in der EU bleiben sollen, setze jetzt DATA_JURISDICTION auf eu, bevor du das erste Konto verbindest. Eine spätere Änderung trennt alle Konten. Setze außerdem PUBLIC_URL auf die Adresse dieses Workers, damit Änderungen schnell ankommen.",
+    docsLink: "Quickstart öffnen",
   },
   deleteUser: {
     titleSelf: "Meine Daten löschen",
@@ -464,9 +606,41 @@ export const de: Messages = {
     doneTitle: "Deine Daten sind gelöscht",
     doneText: "Die Blöcke verschwinden in den nächsten Minuten aus deinen Kalendern.",
   },
+  oauthError: {
+    codeLabel: "Fehlercode",
+    referenceLabel: "Referenz",
+    help: "Was dieser Code bedeutet",
+    tryAgain: "Erneut versuchen",
+    back: "Zurück",
+    consentTitle: (provider) => `${provider} braucht zuerst eine Freigabe`,
+    consentLead: (provider) =>
+      `${provider} hat slotmirror nicht weitermachen lassen. Vielleicht hast du abgebrochen, oder deine Organisation erlaubt es nicht, Apps selbst freizugeben.`,
+    consentSteps:
+      "Wenn du abgebrochen hast, versuche es noch einmal. Wenn deine Organisation die Freigabe sperrt, schicke die Anfrage unten an deine IT-Administration. Versuche es erneut, sobald sie freigegeben hat.",
+    googleConsentSteps:
+      "Wenn du abgebrochen hast, versuche es noch einmal und gib den Zugriff frei, um den Google bittet.",
+    requestTitle: "Anfrage an deine Administration",
+    copy: "Kopieren",
+    copied: "Kopiert",
+    adminRequest: (params) =>
+      `Bitte gebt die App "${params.appName}" für unsere Microsoft-365-Organisation frei.\n\n` +
+      `Anwendungs-ID (Client-ID): ${params.clientId}\n` +
+      `Berechtigungen (delegiert): ${params.permissions}\n` +
+      `Zweck: Die App liest die Belegtzeiten von Kalendern und schreibt "Busy"-Blöcke in andere Kalender. Teilnehmer werden nie kopiert. Titel, Orte und Notizen werden nur kopiert, wenn eine Regel das verlangt.\n\n` +
+      `Für die ganze Organisation freigeben: ${params.link}\n` +
+      `Dafür ist die Rolle Globaler Administrator, Administrator für privilegierte Rollen oder Cloudanwendungsadministrator nötig.`,
+    adminConsentTitle: "Zurück von Microsoft",
+    adminConsentText:
+      "Wenn du die App freigegeben hast, können es Personen deiner Organisation jetzt erneut versuchen. Diese Seite bestätigt die Freigabe nicht und meldet dich nicht an.",
+    tenantTitle: "Dieses Konto gehört nicht zur Organisation",
+    tenantLead:
+      "Microsoft meldet, dass das Konto im Verzeichnis dieser App nicht existiert. Melde dich mit einem Konto dieser Organisation an, oder lass dich von der Administration als Gast einladen.",
+  },
   messages: {
     back: "Zurück zur Startseite",
     notAllowed: "Nicht erlaubt",
+    crossSiteRequest:
+      "Diese Anfrage kam von einer anderen Website. Öffne slotmirror direkt und versuche es noch einmal.",
     notAvailable: "Noch nicht verfügbar",
     errorTitle: "Etwas ist schiefgelaufen",
     errorText: "Die Anfrage ist fehlgeschlagen. Bitte gleich noch einmal versuchen.",
@@ -479,8 +653,14 @@ export const de: Messages = {
     signInFailed: "Anmeldung fehlgeschlagen",
     noCode: (provider) => `${provider} hat keinen Autorisierungscode geliefert.`,
     exchangeFailed: (provider) =>
-      `Der Token-Austausch mit ${provider} ist fehlgeschlagen. Details stehen in den Worker-Logs.`,
+      `Der Token-Austausch mit ${provider} ist fehlgeschlagen. Nenne bei einer Rückfrage den Code und die Referenz unten.`,
+    providerRefusedText: (provider) =>
+      `${provider} hat einen Fehler gemeldet. Diese Seite zeigt nur den Code, nicht den Text. Nenne bei einer Rückfrage den Code und die Referenz unten.`,
     notAllowedToSignIn: (email) => `${email} darf sich bei dieser Installation nicht anmelden.`,
+    otherIdentity: (email, provider) =>
+      `${email} gehört in dieser Installation zu einem anderen ${provider}-Konto. Melde dich mit dem Konto an, das du bisher verwendet hast, oder frag die Verwaltung.`,
+    useOtherProvider: (email, provider) =>
+      `${email} meldet sich bei dieser Installation mit ${provider} an. Nutze die Anmeldung mit ${provider}, oder frag die Verwaltung.`,
     connectFailed: "Verbinden fehlgeschlagen",
     noRefreshToken: (provider) =>
       `${provider} hat kein Refresh-Token geliefert (offline_access fehlt).`,
@@ -490,14 +670,23 @@ export const de: Messages = {
     alreadyConnectedText: (email) =>
       `${email} ist bereits von einem anderen Nutzer dieser Installation verbunden.`,
   },
-  mirror: {
-    origin: (account, provider) => `Aus: ${account} (${provider})`,
-    originAccount: (provider) => `Aus: ${provider}-Konto`,
-    microsoft: "Microsoft",
-    google: "Google",
-  },
   alerts: {
+    test: (url) =>
+      `slotmirror: Dies ist ein Test-Alarm von der Verwaltungsseite. Der Webhook funktioniert.${url ? ` ${url}` : ""}`,
     reconnect: (provider, url) =>
       `slotmirror: Ein ${provider}-Konto muss neu verbunden werden. Bis sein Nutzer es neu verbindet, werden seine Kalender nicht synchronisiert. Die Verwaltungsseite zeigt die betroffenen Nutzer.${url ? ` ${url}` : ""}`,
+    silentRules: (count, hours, idle, failing, url) =>
+      `slotmirror: ${count} aktive ${count === 1 ? "Sync-Regel hatte" : "Sync-Regeln hatten"} seit ${hours} Stunden keinen erfolgreichen Lauf. Sie sollten stündlich laufen, und ihre Konten sind verbunden.${idle ? ` Kein Lauf: ${idle}.` : ""}${failing ? ` Läufe mit Fehlern: ${failing}.` : ""} Das Aktivitätsprotokoll auf der Verwaltungsseite zeigt jeden Lauf.${url ? ` ${url}` : ""}`,
+    checkBlind: (reason, url) =>
+      `slotmirror: Die stündliche Prüfung der Sync-Regeln kann nicht arbeiten. ${reason} Bis das endet, kann eine Regel ohne Alarm stehen bleiben.${url ? ` ${url}` : ""}`,
+    blindCauses: {
+      scanLimit: "Das Aktivitätsprotokoll enthält zu viele neue Zeilen für eine Prüfung.",
+      database: "Ein Lesezugriff auf die Datenbank schlug fehl.",
+      access: "Die Zugriffseinstellungen lassen keinen Besitzer einer aktiven Regel zu.",
+    },
+    abortedRuns: (count, ruleIds, url) =>
+      `slotmirror: Ein Sync-Lauf von ${count} ${count === 1 ? "Regel" : "Regeln"} hat vor seinem Ende gestoppt, zum Beispiel an einem Plattform-Limit. Der nächste Lauf kann das selbst beheben. Regel-IDs: ${ruleIds}. Das Aktivitätsprotokoll auf der Verwaltungsseite zeigt jeden Lauf.${url ? ` ${url}` : ""}`,
+    compareDeviations: (count, withRules, leftover, url) =>
+      `slotmirror: Ein Vergleich hat Abweichungen in ${count} ${count === 1 ? "Kalender" : "Kalendern"} bestätigt.${withRules ? ` Diese blieben nach einem erfolgreichen Lauf bestehen: ${withRules}.` : ""}${leftover ? ` Zwei Scans fanden Blöcke in Kalendern ohne aktive Regel: ${leftover}.` : ""} Die Verwaltungsseite zeigt jeden Vergleich.${url ? ` ${url}` : ""}`,
   },
 };

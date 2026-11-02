@@ -1,0 +1,31 @@
+{
+  "id": "privacy-attendee",
+  "title": "The attendee of an event never reaches the target at the default detail level",
+  "covers": "data that must not reach the target",
+  "expectedText": "A block exists, and none of its fields holds the attendee of the event. This scenario checks data only, not times.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": {
+        "start": "week+1d@10:00Z",
+        "end": "week+1d@11:00Z",
+        "title": "Meeting",
+        "location": "Room",
+        "description": "Notes",
+        "attendees": ["suite.attendee.7q2@example.invalid"]
+      }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "minEntries": 1,
+        "forbidden": ["suite.attendee.7q2@example.invalid"]
+      }
+    }
+  ]
+}

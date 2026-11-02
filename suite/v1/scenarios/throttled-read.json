@@ -1,0 +1,30 @@
+{
+  "id": "throttled-read",
+  "title": "A throttled source read waits for Retry-After, then the block appears",
+  "covers": "throttling with Retry-After",
+  "expectedText": "The source answers a read with 429 and Retry-After 120. For the next 110 seconds the tool makes no call to the source and the target stays free. Within two minutes after that the target is busy.",
+  "localLimit": "Both directions raise the read error of one calendar system. The error path of the other system stays unchecked.",
+  "requires": ["faults", "provider-calls", "clock"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    { "do": "control", "action": "throttle-reads", "calendar": "source", "retryAfterSeconds": 120 },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    { "do": "wait-for-fault" },
+    { "do": "expect-no-calls", "calendar": "source", "seconds": 110 },
+    { "do": "expect", "window": ["week@00:00Z", "week+7d@00:00Z"], "busy": [] },
+    {
+      "do": "sync",
+      "timeoutSeconds": 120,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+1d@10:00Z", "week+1d@11:00Z"]],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

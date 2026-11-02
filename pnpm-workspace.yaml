@@ -1,6 +1,7 @@
 packages:
   - .
   - website
+  - waitlist
 
 # Supply-chain cooldown: install only versions older than three days.
 minimumReleaseAge: 4320

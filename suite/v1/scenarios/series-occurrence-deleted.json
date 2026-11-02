@@ -1,0 +1,47 @@
+{
+  "id": "series-occurrence-deleted",
+  "title": "A deleted occurrence of a daily series frees that day only",
+  "covers": "deleted occurrence of a series",
+  "expectedText": "Monday, Tuesday, Wednesday and Friday are busy 09:00 to 09:30 UTC. Thursday is free.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "daily",
+      "event": {
+        "start": "week@09:00Z",
+        "end": "week@09:30Z",
+        "repeat": { "every": "day", "count": 5 }
+      }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week@09:00Z", "week@09:30Z"],
+          ["week+1d@09:00Z", "week+1d@09:30Z"],
+          ["week+2d@09:00Z", "week+2d@09:30Z"],
+          ["week+3d@09:00Z", "week+3d@09:30Z"],
+          ["week+4d@09:00Z", "week+4d@09:30Z"]
+        ],
+        "noDuplicates": true
+      }
+    },
+    { "do": "write", "change": "delete-occurrence", "key": "daily", "occurrence": 3 },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week@09:00Z", "week@09:30Z"],
+          ["week+1d@09:00Z", "week+1d@09:30Z"],
+          ["week+2d@09:00Z", "week+2d@09:30Z"],
+          ["week+4d@09:00Z", "week+4d@09:30Z"]
+        ],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

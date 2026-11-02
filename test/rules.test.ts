@@ -169,10 +169,10 @@ describe("pause and enable", () => {
     ).first<{ id: string; enabled: number }>();
     expect(rule?.enabled).toBe(0);
     const { rulesTargetingAccount } = await import("../src/sync/rules");
-    expect(await rulesTargetingAccount(env.DB, "acc-t1")).toEqual([]);
+    expect(await rulesTargetingAccount(env, "acc-t1")).toEqual([]);
 
     expect((await post(`/rules/${rule?.id}/enable`, cookie)).status).toBe(302);
-    expect(await rulesTargetingAccount(env.DB, "acc-t1")).toEqual([rule?.id]);
+    expect(await rulesTargetingAccount(env, "acc-t1")).toEqual([rule?.id]);
     const audit = await env.DB.prepare(
       "SELECT kind FROM audit_events WHERE rule_id = ? ORDER BY id DESC",
     )
@@ -181,7 +181,7 @@ describe("pause and enable", () => {
     expect(audit?.kind).toBe("rule_enabled");
 
     expect((await post(`/rules/${rule?.id}/pause`, cookie)).status).toBe(302);
-    expect(await rulesTargetingAccount(env.DB, "acc-t1")).toEqual([]);
+    expect(await rulesTargetingAccount(env, "acc-t1")).toEqual([]);
   });
 
   it("does not let a user switch someone else's rule", async () => {

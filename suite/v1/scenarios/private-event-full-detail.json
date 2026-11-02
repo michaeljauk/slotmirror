@@ -1,0 +1,61 @@
+{
+  "id": "private-event-full-detail",
+  "title": "A rule that copies all details still shows nothing of a private event",
+  "covers": "private event",
+  "expectedText": "The rule copies title, location and description. The block of the private Tuesday event holds none of them, and the block of the public Wednesday event holds its title.",
+  "requires": ["detail-levels"],
+  "calendars": {
+    "source": {
+      "timeZone": "UTC"
+    },
+    "target": {
+      "timeZone": "UTC"
+    }
+  },
+  "rule": {
+    "detail": "full"
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "doctor",
+      "event": {
+        "start": "week+1d@10:00Z",
+        "end": "week+1d@11:00Z",
+        "visibility": "private",
+        "title": "SUITE-PRIVATE-TITLE-8H3",
+        "location": "SUITE-PRIVATE-LOCATION-8H3",
+        "description": "SUITE-PRIVATE-DESCRIPTION-8H3"
+      }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "open",
+      "event": {
+        "start": "week+2d@10:00Z",
+        "end": "week+2d@11:00Z",
+        "title": "SUITE-OPEN-TITLE-8H3"
+      }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@10:00Z", "week+1d@11:00Z"],
+          ["week+2d@10:00Z", "week+2d@11:00Z"]
+        ],
+        "forbidden": [
+          "SUITE-PRIVATE-TITLE-8H3",
+          "SUITE-PRIVATE-LOCATION-8H3",
+          "SUITE-PRIVATE-DESCRIPTION-8H3"
+        ],
+        "required": ["SUITE-OPEN-TITLE-8H3"],
+        "noDuplicates": true
+      }
+    }
+  ]
+}

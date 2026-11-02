@@ -4,17 +4,31 @@ import editor from "../../../docs/images/editor.png";
 import "../styles/home.css";
 
 const repo = "https://github.com/michaeljauk/slotmirror";
-const deploy = `https://deploy.workers.cloudflare.com/?url=${repo}`;
-const title = "slotmirror: calendar sync that keeps up with moved meetings";
+const title = "slotmirror: stop getting double-booked across Microsoft and Google calendars";
 const description =
-  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. Moved meetings move their copies within seconds. Runs in your own Cloudflare account, on the free plan.";
+  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. By default only Busy leaves a calendar. Runs in your own Cloudflare account, on the free plan.";
+
+// Hero sentence, two variants. No latency has been measured yet, so the live variant names no
+// number. After the measurement, replace `null` with the measured values and the conditions, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
+// That one change turns on the second variant. Never fill in a figure that was not measured.
+const latency: { p50: string; p95: string; conditions: string } | null = null;
+const heroSub = latency
+  ? `By default only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies in a median of ${latency.p50} (p95: ${latency.p95}; ${latency.conditions}). It runs in your own Cloudflare account on the free plan, with no server to run.`
+  : `By default only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies. It runs in your own Cloudflare account on the free plan, with no server to run. The default window is the next 90 days.`;
 
 // Links inside the site. The base comes from astro.config.mjs, the only place that sets it.
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const page = (path: string) => `${base}/${path}`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const preview = new URL(page("social-preview.png"), Astro.site);
-const analyticsToken = import.meta.env.PUBLIC_CF_ANALYTICS_TOKEN;
+
+// The waitlist form shows only if both build variables are set. Without them nothing renders.
+const waitlistUrl = (import.meta.env.PUBLIC_WAITLIST_URL as string | undefined)
+  ?.trim()
+  .replace(/\/$/, "");
+const turnstileKey = (import.meta.env.PUBLIC_TURNSTILE_SITE_KEY as string | undefined)?.trim();
+// An address without https:// would make a relative endpoint, so it counts as unset.
+const waitlist = Boolean(waitlistUrl?.startsWith("https://") && turnstileKey);
 
 const guides = [
   {
@@ -126,16 +140,6 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         });
       })();
     </script>
-    {
-      analyticsToken ? (
-        <script
-          is:inline
-          defer
-          src="https://static.cloudflareinsights.com/beacon.min.js"
-          data-cf-beacon={JSON.stringify({ token: analyticsToken })}
-        />
-      ) : null
-    }
   </head>
   <body>
     <header class="top">
@@ -174,18 +178,20 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
     <main>
       <div class="wrap hero">
         <div>
-          <h1>The calendar sync that keeps up with moved meetings.</h1>
-          <p class="sub">
-            Move a meeting in one calendar, and its busy copies move in all the others within
-            seconds. Microsoft 365 and Google, self-hosted on Cloudflare.
-          </p>
+          <h1>Stop getting double-booked across your Microsoft and Google calendars.</h1>
+          <p class="sub">{heroSub}</p>
           <div class="buttons">
-            <a class="button primary" href={deploy}
-              ><Fragment set:html={cloudflare} />Deploy to Cloudflare</a
+            <a class="button primary" href={page("docs/quickstart/")} data-track="quickstart_click"
+              ><Fragment set:html={cloudflare} />Start the quickstart</a
             >
             <a class="button" href={repo}><Fragment set:html={github} />View on GitHub</a>
           </div>
-          <p class="note">Runs on the Cloudflare Workers free plan · AGPL-3.0 licence</p>
+          <p class="prereq">
+            Before you start: you register your own Microsoft Entra app and Google OAuth client.
+            This is an early version, below 1.0. Settings and the database can still change
+            between releases.
+          </p>
+          <p class="note">Runs on the Cloudflare Workers free plan</p>
         </div>
 
         <div class="demo" role="region" aria-label="Interactive demo">
@@ -240,8 +246,8 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
               <b>1</b>
               <h3>Deploy</h3>
               <p>
-                Deploy the Worker and its database to your Cloudflare account, with the button or
-                with wrangler.
+                Deploy the Worker and its database to your Cloudflare account. The quickstart
+                covers both ways: the deploy button and wrangler.
               </p>
             </div>
             <div class="step" style="--c:var(--c-vermilion)">
@@ -269,16 +275,16 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
           <h2>One page for every direction</h2>
           <p class="lead">
             Each calendar gets a card: where its events go and how much shows there. The overview
-            on the right shows all directions at once.
+            shows all directions at once.
           </p>
           <figure class="shot">
             <Image
               src={editor}
               widths={[640, 960, editor.width]}
               sizes="(max-width: 1120px) 100vw, 1080px"
-              alt="The sync editor of slotmirror, with one card per calendar and an overview of all directions"
+              alt="The rules page of slotmirror, with one card per calendar and an overview of all directions"
             />
-            <figcaption>The sync editor, with three demo accounts.</figcaption>
+            <figcaption>The rules page, with three demo accounts.</figcaption>
           </figure>
         </div>
       </section>
@@ -302,7 +308,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
             </div>
             <div style="--c:var(--c-purple)">
               <h3><i></i>Push notifications</h3>
-              <p>Changes arrive within seconds; a scheduled check catches the rest.</p>
+              <p>A change starts the sync when the provider notifies you; a scheduled check catches the rest.</p>
             </div>
             <div style="--c:var(--c-orange)">
               <h3><i></i>Organisation limits</h3>
@@ -336,7 +342,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
           <ul>
             <li>slotmirror reads each occurrence of a series, so a moved one keeps its identity.</li>
             <li>It changes only what differs: create, update or delete, never a rebuild.</li>
-            <li>Push notifications start the sync when the meeting moves, not minutes later.</li>
+            <li>Push notifications start the sync when the provider reports the move, not on a timer.</li>
             <li>
               Event contents are read during a sync and kept only in memory, never written to the
               database.
@@ -361,35 +367,85 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
         </div>
       </section>
 
-      <section id="changelog">
-        <div class="wrap">
-          <h2>Changelog</h2>
-          <p class="changes">
-            {
-              latest ? (
-                <>
-                  <span class="version">{latest[1]}</span>
-                  <time datetime={latest[2]}>{latest[2]}</time>
-                </>
-              ) : (
-                <span>No release yet.</span>
-              )
-            }
-            <a href={page("changelog/")}>All releases</a>
-          </p>
-        </div>
-      </section>
+      {
+        latest && (
+          <section id="changelog">
+            <div class="wrap">
+              <h2>Changelog</h2>
+              <p class="changes">
+                <span class="version">{latest[1]}</span>
+                <time datetime={latest[2]}>{latest[2]}</time>
+                <a href={page("changelog/")}>All releases</a>
+              </p>
+            </div>
+          </section>
+        )
+      }
+
+      {
+        waitlist && (
+          <section id="waitlist">
+            <div class="wrap">
+              <h2>Hosted version (not available yet)</h2>
+              <p class="lead">
+                A hosted slotmirror does not exist yet. Leave your address to hear when it opens.
+                Joining the list is not a purchase.
+              </p>
+              <form
+                class="waitlist"
+                id="waitlist-form"
+                method="post"
+                hidden
+                data-endpoint={`${waitlistUrl}/api/signup`}
+                data-site-key={turnstileKey}
+              >
+                <label for="waitlist-email">Email address</label>
+                <div class="waitlist-row">
+                  <input
+                    id="waitlist-email"
+                    name="email"
+                    type="email"
+                    autocomplete="email"
+                    inputmode="email"
+                    maxlength="254"
+                    required
+                    aria-describedby="waitlist-status"
+                  />
+                  <button class="button primary" type="submit" id="waitlist-submit">
+                    Join the waitlist
+                  </button>
+                </div>
+                <div id="waitlist-widget" class="waitlist-widget" />
+                <p id="waitlist-status" class="waitlist-status" role="status" aria-live="polite" />
+                <p class="note">
+                  We use your address only for this list. We send one mail to confirm it. You can
+                  unsubscribe from that mail. <a href={page("docs/privacy/")}>Privacy</a>
+                </p>
+              </form>
+            </div>
+          </section>
+        )
+      }
     </main>
 
     <footer>
       <div class="wrap">
-        <span>slotmirror · AGPL-3.0 licence</span>
+        <span>slotmirror</span>
         <a href={repo}>GitHub</a>
         <a href={page("docs/introduction/")}>Docs</a>
         <a href={page("docs/privacy/")}>Privacy</a>
         <span>This site sets no cookies.</span>
       </div>
     </footer>
+
+    <script>
+      import "../scripts/analytics";
+    </script>
+
+    <script>
+      // The waitlist code loads only if this build renders the form.
+      if (document.querySelector("#waitlist-form")) void import("../scripts/waitlist");
+    </script>
 
     <script>
       // A toy version of the sync. One meeting per calendar; each can move, and its copies follow

@@ -3,7 +3,7 @@ import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
-import { displayTimeZone, isLocale, type Locale } from "./i18n";
+import { displayTimeZone } from "./i18n";
 import {
   ALL_WEEKDAYS,
   canonicalTimeZone,
@@ -338,10 +338,9 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       choice: choiceOf(parseRuleOptions(row.options), row.enabled === 1),
     }));
   const json = settingsRow?.json ?? "{}";
-  const daysAhead = shownDaysAhead(
-    json,
-    ruleRows.map((row) => parseRuleOptions(row.options)),
-  );
+  const ruleOptions = ruleRows.map((row) => parseRuleOptions(row.options));
+  const daysAhead = shownDaysAhead(json, ruleOptions);
+  const skipAllDay = shownSkipAllDay(json, ruleOptions);
   const rules = ruleRows.map((row) => ({
     from: row.sourceAccountId,
     to: row.targetAccountId,
@@ -353,7 +352,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       optionsJson: row.options,
     },
   }));
-  const settings = { ...parseSettings(json), daysAhead };
+  const settings = { ...parseSettings(json), daysAhead, skipAllDay };
   return { accounts, directions, others, rules, settings };
 }
 
@@ -381,11 +380,24 @@ function shownDaysAhead(json: string, rules: RuleOptions[]): number {
   return Math.max(...rules.map((options) => options.daysAhead));
 }
 
+/**
+ * The all-day switch the settings show: the stored one, or else on if any rule of the user skips
+ * all-day events. Stored settings often lack it, and rules can be older than the default. New rules
+ * take the switch, so the default alone would turn the skip off for them.
+ */
+function shownSkipAllDay(json: string, rules: RuleOptions[]): boolean {
+  const stored = (JSON.parse(json) as { skipAllDay?: unknown }).skipAllDay;
+  if (stored !== undefined || rules.length === 0) return parseSettings(json).skipAllDay;
+  return rules.some((options) => options.skipAllDay);
+}
+
 /** Settings from the form. The window can be missing, for example if no choice matched. */
 export type SettingsForm = Omit<SyncSettings, "daysAhead"> & {
   daysAhead?: number;
   /** The window that the form showed. */
   daysAheadShown?: number;
+  /** The all-day switch that the form showed. */
+  skipAllDayShown?: boolean;
 };
 
 /** Options of a new rule: the user's settings with the given detail level. */
@@ -401,8 +413,10 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
  * stays; it is the choice per direction. The window applies only if the user changed it from the
  * one the form showed, and only in that direction: a higher window raises the rules below it, a
  * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
- * removal of the blocks beyond it, which no run reads any more. Throws `EditorConflict` if a rule
- * changed since the read; then nothing is stored.
+ * removal of the blocks beyond it, which no run reads any more. The all-day switch applies only if
+ * the user changed it from the one the form showed; then every rule follows. Otherwise each rule
+ * keeps its own value, because a rule that turns to skipping loses its all-day blocks. Throws
+ * `EditorConflict` if a rule changed since the read; then nothing is stored.
  */
 export async function setSettings(
   env: Env,
@@ -428,15 +442,20 @@ export async function setSettings(
     .bind(user.id)
     .first<{ json: string }>();
   const json = stored?.json ?? "{}";
-  const current = shownDaysAhead(
-    json,
-    results.map((row) => parseRuleOptions(row.options)),
-  );
-  const { daysAhead: chosen, daysAheadShown, ...rest } = form;
+  const ruleOptions = results.map((row) => parseRuleOptions(row.options));
+  const current = shownDaysAhead(json, ruleOptions);
+  const currentSkipAllDay = shownSkipAllDay(json, ruleOptions);
+  const { daysAhead: chosen, daysAheadShown, skipAllDayShown, skipAllDay, ...rest } = form;
   // A page from before `daysAheadShown` existed showed the stored window, or the default.
   const shown = daysAheadShown ?? parseSettings(json).daysAhead;
   const windowChanged = chosen !== undefined && chosen !== shown;
-  const settings: SyncSettings = { ...rest, daysAhead: windowChanged ? chosen : current };
+  // A page from before `skipAllDayShown` existed can show another default, so compare with now.
+  const skipAllDayChanged = skipAllDay !== (skipAllDayShown ?? currentSkipAllDay);
+  const settings: SyncSettings = {
+    ...rest,
+    daysAhead: windowChanged ? chosen : current,
+    skipAllDay: skipAllDayChanged ? skipAllDay : currentSkipAllDay,
+  };
   const windowOf = (previous: number) =>
     !windowChanged
       ? previous
@@ -458,6 +477,7 @@ export async function setSettings(
       ...previous,
       ...settings,
       daysAhead: windowOf(previous.daysAhead),
+      skipAllDay: skipAllDayChanged ? settings.skipAllDay : previous.skipAllDay,
     });
     // A parked exception stays parked. A rule that changed since the read fails the batch.
     const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;
@@ -677,6 +697,9 @@ export async function setDefaultBlockTitle(env: Env, userId: string, title: stri
 /** Longest Outlook category name for blocks. */
 export const MAX_CATEGORY_LENGTH = 100;
 
+/** A Google event colour as a source event carries it in `categories`. */
+const GOOGLE_COLOR_CATEGORY = /^color:(?:[1-9]|1[01])$/;
+
 /** Why a block colour is not valid for a target provider, or null if it is valid. */
 export function blockColorProblem(
   provider: Provider,
@@ -790,11 +813,13 @@ export function sourceBuffer(
  * - `colors`: the block colour of one direction.
  * - `workHours`: per direction, true copies the target account's working hours into the rules,
  *   false clears them.
+ * - `onlyCategories`: per direction, the opt-in list of its rules. An empty list is no filter.
  * - `sources`: per source account, options for the account and every rule from it.
  */
 export interface RuleDetails {
   colors?: { from: string; to: string; value: string }[];
   workHours?: { from: string; to: string; on: boolean }[];
+  onlyCategories?: { from: string; to: string; names: string[] }[];
   sources?: { from: string; options: Partial<SourceOptions> }[];
 }
 
@@ -803,8 +828,10 @@ export type RuleDetailsProblem =
   | { kind: "color"; problem: "comma" | "tooLong" | "invalid" }
   | { kind: "source" }
   | { kind: "noWorkHours"; account: string }
+  /** A Google source has colours only, so a name would stop every event of the direction. */
+  | { kind: "onlyCategories" }
   /** The direction is not the user's, or no longer exists. */
-  | { kind: "direction"; field: "color" | "workHours" };
+  | { kind: "direction"; field: "color" | "workHours" | "onlyCategories" };
 
 /**
  * Check rule details against a state before anything is written, so that an invalid detail
@@ -832,6 +859,14 @@ export function ruleDetailsProblem(
     // Rules that kept hours from before the account had any keep them; see `setRuleDetails`.
     const has = direction.options !== null && hasWorkingHours(direction.options);
     if (on && !target.workHours && !has) return { kind: "noWorkHours", account: target.name };
+  }
+  for (const { from, to, names } of details.onlyCategories ?? []) {
+    const source = state.accounts.find((account) => account.id === from);
+    const known = state.directions.some((d) => d.from === from && d.to === to);
+    if (!source || !known) return { kind: "direction", field: "onlyCategories" };
+    if (source.provider === "google" && !names.every((name) => GOOGLE_COLOR_CATEGORY.test(name))) {
+      return { kind: "onlyCategories" };
+    }
   }
   return null;
 }
@@ -891,6 +926,10 @@ export async function setRuleDetails(
     if (!target || !direction) continue;
     if (!on) forDirection(direction, NO_WORKING_HOURS);
     else if (target.workHours) forDirection(direction, target.workHours);
+  }
+  for (const { from, to, names } of details.onlyCategories ?? []) {
+    const direction = state.directions.find((d) => d.from === from && d.to === to);
+    if (direction) forDirection(direction, { onlyCategories: names });
   }
   await writePatches(env, user, patches, accounts, syncs);
   return true;
@@ -987,6 +1026,10 @@ async function writePatches(
     const detail: Record<string, string> = {};
     // The category name is the user's own word; the log records that the colour changed.
     if (options.blockColor !== old.blockColor) detail.blockColor = "changed";
+    // Category names are the user's own words too; the log keeps the count.
+    if (options.onlyCategories.join("\u0000") !== old.onlyCategories.join("\u0000")) {
+      detail.onlyCategories = String(options.onlyCategories.length);
+    }
     if (options.bufferBefore !== old.bufferBefore || options.bufferAfter !== old.bufferAfter) {
       detail.bufferBefore = String(options.bufferBefore);
       detail.bufferAfter = String(options.bufferAfter);
@@ -1019,82 +1062,6 @@ async function writePatches(
   if (statements.length === 0) return;
   await guardedBatch(env, statements);
   await requestSyncs(env, targets, syncs);
-}
-
-/** The origin note of the blocks from one source; see `showOrigin` and `linkOrigin`. */
-export interface OriginNoteForm {
-  showOrigin: boolean;
-  linkOrigin: boolean;
-}
-
-/**
- * Turn the origin note on or off for every rule from the calendars of one source account, in the
- * user's current language. The link needs the note. Invalid input, or an account that is not the
- * user's, returns false and writes nothing. All rules change in one batch with the audit event,
- * so that a save changes all or none. Each changed block is written again once, in the alarm's
- * pace; see `MAX_BATCHES_PER_RUN`.
- */
-export async function setOriginNote(
-  env: Env,
-  user: CurrentUser,
-  sourceAccountId: string,
-  form: OriginNoteForm,
-  locale: Locale,
-): Promise<boolean> {
-  const { showOrigin, linkOrigin } = form;
-  if (typeof showOrigin !== "boolean" || typeof linkOrigin !== "boolean") return false;
-  if (linkOrigin && !showOrigin) return false;
-  if (!isLocale(locale)) return false;
-  const account = await env.DB.prepare(
-    "SELECT 1 AS found FROM accounts WHERE id = ? AND user_id = ?",
-  )
-    .bind(sourceAccountId, user.id)
-    .first<{ found: number }>();
-  if (!account) return false;
-  const { results } = await env.DB.prepare(
-    `SELECT r.id, r.options, r.enabled, tc.account_id AS targetAccountId
-     FROM rules r
-     JOIN calendars sc ON sc.id = r.source_calendar_id
-     JOIN calendars tc ON tc.id = r.target_calendar_id
-     WHERE r.user_id = ? AND sc.account_id = ?`,
-  )
-    .bind(user.id, sourceAccountId)
-    .all<{ id: string; options: string; enabled: number; targetAccountId: string }>();
-  const changed = results.filter((row) => {
-    const options = parseRuleOptions(row.options);
-    return (
-      options.showOrigin !== showOrigin ||
-      options.linkOrigin !== linkOrigin ||
-      (showOrigin && options.originLocale !== locale)
-    );
-  });
-  if (changed.length === 0) return true;
-  // json_set changes only these keys, so that a concurrent save of other options is kept.
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE rules SET options = json_set(options, '$.showOrigin', json(?), '$.linkOrigin', json(?),
-         '$.originLocale', ?)
-       WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))`,
-    ).bind(
-      String(showOrigin),
-      String(linkOrigin),
-      locale,
-      user.id,
-      JSON.stringify(changed.map((row) => row.id)),
-    ),
-    auditStatement(env.DB, {
-      orgId: user.orgId,
-      userId: user.id,
-      accountId: sourceAccountId,
-      kind: "rule_updated",
-      detail: { showOrigin, linkOrigin, rules: changed.length },
-    }),
-  ]);
-  await requestSyncs(
-    env,
-    new Set(changed.filter((row) => row.enabled === 1).map((row) => row.targetAccountId)),
-  );
-  return true;
 }
 
 /** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */
@@ -1507,6 +1474,13 @@ export async function resetDirection(
     const choice = from.inGroup && to.inGroup ? "busy" : "off";
     await setDirection(env, user, fromId, toId, choice, syncs);
     await setBlockColor(env, user, fromId, toId, "", syncs);
+    // Last, so that a rule that goes away never runs without its list.
+    await setRuleDetails(
+      env,
+      user,
+      { onlyCategories: [{ from: fromId, to: toId, names: [] }] },
+      syncs,
+    );
   } finally {
     await requestSyncs(env, syncs);
   }
@@ -1602,7 +1576,7 @@ function insertStatements(
         kind: "rule_created",
         detail: { choice: rule.choice },
       },
-      true,
+      "rule_exists",
     ),
   ]);
 }

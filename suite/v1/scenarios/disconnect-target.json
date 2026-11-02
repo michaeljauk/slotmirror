@@ -1,0 +1,44 @@
+{
+  "id": "disconnect-target",
+  "title": "Disconnecting the target account removes its blocks and keeps its own events",
+  "covers": "disconnect",
+  "expectedText": "After the target account is disconnected, its own Wednesday event remains and the block on Tuesday is gone.",
+  "localLimit": "The simulated calendar goes with the account. From then on the check reads a snapshot from before the last alarm. That alarm only forgets the account, and a delete in it would stay unseen.",
+  "requires": ["disconnect"],
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "meeting",
+      "event": { "start": "week+1d@10:00Z", "end": "week+1d@11:00Z" }
+    },
+    {
+      "do": "write",
+      "calendar": "target",
+      "change": "create",
+      "key": "own",
+      "event": { "start": "week+2d@10:00Z", "end": "week+2d@11:00Z" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@10:00Z", "week+1d@11:00Z"],
+          ["week+2d@10:00Z", "week+2d@11:00Z"]
+        ]
+      }
+    },
+    { "do": "control", "action": "disconnect", "calendar": "target" },
+    {
+      "do": "sync",
+      "timeoutSeconds": 1800,
+      "settleSeconds": 900,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [["week+2d@10:00Z", "week+2d@11:00Z"]]
+      }
+    }
+  ]
+}

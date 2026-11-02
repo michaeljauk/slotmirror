@@ -50,7 +50,12 @@ class Target {
   read(window: Window): ExistingBlock[] {
     return [...this.blocks]
       .filter(([, block]) => inRead(block, window, this.offset))
-      .map(([targetId, block]) => ({ ...block, targetId, ruleTag: "tag" }));
+      .map(([targetId, block]) => ({
+        ...block,
+        targetId,
+        ruleTag: "tag",
+        status: "blocked" as const,
+      }));
   }
 
   apply(plan: SyncPlan): void {

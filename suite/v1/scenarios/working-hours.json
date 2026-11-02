@@ -1,0 +1,58 @@
+{
+  "id": "working-hours",
+  "title": "A working hours filter mirrors events that overlap the hours, at their full length",
+  "covers": "working hours filter",
+  "expectedText": "Hours are Monday to Friday 09:00 to 17:00 Tokyo, which is 00:00 to 08:00 UTC. Busy: 01:00 to 02:00 and the full overlapping event 07:30 to 09:00. Free: the event from 09:00 UTC, the event that ends exactly at 09:00 Tokyo, and the Saturday event.",
+  "calendars": { "source": { "timeZone": "UTC" }, "target": { "timeZone": "UTC" } },
+  "rule": {
+    "workingHours": {
+      "days": [1, 2, 3, 4, 5],
+      "start": "09:00",
+      "end": "17:00",
+      "timeZone": "Asia/Tokyo"
+    }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "inside",
+      "event": { "start": "week+1d@01:00Z", "end": "week+1d@02:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "overlaps-end",
+      "event": { "start": "week+1d@07:30Z", "end": "week+1d@09:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "after-hours",
+      "event": { "start": "week+1d@09:00Z", "end": "week+1d@10:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "ends-at-start",
+      "event": { "start": "week+2d@23:00Z", "end": "week+3d@00:00Z" }
+    },
+    {
+      "do": "write",
+      "change": "create",
+      "key": "saturday",
+      "event": { "start": "week+5d@01:00Z", "end": "week+5d@02:00Z" }
+    },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["week@00:00Z", "week+7d@00:00Z"],
+        "busy": [
+          ["week+1d@01:00Z", "week+1d@02:00Z"],
+          ["week+1d@07:30Z", "week+1d@09:00Z"]
+        ]
+      }
+    }
+  ]
+}

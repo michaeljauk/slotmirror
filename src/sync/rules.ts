@@ -1,5 +1,5 @@
 import { MAX_BUFFER_MINUTES, parseRuleOptions, type RuleOptions } from "../config";
-import { isLocale, LOCALES, messagesFor } from "../i18n";
+import { OWNER_COLUMNS, ownerAdmission, type OwnerColumns } from "../users";
 
 /** A rule with everything the runner needs, joined from D1. */
 export interface RuleContext {
@@ -8,6 +8,8 @@ export interface RuleContext {
   orgId: string;
   options: RuleOptions;
   enabled: boolean;
+  /** The owner's state: the policy can stop admitting them. */
+  owner: OwnerColumns;
   source: RuleEnd;
   target: RuleEnd;
 }
@@ -25,7 +27,7 @@ interface RuleEnd {
   needsReconnect: boolean;
 }
 
-interface RuleRow {
+interface RuleRow extends OwnerColumns {
   id: string;
   userId: string;
   orgId: string;
@@ -48,7 +50,7 @@ interface RuleRow {
 }
 
 const RULE_SELECT = `
-  SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled,
+  SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled, ${OWNER_COLUMNS},
          sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
          sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId, sa.display_name AS sourceName,
          sa.needs_reconnect AS sourceNeedsReconnect,
@@ -57,6 +59,7 @@ const RULE_SELECT = `
          ta.needs_reconnect AS targetNeedsReconnect
   FROM rules r
   JOIN users u ON u.id = r.user_id
+  JOIN orgs o ON o.id = u.org_id
   JOIN calendars sc ON sc.id = r.source_calendar_id
   JOIN accounts sa ON sa.id = sc.account_id
   JOIN calendars tc ON tc.id = r.target_calendar_id
@@ -69,6 +72,12 @@ function toContext(row: RuleRow): RuleContext {
     orgId: row.orgId,
     options: parseRuleOptions(row.options),
     enabled: row.enabled === 1,
+    owner: {
+      ownerOrgId: row.ownerOrgId,
+      ownerEmail: row.ownerEmail,
+      ownerTenantId: row.ownerTenantId,
+      ownerPolicy: row.ownerPolicy,
+    },
     source: {
       accountId: row.sourceAccountId,
       provider: row.sourceProvider,
@@ -90,90 +99,152 @@ function toContext(row: RuleRow): RuleContext {
   };
 }
 
-/**
- * The first line of the origin note of a rule's blocks, in the language stored with the option:
- * "From: Work (Microsoft)" with the name the user gave the source account, else "From: Microsoft
- * account". Never the address: the target calendar can be visible to other people.
- */
-export function originLine(rule: Pick<RuleContext, "options" | "source">): string {
-  const locale = rule.options.originLocale;
-  const t = messagesFor(isLocale(locale) ? locale : LOCALES[0]).mirror;
-  const provider = rule.source.provider === "google" ? t.google : t.microsoft;
-  const name = noteName(rule.source.name ?? "");
-  return name === "" ? t.originAccount(provider) : t.origin(name, provider);
-}
-
-/**
- * An account name for the note: one line, without control or format characters. Format characters
- * (`\p{Cf}`) include the bidi controls, which can reorder the text around the name, zero-width
- * characters, the soft hyphen and tag characters.
- */
-function noteName(name: string): string {
-  return name
-    .replace(/\p{Cf}/gu, "")
-    .replace(/[\p{Cc}\s]+/gu, " ")
-    .trim();
-}
-
 export async function loadRule(db: D1Database, ruleId: string): Promise<RuleContext | null> {
   const row = await db.prepare(`${RULE_SELECT} WHERE r.id = ?`).bind(ruleId).first<RuleRow>();
   return row ? toContext(row) : null;
 }
 
 /**
- * The rules of `ruleIds` that the alarm may run: they exist, are enabled, and their user is active.
- * A queued rule can be disabled or removed before its turn; the editor then queues the removal of
- * its blocks.
+ * The rules of `ruleIds` that the alarm may run: they exist, are enabled, and the access policy
+ * still admits their user. A queued rule can be disabled or removed before its
+ * turn; the editor then queues the removal of its blocks.
  */
-export async function rulesRunningFromAlarm(
-  db: D1Database,
-  ruleIds: string[],
-): Promise<Set<string>> {
-  const { results } = await db
-    .prepare(
-      `SELECT r.id FROM rules r JOIN users u ON u.id = r.user_id
-       WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1 AND u.active = 1`,
-    )
+export async function rulesRunningFromAlarm(env: Env, ruleIds: string[]): Promise<Set<string>> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, ${OWNER_COLUMNS} FROM rules r JOIN users u ON u.id = r.user_id
+     JOIN orgs o ON o.id = u.org_id
+     WHERE r.id IN (SELECT value FROM json_each(?)) AND r.enabled = 1`,
+  )
     .bind(JSON.stringify(ruleIds))
-    .all<{ id: string }>();
-  return new Set(results.map((row) => row.id));
+    .all<{ id: string } & OwnerColumns>();
+  return new Set(results.filter(ownerAdmission(env)).map((row) => row.id));
 }
 
 /**
  * Enabled rules whose target calendar belongs to the account; they run in its Durable Object.
- * Rules of a deactivated user do not run. Rules from an account that needs reconnecting would
- * only fail, so they wait until it is connected again.
+ * Rules of a user the policy no longer admits do not run. Rules from an account that needs
+ * reconnecting would only fail, so they wait until it is connected again.
  */
-export async function rulesTargetingAccount(db: D1Database, accountId: string): Promise<string[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT r.id FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
-       JOIN calendars sc ON sc.id = r.source_calendar_id
-       JOIN accounts sa ON sa.id = sc.account_id
-       JOIN users u ON u.id = r.user_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND u.active = 1 AND sa.needs_reconnect = 0
-       ORDER BY r.id`,
-    )
+export async function rulesTargetingAccount(env: Env, accountId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, ${OWNER_COLUMNS} FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN accounts sa ON sa.id = sc.account_id
+     JOIN users u ON u.id = r.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE tc.account_id = ? AND r.enabled = 1 AND sa.needs_reconnect = 0
+     ORDER BY r.id`,
+  )
     .bind(accountId)
-    .all<{ id: string }>();
-  return results.map((row) => row.id);
+    .all<{ id: string } & OwnerColumns>();
+  return results.filter(ownerAdmission(env)).map((row) => row.id);
 }
 
-/** True if the rule is enabled, its user is active, and it writes into this calendar. */
-export async function ruleWritesInto(
+/**
+ * The rules that write into a calendar and may run: the rules a comparison judges the calendar by.
+ * Unlike `rulesTargetingAccount`, it keeps rules from an account that needs reconnecting, so that
+ * the comparison can tell that it cannot read them.
+ */
+export async function rulesIntoCalendar(env: Env, calendarId: string): Promise<RuleContext[]> {
+  const { results } = await env.DB.prepare(
+    `${RULE_SELECT} WHERE r.target_calendar_id = ? AND r.enabled = 1 ORDER BY r.id`,
+  )
+    .bind(calendarId)
+    .all<RuleRow>();
+  return results.map(toContext).filter((rule) => ownerMayRun(env, rule));
+}
+
+/** The calendars of an account that an enabled rule writes into. */
+export async function targetCalendars(
   db: D1Database,
+  accountId: string,
+): Promise<{ calendarId: string; remoteCalendarId: string }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT DISTINCT tc.id AS calendarId, tc.remote_id AS remoteCalendarId
+       FROM calendars tc JOIN rules r ON r.target_calendar_id = tc.id
+       WHERE tc.account_id = ? AND r.enabled = 1 ORDER BY tc.id`,
+    )
+    .bind(accountId)
+    .all<{ calendarId: string; remoteCalendarId: string }>();
+  return results;
+}
+
+/**
+ * The writable calendars of an account that no enabled rule writes into. A deleted rule can leave
+ * blocks there. Only calendars of an owner who may still run rules: a full comparison reads them.
+ */
+export async function leftoverCalendars(
+  env: Env,
+  accountId: string,
+): Promise<{ calendarId: string; remoteCalendarId: string }[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT c.id AS calendarId, c.remote_id AS remoteCalendarId, ${OWNER_COLUMNS}
+     FROM calendars c JOIN accounts a ON a.id = c.account_id
+     JOIN users u ON u.id = a.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE c.account_id = ? AND c.can_edit = 1
+       AND NOT EXISTS (SELECT 1 FROM rules r WHERE r.target_calendar_id = c.id AND r.enabled = 1)
+     ORDER BY c.id`,
+  )
+    .bind(accountId)
+    .all<{ calendarId: string; remoteCalendarId: string } & OwnerColumns>();
+  return results
+    .filter(ownerAdmission(env))
+    .map(({ calendarId, remoteCalendarId }) => ({ calendarId, remoteCalendarId }));
+}
+
+/** True if the access policy admits the owner of an account. False if the owner is gone. */
+export async function accountOwnerAdmitted(env: Env, accountId: string): Promise<boolean> {
+  const owner = await env.DB.prepare(
+    `SELECT ${OWNER_COLUMNS} FROM accounts a JOIN users u ON u.id = a.user_id
+     JOIN orgs o ON o.id = u.org_id WHERE a.id = ?`,
+  )
+    .bind(accountId)
+    .first<OwnerColumns>();
+  return owner !== null && ownerAdmission(env)(owner);
+}
+
+/**
+ * The rules that write into the same remote calendar as this calendar row, through a row of another
+ * account. Google gives the same calendar id to every account that owns a shared calendar. The
+ * providers keep their ids apart, so the provider must match too.
+ */
+export async function rulesThroughOtherRows(env: Env, calendarId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT r.id, ${OWNER_COLUMNS} FROM calendars own
+     JOIN accounts oa ON oa.id = own.account_id
+     JOIN calendars tc ON tc.remote_id = own.remote_id AND tc.id <> own.id
+     JOIN accounts ta ON ta.id = tc.account_id AND ta.provider = oa.provider
+     JOIN rules r ON r.target_calendar_id = tc.id
+     JOIN users u ON u.id = r.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE own.id = ? AND r.enabled = 1 ORDER BY r.id`,
+  )
+    .bind(calendarId)
+    .all<{ id: string } & OwnerColumns>();
+  return results.filter(ownerAdmission(env)).map((row) => row.id);
+}
+
+/** True if the policy still admits the rule's owner. */
+export function ownerMayRun(env: Env, rule: RuleContext): boolean {
+  return ownerAdmission(env)(rule.owner);
+}
+
+/**
+ * True if the rule is enabled, its user is admitted by the access policy, and it writes into this
+ * calendar.
+ */
+export async function ruleWritesInto(
+  env: Env,
   ruleId: string,
   remoteCalendarId: string,
 ): Promise<boolean> {
-  const row = await db
-    .prepare(
-      `SELECT 1 AS found FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
-       JOIN users u ON u.id = r.user_id
-       WHERE r.id = ? AND tc.remote_id = ? AND r.enabled = 1 AND u.active = 1`,
-    )
+  const row = await env.DB.prepare(
+    `SELECT ${OWNER_COLUMNS} FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN users u ON u.id = r.user_id JOIN orgs o ON o.id = u.org_id
+     WHERE r.id = ? AND tc.remote_id = ? AND r.enabled = 1`,
+  )
     .bind(ruleId, remoteCalendarId)
-    .first<{ found: number }>();
-  return row !== null;
+    .first<OwnerColumns>();
+  return row !== null && ownerAdmission(env)(row);
 }
 
 /**
@@ -243,8 +314,24 @@ export function targetReadWindow(window: { start: Date; end: Date }): { start: D
 }
 
 /**
+ * The window of an edge read: one day on each side of the start of a window. It returns the date
+ * before the window for every time zone, and an event or a block that ends exactly at the start of
+ * the window. It does not depend on the rule's buffers; see `planSync`. A removal reads its target
+ * like this, because a target east of UTC otherwise keeps the all-day block of the day before.
+ */
+export function edgeReadWindow(window: { start: Date; end: Date }): { start: Date; end: Date } {
+  const day = 24 * 60 * 60 * 1000;
+  return {
+    start: new Date(window.start.getTime() - day),
+    end: new Date(window.start.getTime() + day),
+  };
+}
+
+/**
  * Window for removing a rule's blocks: from the start of the current UTC day to one year and a
- * month ahead, wider than any rule window. Past blocks stay as a record of when the user was busy.
+ * month ahead, wider than any rule window. Blocks that end before this window stay as a record of
+ * when the user was busy. A removal also deletes the blocks that end exactly at its start; see
+ * `removeRuleBlocks`.
  */
 export function cleanupWindow(now = new Date()): { start: Date; end: Date } {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));

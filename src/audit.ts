@@ -1,6 +1,8 @@
+import { closeAbandonedTombstones } from "./cleanup";
 import { GoogleApiError } from "./providers/google-calendar";
 import { GraphError } from "./providers/graph-calendar";
 import { TokenError } from "./providers/microsoft";
+import { parseProviderErrorMessage } from "./sync/throttle";
 
 /**
  * The audit log answers "who did what, and did the sync work". It stores IDs, times, counts and
@@ -9,9 +11,12 @@ import { TokenError } from "./providers/microsoft";
 export type AuditKind =
   | "sign_in"
   | "sign_in_refused"
+  | "sign_in_reset"
   | "sign_out"
   | "account_connected"
   | "account_disconnected"
+  | "account_disconnect_failed"
+  | "cleanup_finished"
   | "account_renamed"
   | "token_refresh_failed"
   | "rule_created"
@@ -21,23 +26,49 @@ export type AuditKind =
   | "rule_updated"
   | "group_changed"
   | "settings_changed"
-  | "user_provisioned"
-  | "user_deactivated"
-  | "user_reactivated"
   | "user_deleted"
   | "sync_run"
   | "sync_failed"
-  | "feed_created"
-  | "feed_rotated"
-  | "feed_deleted";
+  | "sync_run_aborted"
+  | "account_paused"
+  | "account_resumed"
+  | "alert_sent"
+  | "alert_test"
+  | "compare_run"
+  | "compare_failed";
+
+/** How the removal of an offboarding ended. */
+export type CleanupResult =
+  | "removed"
+  | "incomplete"
+  | "token_refused"
+  | "no_tokens"
+  | "deadline"
+  | "not_started"
+  | "kept";
+
+/**
+ * Detail of a `cleanup_finished` event. `left` is the count of the last step that could count, or
+ * with `estimated`, of the rule's last sync run if no step could.
+ */
+export type CleanupDetail = {
+  result: CleanupResult;
+  removed: number;
+  left?: number;
+  estimated?: true;
+};
 
 /** Detail of a `sync_run` event. */
 export interface SyncRunDetail {
+  /** ID of the run, as in its start marker. A dry run has no marker and no ID. */
+  runId?: string;
   dryRun: boolean;
   create: number;
   update: number;
   delete: number;
   unchanged: number;
+  /** Extra blocks of a wanted event that the run planned to delete; part of `delete`. */
+  duplicates: number;
   applied: number;
   failed: number;
   remaining: number;
@@ -45,6 +76,8 @@ export interface SyncRunDetail {
   throttled: number;
   /** Status and reason of failed and throttled actions, e.g. "429 ApplicationThrottled:13". */
   statuses: string;
+  /** Edge reads that failed, so blocks at the start of the window stayed; see `planSync`. */
+  edgeReadsFailed: number;
   durationMs: number;
 }
 
@@ -55,28 +88,44 @@ export interface AuditEvent {
   ruleId?: string | null;
   kind: AuditKind;
   detail?: Record<string, string | number | boolean>;
+  /** Makes the event unique: a statement that runs again adds no second row. */
+  reportId?: string;
 }
 
 /** Audit rows older than this many days are deleted by the cron handler. */
 export const AUDIT_RETENTION_DAYS = 90;
 
+/** Audit rows that one lookup of a run's outcome reads at most. */
+export const RUN_OUTCOME_SCAN_ROWS = 500;
+
+/** A lookup starts this long before a run's start: the instance and D1 have different clocks. */
+const RUN_OUTCOME_SKEW_MS = 60_000;
+
 /** Rows shown on an activity page. */
 export const ACTIVITY_LIMIT = 100;
 
 /**
- * The insert of one event, for a batch. With `onlyIfRuleExists` the row is written only if the
- * event's rule exists, for example after an insert that a concurrent request made a no-op.
+ * The insert of one event, for a batch. With `onlyIf` the row is written only if the event's rule
+ * exists, for example after an insert that a concurrent request made a no-op, only if the rule
+ * runs, or only if no end of the rule's tombstone is stored. An event with a `reportId` that D1 holds
+ * already adds no row.
  */
 export function auditStatement(
   db: D1Database,
   event: AuditEvent,
-  onlyIfRuleExists = false,
+  onlyIf?: "rule_exists" | "rule_runs" | "tombstone_not_ended",
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6
-       WHERE ?7 = 0 OR EXISTS (SELECT 1 FROM rules WHERE id = ?4)`,
+      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail, report_id)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?8
+       WHERE CASE ?7
+         WHEN 0 THEN 1
+         WHEN 3 THEN NOT EXISTS (SELECT 1 FROM cleanup_tombstones t
+           WHERE t.account_id = ?3 AND t.rule_id = ?4 AND t.state <> 'open')
+         ELSE EXISTS (SELECT 1 FROM rules WHERE id = ?4 AND (?7 = 1 OR enabled = 1))
+       END
+       ON CONFLICT DO NOTHING`,
     )
     .bind(
       event.orgId,
@@ -85,17 +134,86 @@ export function auditStatement(
       event.ruleId ?? null,
       event.kind,
       JSON.stringify(event.detail ?? {}),
-      onlyIfRuleExists ? 1 : 0,
+      onlyIf === "tombstone_not_ended"
+        ? 3
+        : onlyIf === "rule_runs"
+          ? 2
+          : onlyIf === "rule_exists"
+            ? 1
+            : 0,
+      event.reportId ?? null,
     );
 }
 
 /** Write one event. Never throws: a broken log must not break a sync or a sign-in. */
 export async function recordAudit(db: D1Database, event: AuditEvent): Promise<void> {
+  await recordAuditChecked(db, event);
+}
+
+/**
+ * `recordAudit` for a caller that must know the outcome. Returns true only if D1 reports a new row.
+ */
+export async function recordAuditChecked(db: D1Database, event: AuditEvent): Promise<boolean> {
   try {
-    await auditStatement(db, event).run();
+    const { meta } = await auditStatement(db, event).run();
+    return meta.changes > 0;
   } catch (error) {
     console.error("Audit write failed", event.kind, ...errorLogFields(error));
+    return false;
   }
+}
+
+/** The start of a run, as far as a lookup of its outcome needs it. */
+export interface RunStart {
+  ruleId: string;
+  runId: string;
+  /** Unix ms. */
+  startedAt: number;
+}
+
+/**
+ * The lookup of one run's outcome event. It walks the index on user and time from the start of the
+ * run and stops after `RUN_OUTCOME_SCAN_ROWS` rows. If a run's event lies further on, the run
+ * counts as without an outcome. A result event follows the start of its run within minutes, and a
+ * marker waits at most one tick, unless D1 stays down.
+ */
+export function runOutcomeStatement(
+  db: D1Database,
+  userId: string,
+  { ruleId, runId, startedAt }: RunStart,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `SELECT ?1 AS runId FROM (
+         SELECT rule_id, kind, detail FROM audit_events
+         WHERE user_id = ?2 AND created_at >= ?3
+         ORDER BY created_at
+         LIMIT ?4
+       )
+       WHERE rule_id = ?5
+         AND kind IN ('sync_run', 'sync_failed', 'sync_run_aborted')
+         AND json_extract(detail, '$.runId') = ?1
+       LIMIT 1`,
+    )
+    .bind(
+      runId,
+      userId,
+      new Date(startedAt - RUN_OUTCOME_SKEW_MS).toISOString(),
+      RUN_OUTCOME_SCAN_ROWS,
+      ruleId,
+    );
+}
+
+/** The IDs among `runs` with an outcome event. One batch is one subrequest. Throws on error. */
+export async function runsWithOutcome(
+  db: D1Database,
+  userId: string,
+  runs: RunStart[],
+): Promise<Set<string>> {
+  const results = await db.batch<{ runId: string }>(
+    runs.map((run) => runOutcomeStatement(db, userId, run)),
+  );
+  return new Set(results.flatMap(({ results: rows }) => rows.map((row) => row.runId)));
 }
 
 /**
@@ -112,7 +230,8 @@ const STATIC_MESSAGES = new Set([
   "Google listed no sync token",
   "Google address is not verified",
   "Malformed ID token",
-  "ID token carries no email or preferred_username",
+  "ID token carries no verified email and no preferred_username",
+  "The rule's owner is no longer admitted",
   "Google event time has neither date nor dateTime",
 ]);
 
@@ -204,6 +323,11 @@ export function errorCode(error: unknown): string {
       // A TokenError that crossed the boundary: its message is its code.
       const code = safeCode(error);
       if (code && error.message.startsWith(code)) return `token_${code}`;
+      // A provider error that crossed the boundary: the same code as before it crossed.
+      const crossed = parseProviderErrorMessage(error.message);
+      if (crossed) {
+        return withReason(`${crossed.provider.toLowerCase()}_${crossed.status}`, crossed.reason);
+      }
       return safeMessage(error) ?? code ?? "Error";
     }
     return error.name;
@@ -229,15 +353,32 @@ export async function accountOwner(
     .first<{ orgId: string; userId: string }>();
 }
 
-/** Delete events past the retention period. One statement. */
-export async function purgeAuditEvents(db: D1Database): Promise<void> {
-  await db
-    .prepare(
-      `DELETE FROM audit_events
-       WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
-    )
-    .bind(`-${AUDIT_RETENTION_DAYS} days`)
-    .run();
+/** Delete events past the retention period and close abandoned tombstones. One statement. */
+export async function purgeAuditEvents<T = unknown>(
+  db: D1Database,
+  /** Runs in the same D1 step, so that a read of the cron costs no subrequest of its own. */
+  alongside?: D1PreparedStatement,
+  now: number = Date.now(),
+): Promise<T[]> {
+  const cutoff = `-${AUDIT_RETENTION_DAYS} days`;
+  const answers = await db.batch<T>([
+    db
+      .prepare(
+        `DELETE FROM audit_events
+         WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
+      )
+      .bind(cutoff),
+    // A tombstone holds a calendar name of an account that may be gone. Same retention as the log.
+    db
+      .prepare(
+        `DELETE FROM cleanup_tombstones
+         WHERE updated_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
+      )
+      .bind(cutoff),
+    ...closeAbandonedTombstones(db, now),
+    ...(alongside ? [alongside] : []),
+  ]);
+  return alongside ? (answers.at(-1)?.results ?? []) : [];
 }
 
 export interface ActivityRow {
@@ -247,6 +388,8 @@ export interface ActivityRow {
   createdAt: string;
   /** Set on the org-wide view only. */
   email: string | null;
+  /** The connected account, on the view of its own user only. Admins do not get this address. */
+  accountEmail?: string | null;
 }
 
 /** The latest events of one user. */
@@ -257,8 +400,10 @@ export async function userActivity(
 ): Promise<ActivityRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT id, kind, detail, created_at AS createdAt, NULL AS email
-       FROM audit_events WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, NULL AS email,
+              a.email AS accountEmail
+       FROM audit_events e LEFT JOIN accounts a ON a.id = e.account_id
+       WHERE e.user_id = ? ORDER BY e.created_at DESC, e.id DESC LIMIT ?`,
     )
     .bind(userId, limit)
     .all<ActivityRow>();
@@ -276,6 +421,40 @@ export async function orgActivity(
       `SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, u.email
        FROM audit_events e LEFT JOIN users u ON u.id = e.user_id
        WHERE e.org_id = ? ORDER BY e.created_at DESC, e.id DESC LIMIT ?`,
+    )
+    .bind(orgId, limit)
+    .all<ActivityRow>();
+  return results;
+}
+
+/** Calendars per mode that the admin page shows the last comparison of. */
+export const COMPARE_LIMIT = 20;
+
+/**
+ * The latest comparison per calendar and mode of an org. Its own query: hourly `sync_run` rows push
+ * a comparison out of the rows of `orgActivity`. The limit applies per mode: there are more daily
+ * comparisons than full ones, and they must not push the full ones out. It reads the org's rows of
+ * the retention period through `audit_events_org_created`, once per view of the admin page.
+ */
+export async function latestCompares(
+  db: D1Database,
+  orgId: string,
+  limit = COMPARE_LIMIT,
+): Promise<ActivityRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, kind, detail, createdAt, email FROM (
+         SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, a.email,
+                ROW_NUMBER() OVER (
+                  PARTITION BY json_extract(e.detail, '$.mode')
+                  ORDER BY e.created_at DESC, e.id DESC) AS position
+         FROM audit_events e LEFT JOIN accounts a ON a.id = e.account_id
+         WHERE e.id IN (
+           SELECT MAX(id) FROM audit_events
+           WHERE org_id = ? AND kind IN ('compare_run', 'compare_failed')
+           GROUP BY account_id, json_extract(detail, '$.calendarId'),
+                    json_extract(detail, '$.mode')))
+       WHERE position <= ? ORDER BY createdAt DESC, id DESC`,
     )
     .bind(orgId, limit)
     .all<ActivityRow>();

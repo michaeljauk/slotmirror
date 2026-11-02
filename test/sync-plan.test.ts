@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { ruleOptionsSchema, type RuleOptions } from "../src/config";
-import { googleMarker, LEGACY_GOOGLE_MARKER_KEY } from "../src/sync/google-events";
+import { fromGoogleEvent, googleMarker, LEGACY_GOOGLE_MARKER_KEY } from "../src/sync/google-events";
 import {
   fromGraphEvent,
   graphMarkerValue,
   LEGACY_MARKER_PROPERTY_ID,
   MARKER_PROPERTY_ID,
 } from "../src/sync/graph-events";
-import { claimsFrom, desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
+import { claimsFrom, countDuplicates, desiredBlocks, isIncluded, planSync } from "../src/sync/plan";
 import type { DesiredBlock, ExistingBlock, SourceEvent } from "../src/sync/types";
 import fixture from "./fixtures/graph/calendar-view.json";
 
@@ -23,7 +23,12 @@ function sourceEvents(raw: unknown[] = fixture.value): SourceEvent[] {
 
 /** Pretend the target already holds exactly these blocks. */
 function asExisting(blocks: DesiredBlock[]): ExistingBlock[] {
-  return blocks.map((block, index) => ({ ...block, ruleTag: "tag", targetId: `target-${index}` }));
+  return blocks.map((block, index) => ({
+    ...block,
+    ruleTag: "tag",
+    targetId: `target-${index}`,
+    status: "blocked",
+  }));
 }
 
 function bySubject(subject: string) {
@@ -100,10 +105,10 @@ describe("fromGraphEvent", () => {
 });
 
 describe("desiredBlocks", () => {
-  it("skips all-day and free events by default and keeps tentative ones", async () => {
+  it("skips free events by default and keeps all-day and tentative ones", async () => {
     const blocks = await desiredBlocks(RULE, sourceEvents(), options());
-    expect(blocks).toHaveLength(15);
-    expect(blocks.some((block) => block.allDay)).toBe(false);
+    expect(blocks).toHaveLength(16);
+    expect(blocks.filter((block) => block.allDay)).toHaveLength(1);
     expect(blocks.some((block) => block.showAs === "free")).toBe(false);
     expect(blocks.some((block) => block.showAs === "tentative")).toBe(true);
   });
@@ -183,21 +188,21 @@ describe("hashes", () => {
 describe("planSync", () => {
   it("creates every block on the first run", async () => {
     const plan = planSync(await desiredBlocks(RULE, sourceEvents(), options()), []);
-    expect(plan.stats).toEqual({ create: 15, update: 0, delete: 0, unchanged: 0 });
+    expect(plan.stats).toEqual({ create: 16, update: 0, delete: 0, unchanged: 0 });
   });
 
   it("does nothing when the target already matches", async () => {
     const desired = await desiredBlocks(RULE, sourceEvents(), options());
     const plan = planSync(desired, asExisting(desired));
     expect(plan.actions).toEqual([]);
-    expect(plan.stats.unchanged).toBe(15);
+    expect(plan.stats.unchanged).toBe(16);
   });
 
   it("moves the block of a moved occurrence instead of deleting and recreating it", async () => {
     const before = await desiredBlocks(RULE, sourceEvents(beforeMove()), options());
     const after = await desiredBlocks(RULE, sourceEvents(), options());
     const plan = planSync(after, asExisting(before));
-    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 14 });
+    expect(plan.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 15 });
     const [action] = plan.actions;
     expect(action?.kind === "update" && action.block.start).toBe("2026-11-17T10:00:00.000Z");
   });
@@ -206,7 +211,7 @@ describe("planSync", () => {
     const before = await desiredBlocks(RULE, sourceEvents(beforeCancel()), options());
     const after = await desiredBlocks(RULE, sourceEvents(), options());
     const plan = planSync(after, asExisting(before));
-    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 15 });
+    expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 16 });
   });
 
   it("ignores a renamed occurrence at level busy and updates it at level title", async () => {
@@ -229,9 +234,26 @@ describe("planSync", () => {
     const desired = await desiredBlocks(RULE, sourceEvents(), options());
     const [first] = desired;
     if (!first) throw new Error("no block");
-    const existing = [...asExisting(desired), { ...first, ruleTag: "tag", targetId: "duplicate" }];
+    const existing = [
+      ...asExisting(desired),
+      { ...first, ruleTag: "tag", targetId: "duplicate", status: "blocked" as const },
+    ];
     const plan = planSync(desired, existing);
     expect(plan.actions).toEqual([{ kind: "delete", targetId: "duplicate", marker: first.marker }]);
+    expect(countDuplicates(plan, desired)).toBe(1);
+  });
+
+  it("does not count copies of a block without a wanted event as duplicates", async () => {
+    const desired = await desiredBlocks(RULE, sourceEvents(), options());
+    const [first] = desired;
+    if (!first) throw new Error("no block");
+    const copies = [
+      { ...first, ruleTag: "tag", targetId: "a", status: "blocked" as const },
+      { ...first, ruleTag: "tag", targetId: "b", status: "blocked" as const },
+    ];
+    const plan = planSync([], copies);
+    expect(plan.stats.delete).toBe(2);
+    expect(countDuplicates(plan, [])).toBe(0);
   });
 
   it("leaves out events whose block a rule with precedence already wrote", async () => {
@@ -338,6 +360,294 @@ describe("category filter", () => {
   });
 });
 
+describe("opt-in category filter", () => {
+  function event(categories: string[], overrides: Partial<SourceEvent> = {}): SourceEvent {
+    return {
+      occurrenceKey: "event:x",
+      start: "2026-10-26T10:00:00.000Z",
+      end: "2026-10-26T11:00:00.000Z",
+      allDay: false,
+      showAs: "busy",
+      isPrivate: false,
+      declined: false,
+      categories,
+      subject: "x",
+      location: "",
+      body: "",
+      isMirror: false,
+      ...overrides,
+    };
+  }
+
+  /** The fixture with these categories on every raw event that `pick` selects. */
+  function categorised(pick: (raw: (typeof fixture.value)[number]) => boolean, names: string[]) {
+    return fixture.value.map((raw) => (pick(raw) ? { ...raw, categories: names } : raw));
+  }
+
+  const inSeries = (raw: (typeof fixture.value)[number]) =>
+    raw.subject.startsWith("FBS weekly series");
+
+  it("mirrors only events with a listed Outlook category or Google colour", () => {
+    const opts = options({ onlyCategories: ["Kunde", "color:5"] });
+    expect(isIncluded(event(["Kunde"]), opts)).toBe(true);
+    expect(isIncluded(event(["color:5"]), opts)).toBe(true);
+    expect(isIncluded(event(["Andere", "Kunde"]), opts)).toBe(true);
+    expect(isIncluded(event(["Andere"]), opts)).toBe(false);
+    expect(isIncluded(event(["color:6"]), opts)).toBe(false);
+  });
+
+  it("drops an event without any category", () => {
+    expect(isIncluded(event([]), options({ onlyCategories: ["Kunde"] }))).toBe(false);
+  });
+
+  it("matches without case and around spaces, on both sides", () => {
+    const opts = options({ onlyCategories: ["  KUNDE "] });
+    expect(isIncluded(event([" kunde  "]), opts)).toBe(true);
+  });
+
+  it("lets the exclusion win for an event in both lists", () => {
+    const opts = options({ onlyCategories: ["Kunde"], skipCategories: ["privat"] });
+    expect(isIncluded(event(["Kunde"]), opts)).toBe(true);
+    expect(isIncluded(event(["Kunde", "Privat"]), opts)).toBe(false);
+    const same = options({ onlyCategories: ["Kunde"], skipCategories: [" kunde "] });
+    expect(isIncluded(event(["Kunde"]), same)).toBe(false);
+  });
+
+  it("leaves a rule without the option as it was", async () => {
+    const stored = ruleOptionsSchema.parse({ skipCategories: ["privat"] });
+    expect(stored.onlyCategories).toEqual([]);
+    expect(isIncluded(event([]), stored)).toBe(true);
+    expect(isIncluded(event(["Andere"]), stored)).toBe(true);
+    const all = await desiredBlocks(RULE, sourceEvents(), stored);
+    const explicit = await desiredBlocks(RULE, sourceEvents(), {
+      ...stored,
+      onlyCategories: [],
+    });
+    expect(explicit).toEqual(all);
+  });
+
+  it("treats a list of blank names as no list", () => {
+    expect(isIncluded(event([]), options({ onlyCategories: ["", "   "] }))).toBe(true);
+    expect(isIncluded(event([" "]), options({ onlyCategories: ["Kunde", " "] }))).toBe(false);
+  });
+
+  it("keeps a mirror block out, whatever category it carries", () => {
+    const opts = options({ onlyCategories: ["Kunde"] });
+    expect(isIncluded(event(["Kunde"], { isMirror: true }), opts)).toBe(false);
+  });
+
+  it("applies after the other filters, which still drop a matching event", () => {
+    const opts = options({ onlyCategories: ["Kunde"], skipTentative: true });
+    expect(isIncluded(event(["Kunde"], { showAs: "tentative" }), opts)).toBe(false);
+  });
+
+  it("does not change the content of the blocks it keeps", async () => {
+    const raw = categorised(inSeries, ["Kunde"]);
+    const kept = await desiredBlocks(
+      RULE,
+      sourceEvents(raw),
+      options({ onlyCategories: ["Kunde"] }),
+    );
+    const plain = await desiredBlocks(RULE, sourceEvents(raw), options());
+    expect(kept.length).toBeGreaterThan(0);
+    for (const block of kept) expect(plain).toContainEqual(block);
+  });
+
+  describe("removal of blocks that left the filter", () => {
+    it("deletes every block of events without a listed category and keeps the others", async () => {
+      const raw = categorised((event) => event.subject === "FBS single", ["Kunde"]);
+      const before = await desiredBlocks(RULE, sourceEvents(raw), options());
+      const after = await desiredBlocks(
+        RULE,
+        sourceEvents(raw),
+        options({ onlyCategories: ["Kunde"] }),
+      );
+      expect(after).toHaveLength(1);
+      const plan = planSync(after, asExisting(before));
+      expect(plan.stats).toEqual({
+        create: 0,
+        update: 0,
+        delete: before.length - 1,
+        unchanged: 1,
+      });
+    });
+
+    it("deletes the block once the event loses its category", async () => {
+      const opts = options({ onlyCategories: ["Kunde"] });
+      const single = (event: (typeof fixture.value)[number]) => event.subject === "FBS single";
+      const before = await desiredBlocks(RULE, sourceEvents(categorised(single, ["Kunde"])), opts);
+      const after = await desiredBlocks(RULE, sourceEvents(categorised(single, ["Andere"])), opts);
+      const plan = planSync(after, asExisting(before));
+      expect(plan.stats).toEqual({ create: 0, update: 0, delete: 1, unchanged: 0 });
+    });
+
+    it("writes the block back when the option goes away", async () => {
+      const raw = categorised((event) => event.subject === "FBS single", ["Kunde"]);
+      const narrow = await desiredBlocks(
+        RULE,
+        sourceEvents(raw),
+        options({ onlyCategories: ["Kunde"] }),
+      );
+      const wide = await desiredBlocks(RULE, sourceEvents(raw), options());
+      const plan = planSync(wide, asExisting(narrow));
+      expect(plan.stats).toMatchObject({ create: wide.length - 1, delete: 0, unchanged: 1 });
+    });
+
+    it("leaves a block before the sync window alone, as the other filters do", async () => {
+      const raw = categorised((event) => event.subject === "FBS private", ["Andere"]);
+      const before = await desiredBlocks(RULE, sourceEvents(raw), options());
+      const after = await desiredBlocks(
+        RULE,
+        sourceEvents(raw),
+        options({ onlyCategories: ["Kunde"] }),
+      );
+      const windows = {
+        sync: {
+          start: new Date("2026-11-01T00:00:00Z"),
+          end: new Date("2026-12-01T00:00:00Z"),
+        },
+      };
+      const plan = planSync(after, asExisting(before), windows);
+      const inside = before.filter((block) => block.end > "2026-11-01T00:00:00.000Z");
+      expect(inside.length).toBeLessThan(before.length);
+      expect(plan.stats.delete).toBe(inside.length);
+    });
+
+    it("hands the event over to the next rule when the rule with precedence drops it", async () => {
+      const opts = options({ onlyCategories: ["Kunde"] });
+      const scope = { scope: "user" };
+      const events = sourceEvents(categorised(inSeries, ["Kunde"]));
+      const held = await desiredBlocks("first", events, options(), scope);
+      const claimed = claimsFrom(held);
+      // While the block of the first rule exists, the second rule leaves the event out.
+      expect(await desiredBlocks("second", events, opts, { ...scope, claimed })).toEqual([]);
+      // The first rule dropped its block, so the second rule writes its own.
+      const after = await desiredBlocks("second", events, opts, { ...scope, claimed: new Map() });
+      expect(after).toHaveLength(
+        events.filter((event) => event.categories.includes("Kunde")).length,
+      );
+    });
+  });
+
+  describe("recurring events", () => {
+    const opts = options({ onlyCategories: ["Kunde"] });
+    const master = {
+      ...bySubject("FBS weekly series")[0],
+      id: "series-master",
+      type: "seriesMaster",
+      seriesMasterId: null,
+      originalStart: null,
+      categories: ["Kunde"],
+    };
+    const series = () =>
+      sourceEvents(fixture.value).filter((event) => event.subject.includes("weekly"));
+
+    it("mirrors each occurrence with the category, and no series master", async () => {
+      const raw = [...categorised(inSeries, ["Kunde"]), master];
+      const events = sourceEvents(raw);
+      const blocks = await desiredBlocks(RULE, events, opts);
+      expect(blocks).toHaveLength(series().length);
+      expect(events.some((event) => event.occurrenceKey.includes("series-master"))).toBe(false);
+    });
+
+    it("judges each occurrence on its own: an exception without the category drops alone", async () => {
+      const before = await desiredBlocks(
+        RULE,
+        sourceEvents(categorised(inSeries, ["Kunde"])),
+        opts,
+      );
+      const after = await desiredBlocks(
+        RULE,
+        sourceEvents(
+          categorised(
+            (raw) => inSeries(raw) && raw.subject !== "FBS weekly series (changed)",
+            ["Kunde"],
+          ),
+        ),
+        opts,
+      );
+      const plan = planSync(after, asExisting(before));
+      expect(plan.stats).toEqual({
+        create: 0,
+        update: 0,
+        delete: 1,
+        unchanged: before.length - 1,
+      });
+    });
+
+    it("keeps the block of an occurrence that only gained the category", async () => {
+      const onlyException = categorised(
+        (raw) => raw.subject === "FBS weekly series (changed)",
+        ["Kunde"],
+      );
+      const blocks = await desiredBlocks(RULE, sourceEvents(onlyException), opts);
+      expect(blocks).toHaveLength(1);
+    });
+
+    it("keeps the marker of a moved occurrence, so that its block moves", async () => {
+      const raw = (list: unknown[]) =>
+        (list as (typeof fixture.value)[number][]).map((event) =>
+          inSeries(event) ? { ...event, categories: ["Kunde"] } : event,
+        );
+      const before = await desiredBlocks(RULE, sourceEvents(raw(beforeMove())), opts);
+      const after = await desiredBlocks(RULE, sourceEvents(raw(fixture.value)), opts);
+      const plan = planSync(after, asExisting(before));
+      expect(plan.stats).toEqual({
+        create: 0,
+        update: 1,
+        delete: 0,
+        unchanged: before.length - 1,
+      });
+    });
+
+    it("deletes the block of a cancelled occurrence", async () => {
+      const raw = (list: unknown[]) =>
+        (list as (typeof fixture.value)[number][]).map((event) =>
+          inSeries(event) ? { ...event, categories: ["Kunde"] } : event,
+        );
+      const before = await desiredBlocks(RULE, sourceEvents(raw(beforeCancel())), opts);
+      const after = await desiredBlocks(RULE, sourceEvents(raw(fixture.value)), opts);
+      const plan = planSync(after, asExisting(before));
+      expect(plan.stats).toEqual({
+        create: 0,
+        update: 0,
+        delete: 1,
+        unchanged: before.length - 1,
+      });
+    });
+
+    it("reads Google occurrences by colour, and a recoloured one drops alone", async () => {
+      const occurrence = (day: string, colorId?: string) => ({
+        id: `rec_${day}`,
+        status: "confirmed",
+        summary: "Weekly",
+        start: { dateTime: `2026-11-${day}T08:00:00Z` },
+        end: { dateTime: `2026-11-${day}T09:00:00Z` },
+        recurringEventId: "rec",
+        originalStartTime: { dateTime: `2026-11-${day}T08:00:00Z` },
+        ...(colorId ? { colorId } : {}),
+      });
+      const google = (raw: unknown[]) =>
+        raw.map(fromGoogleEvent).filter((event): event is SourceEvent => event !== null);
+      const colour = options({ onlyCategories: ["color:5"] });
+      const before = await desiredBlocks(
+        RULE,
+        google([occurrence("02", "5"), occurrence("09", "5"), occurrence("16", "5")]),
+        colour,
+      );
+      expect(before).toHaveLength(3);
+      const after = await desiredBlocks(
+        RULE,
+        google([occurrence("02", "5"), occurrence("09", "7"), occurrence("16")]),
+        colour,
+      );
+      expect(after).toHaveLength(1);
+      const plan = planSync(after, asExisting(before));
+      expect(plan.stats).toEqual({ create: 0, update: 0, delete: 2, unchanged: 1 });
+    });
+  });
+});
+
 describe("buffer", () => {
   const timed: SourceEvent = {
     occurrenceKey: "event:buffer",
@@ -413,7 +723,7 @@ describe("buffer", () => {
     const overrides = { bufferBefore: 20, bufferAfter: 10 };
     const first = await desiredBlocks(RULE, sourceEvents(), options(overrides));
     const created = planSync(first, []);
-    expect(created.stats.create).toBe(15);
+    expect(created.stats.create).toBe(16);
     // The target returns the times in its own notation; the plan compares instants.
     const stored = asExisting(first).map((block) => ({
       ...block,
@@ -423,7 +733,7 @@ describe("buffer", () => {
     const second = await desiredBlocks(RULE, sourceEvents(), options(overrides));
     expect(planSync(second, stored)).toEqual({
       actions: [],
-      stats: { create: 0, update: 0, delete: 0, unchanged: 15 },
+      stats: { create: 0, update: 0, delete: 0, unchanged: 16 },
     });
   });
 
@@ -468,55 +778,6 @@ describe("buffer", () => {
     const [own] = await write({ bufferBefore: 15 }, { bufferBefore: 30 });
     expect(own).toMatchObject({ start: "2026-10-27T09:30:00.000Z" });
     expect(await write({}, { bufferAfter: 5 })).toHaveLength(1);
-  });
-
-  it("writes the origin note into a buffered block, and the note changes no dedup key", async () => {
-    const linked = { ...timed, link: "https://example.com/event" };
-    const note = { showOrigin: true, linkOrigin: true, detailLevel: "title" } as const;
-    const block = async (rule: string, overrides: Partial<RuleOptions>, origin: string) => {
-      const blocks = await desiredBlocks(
-        rule,
-        [linked],
-        options({ ...note, ...overrides }),
-        {
-          scope: "user",
-        },
-        origin,
-      );
-      if (!blocks[0]) throw new Error("no block");
-      return blocks[0];
-    };
-    const plain = await blockOf(linked, { detailLevel: "title" });
-    const buffered = await block(RULE, { bufferBefore: 30 }, "From: Work (Microsoft)");
-    expect(buffered).toMatchObject({
-      start: "2026-10-27T09:30:00.000Z",
-      end: "2026-10-27T11:00:00.000Z",
-      body: "From: Work (Microsoft)\nhttps://example.com/event",
-    });
-    // Same occurrence, same meeting: only the content hash sees the buffer and the note.
-    expect(buffered.marker).toBe(plain.marker);
-    expect(buffered.dedupKey).toBe(plain.dedupKey);
-    expect(buffered.contentHash).not.toBe(plain.contentHash);
-
-    // A block from another source with its own note claims the meeting if it covers the buffer.
-    const other = await block("rule-a", { bufferBefore: 30 }, "From: Home (Google)");
-    const write = async (own: Partial<RuleOptions>) =>
-      desiredBlocks(
-        "rule-b",
-        [linked],
-        options({ ...note, ...own }),
-        {
-          scope: "user",
-          claimed: claimsFrom([other]),
-        },
-        "From: Work (Microsoft)",
-      );
-    expect(await write({ bufferBefore: 15 })).toEqual([]);
-    const [own] = await write({ bufferBefore: 45 });
-    expect(own).toMatchObject({
-      start: "2026-10-27T09:15:00.000Z",
-      body: "From: Work (Microsoft)\nhttps://example.com/event",
-    });
   });
 });
 

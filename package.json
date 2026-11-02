@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "trial:report": "node scripts/trial-report.ts",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy --define \"__BUILD_COMMIT__:\\\"$(git rev-parse --short=9 HEAD 2>/dev/null)\\\"\"",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "cf-typegen": "wrangler types --strict-vars=false",
     "typecheck": "tsc --noEmit",
@@ -15,7 +16,13 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "capacity:probe": "node scripts/capacity-probe.ts",
+    "suite": "node suite/cli.ts",
+    "suite:gate": "node suite/cli.ts --gate",
+    "suite:published": "node suite/check-published.ts",
+    "suite:proof": "vitest run --config suite/vitest.config.ts suite/proof/",
+    "waitlist:check": "pnpm --filter slotmirror-waitlist check",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm suite:proof && pnpm suite:gate && pnpm suite:published && pnpm waitlist:check",
     "prepare": "husky"
   },
   "dependencies": {
@@ -46,41 +53,23 @@
   },
   "cloudflare": {
     "bindings": {
-      "ORG_NAME": {
-        "description": "Optional. Name shown in the dashboard, e.g. your company name."
-      },
-      "ALLOWED_EMAILS": {
-        "description": "Comma-separated email addresses that may sign in. For a personal deployment, put your own address here."
-      },
-      "ALLOWED_DOMAINS": {
-        "description": "Comma-separated email domains whose users may sign in, e.g. `example.com`. For a team deployment."
-      },
-      "ALLOWED_TENANT_IDS": {
-        "description": "Optional. Comma-separated Entra tenant IDs. If set, Microsoft sign-ins from other tenants are refused."
-      },
-      "ADMIN_EMAILS": {
-        "description": "Comma-separated email addresses with access to the admin page. Admins may always sign in."
-      },
-      "PRIVACY_CONTACT": {
-        "description": "Email address shown on the privacy page as the contact of whoever operates this deployment. Required by Google for published OAuth apps."
-      },
       "SESSION_SECRET": {
         "description": "Random string, at least 32 characters. Signs the session cookie."
       },
       "TOKEN_ENCRYPTION_KEY": {
-        "description": "Base64-encoded 32-byte key. Encrypts OAuth tokens at rest. Generate with `openssl rand -base64 32`."
+        "description": "Base64-encoded 32-byte key. Encrypts OAuth tokens at rest. Generate with `openssl rand -base64 32`. Without openssl, see the quickstart for other operating systems."
       },
       "MICROSOFT_CLIENT_ID": {
         "description": "Application (client) ID of your Entra app registration. Leave empty if you do not use Microsoft 365."
       },
       "MICROSOFT_CLIENT_SECRET": {
-        "description": "Client secret of your Entra app registration."
+        "description": "Client secret of your Entra app registration. Leave empty if you do not use Microsoft 365."
       },
       "GOOGLE_CLIENT_ID": {
         "description": "OAuth client ID from Google Cloud. Leave empty if you do not use Google Calendar."
       },
       "GOOGLE_CLIENT_SECRET": {
-        "description": "OAuth client secret from Google Cloud."
+        "description": "OAuth client secret from Google Cloud. Leave empty if you do not use Google Calendar."
       }
     }
   }

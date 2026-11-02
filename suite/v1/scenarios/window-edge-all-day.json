@@ -1,0 +1,42 @@
+{
+  "id": "window-edge-all-day",
+  "title": "West of UTC an all-day event stays blocked after midnight UTC until its own day ends",
+  "covers": "window boundary",
+  "expectedText": "It is still the day of the event in Los Angeles at 03:05 UTC the next day, so the block stays. After the delete that day is free.",
+  "requires": ["clock", "provider-calls"],
+  "calendars": {
+    "source": { "timeZone": "America/Los_Angeles" },
+    "target": { "timeZone": "America/Los_Angeles" }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "today",
+      "event": { "start": "today", "end": "today+1d" }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["today-1d@00:00Z", "today+3d@00:00Z"],
+        "busyDates": [["today", "today+1d"]]
+      }
+    },
+    { "do": "advance", "to": "today+1d@03:05Z" },
+    { "do": "expect-calls", "calendar": "target", "seconds": 600 },
+    {
+      "do": "sync",
+      "settleSeconds": 600,
+      "expect": {
+        "window": ["today-1d@00:00Z", "today+3d@00:00Z"],
+        "busyDates": [["today", "today+1d"]],
+        "noDuplicates": true
+      }
+    },
+    { "do": "write", "change": "delete", "key": "today" },
+    {
+      "do": "sync",
+      "expect": { "window": ["today-1d@00:00Z", "today+3d@00:00Z"], "busy": [] }
+    }
+  ]
+}

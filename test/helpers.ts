@@ -1,18 +1,99 @@
 import { env } from "cloudflare:workers";
+import { vi } from "vitest";
+import { decideAccess, DEFAULT_ORG_ID, policyFromEnv } from "../src/access";
+import { FakeCalendar } from "../src/providers/fake-calendar";
+import {
+  BATCH_TIMEOUT_MS,
+  CALL_TIMEOUT_MS,
+  TOKEN_TIMEOUT_MS,
+} from "../src/providers/provider-fetch";
 import { SESSION_COOKIE, signSession } from "../src/session";
-import { signInUser, type CurrentUser } from "../src/users";
+import type { CurrentUser } from "../src/users";
 
 export const BASE = "https://slotmirror.example.workers.dev";
 
-/** Sign in an address allowed by the test bindings and return the user and its session cookie. */
-export async function signIn(email: string): Promise<{ user: CurrentUser; cookie: string }> {
-  const user = await signInUser(env, { email });
-  if (!user) throw new Error(`${email} is not allowed by the test bindings`);
+/** A seed for an account whose tests add their own events. */
+export const EMPTY_FAKE_SEED = { account: 1, accounts: 1, days: 90 };
+
+/**
+ * Keep the simulated calendars off the probe target. DEV_FAKE_FETCH_URL is a binding of all tests,
+ * and a test that stubs `fetch` for its own requests must not see their calls.
+ */
+export function noFakeNetwork(): void {
+  vi.spyOn(
+    FakeCalendar.prototype as unknown as { network(): Promise<void> },
+    "network",
+  ).mockResolvedValue();
+}
+
+const realSetTimeout = globalThis.setTimeout;
+const PROVIDER_DEADLINES: unknown[] = [TOKEN_TIMEOUT_MS, CALL_TIMEOUT_MS, BATCH_TIMEOUT_MS];
+
+/** Let every provider deadline expire after 5 ms. The spy still records the requested value. */
+export function shortProviderTimeouts() {
+  return vi
+    .spyOn(globalThis, "setTimeout")
+    .mockImplementation(((handler: () => void, delay?: number) =>
+      realSetTimeout(
+        handler,
+        PROVIDER_DEADLINES.includes(delay) ? 5 : delay,
+      )) as typeof setTimeout);
+}
+
+/**
+ * Stop the clock of the test and the Durable Object one hour ahead of real time. A wait then ends
+ * only when the test moves the clock, and alarm times stay exact on a slow machine. The runtime
+ * fires alarms in real time, so the hour also keeps them from firing by themselves. A test that
+ * derives dates from the clock also keeps its dates across midnight UTC. Call
+ * `vi.useRealTimers()` after the test.
+ */
+export function stopClock(): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 3_600_000);
+}
+
+/**
+ * Sign in an address allowed by the test bindings and return the user and its session cookie.
+ * The user is created or updated directly, without a provider identity, so that it stays unbound
+ * and any test may later sign it in with Microsoft or Google.
+ */
+export async function signIn(
+  email: string,
+): Promise<{ user: CurrentUser & { sessionVersion: number }; cookie: string }> {
+  const policy = policyFromEnv(env);
+  const decision = decideAccess(policy, { email });
+  if (!decision.allowed) throw new Error(`${email} is not allowed by the test bindings`);
+  const [, result] = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO orgs (id, name, policy) VALUES (?, 'Example', ?)
+       ON CONFLICT (id) DO UPDATE SET policy = excluded.policy`,
+    ).bind(DEFAULT_ORG_ID, JSON.stringify(policy)),
+    env.DB.prepare(
+      `INSERT INTO users (id, org_id, email, role, last_sign_in_at)
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       ON CONFLICT (email) DO UPDATE SET role = excluded.role,
+         last_sign_in_at = excluded.last_sign_in_at
+       RETURNING id, org_id AS orgId, email, role, session_version AS sessionVersion`,
+    ).bind(crypto.randomUUID(), DEFAULT_ORG_ID, email, decision.role),
+  ]);
+  const user = result?.results[0] as (CurrentUser & { sessionVersion: number }) | undefined;
+  if (!user) throw new Error(`${email} has no user row`);
   const token = await signSession(
-    { userId: user.id, exp: Math.floor(Date.now() / 1000) + 60 },
+    { userId: user.id, exp: Math.floor(Date.now() / 1000) + 60, version: user.sessionVersion },
     env.SESSION_SECRET,
   );
   return { user, cookie: `${SESSION_COOKIE}=${token}` };
+}
+
+/** A Google identity for `admitSignIn`, as the Google provider reads it from an ID token. */
+export function googleIdentity(email: string, subject = `sub-${email}`) {
+  return {
+    provider: "google" as const,
+    email,
+    tenantId: null,
+    subject,
+    addresses: [email],
+  };
 }
 
 export async function addAccount(userId: string, id: string, email: string): Promise<void> {

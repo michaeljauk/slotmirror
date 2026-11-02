@@ -11,6 +11,8 @@ export interface Session {
   userId: string;
   /** Expiry as Unix seconds. */
   exp: number;
+  /** `users.session_version` at sign-in. Sessions from before versions existed carry none: 0. */
+  version?: number;
 }
 
 export function signSession(session: Session, secret: string): Promise<string> {

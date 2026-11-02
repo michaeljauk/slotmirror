@@ -20,7 +20,7 @@ export function DeleteUserPage(props: {
   return (
     <Layout title={title} user={props.user} active={props.target ? "admin" : undefined}>
       <div class="center">
-        <div class="card">
+        <div class="card confirm">
           <h1>{title}</h1>
           <p class="lead">{t.deleteUser.intro}</p>
           <ul class="prose-list">

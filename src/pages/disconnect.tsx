@@ -14,7 +14,7 @@ export function DisconnectPage(props: {
   return (
     <Layout title={t.accounts.disconnectTitle} user={props.user} active="accounts">
       <div class="center">
-        <div class="card">
+        <div class="card confirm">
           <h1>{t.accounts.disconnectTitle}</h1>
           <p class="lead">{t.accounts.disconnectText(props.email)}</p>
           <p class="lead">{t.accounts.disconnectRules(props.rules)}</p>

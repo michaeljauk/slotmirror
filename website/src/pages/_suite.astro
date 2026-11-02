@@ -1,0 +1,427 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import result from "../data/suite-result.json";
+import manifest from "../../../suite/v1/manifest.json";
+import knownRed from "../../../suite/known-red.json";
+import { join } from "node:path";
+import { hashFolder } from "../../../suite/lib/stamp.ts";
+import {
+  assertShape,
+  describeExpected,
+  describeObserved,
+  formatInstant,
+  formatSeconds,
+  isKnownRed,
+  isLiveRun,
+  issueUrl,
+  realLatency,
+  statusText,
+  type KnownRed,
+  type Manifest,
+  type ScenarioResult,
+  type SuiteResult,
+} from "../lib/suite-result";
+
+const repo = "https://github.com/michaeljauk/slotmirror";
+const run = result as unknown as SuiteResult;
+const suiteManifest = manifest as Manifest;
+
+// The build stops here if the file has a wrong form, contradicts itself, or comes from another
+// list of scenarios than the files that this page reads for setup and target state.
+const listFolder = join(process.cwd(), "..", "suite", "v1");
+assertShape(run, suiteManifest, hashFolder(listFolder));
+
+const known = new Map((knownRed as KnownRed[]).map((entry) => [entry.id, entry]));
+
+// The scenario files hold the setup and the target state. Vite reads them at build time.
+const files = import.meta.glob<{ steps: Record<string, unknown>[] }>(
+  "../../../suite/v1/scenarios/*.json",
+  { eager: true, import: "default" },
+);
+const scenarioFile = (id: string) =>
+  Object.entries(files).find(([path]) => path.endsWith(`/${id}.json`))?.[1];
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const quickstart = `${base}/docs/quickstart/`;
+
+const live = isLiveRun(run);
+const latency = realLatency(run);
+const total = run.summary.pass + run.summary.fail + run.summary.not_run;
+const ran = run.summary.pass + run.summary.fail;
+const directionsRun = new Set(
+  run.scenarios.flatMap((s) => s.directions.filter((d) => d.status !== "not_run").map((d) => d.direction)),
+);
+const bothDirections = ["forward", "reverse"].every((name) => directionsRun.has(name));
+const onlyDirection = [...directionsRun].join(" and ");
+const scopeText = [
+  run.scope === "all" ? "A run of the whole list." : "A partial run: only selected scenarios.",
+  `${ran} of ${total} scenarios ran${run.summary.not_run > 0 ? `, ${run.summary.not_run} did not run` : ""}.`,
+  bothDirections
+    ? "Each scenario that ran was checked in both directions between the two calendars."
+    : `Only the ${onlyDirection || "no"} direction was checked. The other direction is untested.`,
+].join(" ");
+const notRun = run.scenarios.filter((s) => s.status === "not_run");
+const scenarios: ScenarioResult[] = run.scenarios;
+const limits = [...new Set(scenarios.map((s) => s.local_limit).filter((v): v is string => !!v))];
+
+// One line per step: the action and its plain fields. Event content is not shown.
+function describeStep(step: Record<string, unknown>, index: number): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(step)) {
+    if (key === "do" || key === "expect") continue;
+    if (key === "event" && value && typeof value === "object") {
+      const event = value as { start?: string; end?: string };
+      parts.push(`${event.start ?? "?"} to ${event.end ?? "?"}`);
+    } else if (typeof value === "string" || typeof value === "number") {
+      parts.push(`${key} ${value}`);
+    }
+  }
+  const expects = step.expect ? " (then checks the target)" : "";
+  return `${index + 1}. ${String(step.do)}${parts.length ? `: ${parts.join(", ")}` : ""}${expects}`;
+}
+
+const title = "Test results";
+const description = "Results of the open scenario suite for calendar sync tools.";
+---
+
+<StarlightPage
+  frontmatter={{ title, description, template: "splash", tableOfContents: false }}
+>
+  <div class="suite">
+    {
+      live ? (
+        <p class="banner live" role="note">
+          <strong>Live run.</strong> Run against real calendars. The program under test stated
+          this mode, and the suite cannot verify it.
+        </p>
+      ) : (
+        <p class="banner sim" role="note">
+          <strong>Simulated run against a fake calendar, not a live run.</strong> These results show
+          the sync engine on simulated calendars. They say nothing about real Microsoft 365 or Google
+          calendars.
+        </p>
+      )
+    }
+
+    <dl class="head">
+      <div><dt>Suite version</dt><dd>{run.suiteVersion}</dd></div>
+      <div><dt>List frozen</dt><dd>{manifest.frozenAt}</dd></div>
+      <div>
+        <dt>Commit</dt>
+        <dd>
+          <code>{run.commit.slice(0, 9)}</code>{run.dirty ? " (with local changes)" : ""}
+        </dd>
+      </div>
+      <div><dt>Run date</dt><dd>{formatInstant(run.runAt)}</dd></div>
+      <div><dt>Driver</dt><dd>{run.driver.name}, {run.driver.mode}</dd></div>
+    </dl>
+
+    <h2>What was tested</h2>
+    <p>
+      {scopeText} Each scenario checks time coverage: the target calendar must be busy where the
+      source is busy and free where the source is free. It does not check “one event, one block”,
+      and merged blocks are fine.
+    </p>
+    <h3>Limits</h3>
+    {
+      live ? (
+        <p>
+          A pass shows the tool on the calendars and the time of this run only. It does not show
+          other accounts, other regions or other days.
+        </p>
+      ) : (
+        <p>
+          The calendars and the clock are simulated, so the provider API, webhooks and the encoders
+          of block writes are not covered. The times inside a scenario are simulated dates. They
+          differ from the run date on purpose.
+        </p>
+      )
+    }
+    {
+      limits.length > 0 && (
+        <>
+          <p>A pass does not show the following:</p>
+          <ul>
+            {limits.map((limit) => (
+              <li>{limit}</li>
+            ))}
+          </ul>
+        </>
+      )
+    }
+    {
+      notRun.length > 0 && (
+        <p>
+          Not run: {notRun.map((s) => s.title).join("; ")}.
+        </p>
+      )
+    }
+
+    <h2>Summary</h2>
+    <ul class="numbers" aria-label="Summary">
+      <li><span class="n">{run.summary.pass}</span><span class="l">Passed</span></li>
+      <li class="red"><span class="n">{run.summary.fail}</span><span class="l">Red</span></li>
+      <li><span class="n">{run.summary.not_run}</span><span class="l">Not run</span></li>
+    </ul>
+    {
+      latency ? (
+        <p>
+          Latency from the write until the target shows it: median {formatSeconds(latency.p50Ms)},
+          p95 {formatSeconds(latency.p95Ms)}.
+          {latency.pollMs ? ` A value can be up to ${formatSeconds(latency.pollMs)} too high (polling grid).` : ""}
+        </p>
+      ) : (
+        <p class="muted">No latency is shown: this run has no real-time measurement.</p>
+      )
+    }
+    <p>
+      <a class="cta" href={quickstart} data-track="suite_to_quickstart">Start the quickstart</a>
+    </p>
+
+    <h2>Scenarios</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>Expected availability</th>
+          <th>Observed</th>
+          <th>Status</th>
+          <th>Run date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          scenarios.map((scenario) => {
+            const entry = known.get(scenario.id);
+            const red = isKnownRed(scenario, entry) ? entry : undefined;
+            const url = red ? issueUrl(repo, red.issue) : null;
+            const file = scenarioFile(scenario.id);
+            const observed = describeObserved(scenario);
+            return (
+              <tr class={`s-${scenario.status}`}>
+                <td data-label="Scenario">
+                  <strong>{scenario.title}</strong>
+                  <details>
+                    <summary>Setup and target file</summary>
+                    <p class="muted">Covers: {scenario.covers}</p>
+                    {file && (
+                      <>
+                        <p>Setup</p>
+                        <ol class="steps">
+                          {file.steps.map((step, index) => (
+                            <li>{describeStep(step, index)}</li>
+                          ))}
+                        </ol>
+                        <p>Target state</p>
+                        <pre>{JSON.stringify(
+                          file.steps.filter((step) => step.expect).map((step) => step.expect),
+                          null,
+                          1,
+                        )}</pre>
+                      </>
+                    )}
+                    <p>
+                      <a href={`${repo}/blob/${run.commit}/suite/v1/scenarios/${scenario.id}.json`}>
+                        Scenario file <code>{scenario.id}.json</code> at commit <code>{run.commit.slice(0, 9)}</code>
+                      </a>
+                    </p>
+                  </details>
+                </td>
+                <td data-label="Expected availability">
+                  {scenario.expectedText}
+                  {describeExpected(scenario).map((line) => (
+                    <div class="muted">{line}</div>
+                  ))}
+                </td>
+                <td data-label="Observed">
+                  {observed.map((group) => (
+                    <div class="group">
+                      {observed.length > 1 || scenario.status === "fail" ? (
+                        <strong>{group.label}:</strong>
+                      ) : null}
+                      {group.lines.map((line) => (
+                        <div>{line}</div>
+                      ))}
+                    </div>
+                  ))}
+                </td>
+                <td data-label="Status">
+                  <span class={`status ${scenario.status}`}>{statusText(scenario)}</span>
+                  {scenario.status === "fail" &&
+                    (red ? (
+                      <p class="known">
+                        Known: {red.reason}{" "}
+                        {url ? <a href={url}>Issue {red.issue}</a> : <span>Issue {red.issue}</span>}
+                      </p>
+                    ) : (
+                      <p class="known">
+                        {scenario.stopped
+                          ? "An error stopped this run, so it says nothing about the tool. Not a known red."
+                          : "Not on the list of known red scenarios."}
+                      </p>
+                    ))}
+                </td>
+                <td data-label="Run date">{run.runAt.slice(0, 10)}</td>
+              </tr>
+            );
+          })
+        }
+      </tbody>
+    </table>
+
+    <p>
+      <a class="cta" href={quickstart} data-track="suite_to_quickstart">Start the quickstart</a>
+    </p>
+  </div>
+</StarlightPage>
+
+<style>
+  .suite {
+    --ok: #1a6b3c;
+    --bad: #b3261e;
+    --warn: #8a5a00;
+  }
+  :global(:root[data-theme="dark"]) .suite {
+    --ok: #6fd39a;
+    --bad: #ff8a80;
+    --warn: #f2c14e;
+  }
+  .banner {
+    border: 2px solid var(--warn);
+    border-radius: 0.5rem;
+    padding: 0.9rem 1rem;
+    font-size: var(--sl-text-lg);
+  }
+  .banner.live {
+    border-color: var(--ok);
+  }
+  .head {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 0.75rem 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .head dt {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+  .head dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .numbers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    list-style: none;
+    padding: 0;
+  }
+  .numbers li {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    padding: 0.6rem 1.2rem;
+    min-width: 7rem;
+  }
+  .numbers .n {
+    display: block;
+    font-size: var(--sl-text-4xl);
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .numbers .red .n {
+    color: var(--bad);
+  }
+  .muted {
+    color: var(--sl-color-gray-3);
+  }
+  .cta {
+    display: inline-block;
+    background: var(--sl-color-accent);
+    color: var(--sl-color-black);
+    padding: 0.6rem 1.1rem;
+    border-radius: 0.4rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  table {
+    width: 100%;
+    display: table;
+  }
+  td,
+  th {
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  td:last-child,
+  th:last-child {
+    white-space: nowrap;
+    width: 6.5rem;
+  }
+  td:nth-child(4),
+  th:nth-child(4) {
+    width: 9rem;
+  }
+  .status {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .status.pass {
+    color: var(--ok);
+  }
+  .status.fail {
+    color: var(--bad);
+  }
+  .status.not_run {
+    color: var(--warn);
+  }
+  .known {
+    margin: 0.4rem 0 0;
+    font-size: var(--sl-text-sm);
+  }
+  details {
+    margin-top: 0.4rem;
+    font-size: var(--sl-text-sm);
+  }
+  pre {
+    overflow-x: auto;
+    max-width: 100%;
+    font-size: var(--sl-text-xs);
+  }
+  .steps {
+    padding-left: 0;
+    list-style: none;
+  }
+  @media (max-width: 50rem) {
+    table,
+    tbody,
+    tr,
+    td {
+      display: block;
+      width: 100%;
+    }
+    thead {
+      position: absolute;
+      left: -9999px;
+    }
+    tr {
+      border: 1px solid var(--sl-color-gray-5);
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 1rem;
+    }
+    td:last-child,
+    td:nth-child(4) {
+      width: 100%;
+    }
+    td {
+      border: 0;
+      padding: 0.3rem 0;
+    }
+    td::before {
+      content: attr(data-label);
+      display: block;
+      color: var(--sl-color-gray-3);
+      font-size: var(--sl-text-xs);
+    }
+  }
+</style>

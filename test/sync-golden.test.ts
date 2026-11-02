@@ -296,10 +296,14 @@ function googleEvent(
   });
 }
 
+/**
+ * Each set names `skipAllDay`: the digests must not depend on the default, so that they also prove
+ * that a rule with the stored value keeps its output when the default changes.
+ */
 const OPTION_SETS = [
-  {},
-  { detailLevel: "title", markPrivate: false },
-  { detailLevel: "title_location", blockColor: " 5 " },
+  { skipAllDay: true },
+  { skipAllDay: true, detailLevel: "title", markPrivate: false },
+  { skipAllDay: true, detailLevel: "title_location", blockColor: " 5 " },
   {
     detailLevel: "full",
     skipAllDay: false,
@@ -307,8 +311,9 @@ const OPTION_SETS = [
     skipDeclined: false,
     blockTitle: "Occupied",
   },
-  { skipTentative: true, skipCategories: ["red category", " WORK "] },
+  { skipAllDay: true, skipTentative: true, skipCategories: ["red category", " WORK "] },
   {
+    skipAllDay: true,
     detailLevel: "full",
     markPrivate: false,
     blockColor: "Blue category",
@@ -541,6 +546,11 @@ function outcome(run: () => unknown): unknown {
   }
 }
 
+/** `status` came after the digests; no plan reads it. `test/compare-run.test.ts` covers it. */
+function withoutStatus({ status: _status, ...block }: ExistingBlock) {
+  return block;
+}
+
 async function digest(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -653,7 +663,7 @@ describe("golden output of the sync engine", () => {
         const client =
           provider === "graph" ? new GraphCalendar("token") : new GoogleCalendar("token");
         const blocks = await client.existingBlocks("target", WINDOW, [tagA, tagB]);
-        existingSections.push(blocks);
+        existingSections.push(blocks.map(withoutStatus));
         const existing = blocks.filter((block) => block.ruleTag === tagA);
         const claimed = new Set([
           ...blocks
@@ -700,6 +710,7 @@ describe("golden output of the sync engine", () => {
       start: sample!.start,
       end: sample!.end,
       allDay: sample!.allDay,
+      status: "blocked",
     };
     sections.edges = [
       planSync([sample!], [base]),
@@ -752,7 +763,8 @@ describe("golden output of the sync engine", () => {
         GRAPH_CASES.map(async (raw) => {
           vi.mocked(fetch).mockImplementation(async () => Response.json({ value: [raw] }));
           try {
-            return { value: await new GraphCalendar("t").existingBlocks("c", WINDOW, ["tag"]) };
+            const blocks = await new GraphCalendar("t").existingBlocks("c", WINDOW, ["tag"]);
+            return { value: blocks.map(withoutStatus) };
           } catch (error) {
             return { name: (error as Error).name, message: (error as Error).message };
           }
@@ -762,7 +774,8 @@ describe("golden output of the sync engine", () => {
         GOOGLE_CASES.map(async (raw) => {
           vi.mocked(fetch).mockImplementation(async () => Response.json({ items: [raw] }));
           try {
-            return { value: await new GoogleCalendar("t").existingBlocks("c", WINDOW, ["t"]) };
+            const blocks = await new GoogleCalendar("t").existingBlocks("c", WINDOW, ["t"]);
+            return { value: blocks.map(withoutStatus) };
           } catch (error) {
             return { name: (error as Error).name, message: (error as Error).message };
           }
@@ -823,9 +836,15 @@ describe("golden output of the sync engine", () => {
         "golden-e2e-2",
         "gold-g-src",
         "gold-ms-dst",
-        { detailLevel: "full", markPrivate: false, skipFree: false, blockColor: "Green category" },
+        {
+          skipAllDay: true,
+          detailLevel: "full",
+          markPrivate: false,
+          skipFree: false,
+          blockColor: "Green category",
+        },
       ],
-      ["golden-e2e-3", "gold-ms-src", "gold-ms-dst", {}],
+      ["golden-e2e-3", "gold-ms-src", "gold-ms-dst", { skipAllDay: true }],
     ] as const;
     await env.DB.batch([
       ...accounts.flatMap(([id, provider, email]) => [
@@ -876,7 +895,7 @@ describe("golden output of the sync engine", () => {
         await desiredBlocks(
           "golden-e2e-3",
           graphSources,
-          ruleOptionsSchema.parse({ detailLevel: "busy" }),
+          ruleOptionsSchema.parse({ skipAllDay: true, detailLevel: "busy" }),
           { scope: SCOPE },
         ),
         await tag("golden-e2e-3"),

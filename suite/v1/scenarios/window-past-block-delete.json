@@ -1,0 +1,54 @@
+{
+  "id": "window-past-block-delete",
+  "title": "A block from before the window goes when its event goes after midnight",
+  "covers": "window boundary",
+  "expectedText": "An event ends at 23:30 UTC. Five minutes after midnight, the window starts behind that end, and then the event is deleted. The target is free.",
+  "requires": ["clock", "provider-calls"],
+  "calendars": {
+    "source": {
+      "timeZone": "UTC"
+    },
+    "target": {
+      "timeZone": "UTC"
+    }
+  },
+  "steps": [
+    {
+      "do": "write",
+      "change": "create",
+      "key": "late",
+      "event": {
+        "start": "today+1d@22:30Z",
+        "end": "today+1d@23:30Z"
+      }
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["today+1d@00:00Z", "today+3d@00:00Z"],
+        "busy": [["today+1d@22:30Z", "today+1d@23:30Z"]]
+      }
+    },
+    {
+      "do": "advance",
+      "to": "today+2d@00:05Z"
+    },
+    {
+      "do": "expect-calls",
+      "calendar": "target",
+      "seconds": 600
+    },
+    {
+      "do": "write",
+      "change": "delete",
+      "key": "late"
+    },
+    {
+      "do": "sync",
+      "expect": {
+        "window": ["today+1d@00:00Z", "today+3d@00:00Z"],
+        "busy": []
+      }
+    }
+  ]
+}

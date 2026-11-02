@@ -216,7 +216,7 @@ for (const field of document.querySelectorAll("input[data-tokens]")) {
   // change while they differ from the saved ones. Their fields sit in the row and name the form.
   const detailsOf = (form) => {
     const data = new FormData(form);
-    const names = [asText(data.get("onlyCategories")), ...data.getAll("onlyColor")];
+    const names = [asText(data.get("onlyCategories")), ...data.getAll("onlyColor").map(asText)];
     return {
       blockColor: asText(data.get("blockColor")),
       workHours: data.has("workHoursShown") ? (data.has("workHours") ? "1" : "0") : null,

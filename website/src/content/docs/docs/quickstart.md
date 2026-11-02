@@ -117,7 +117,7 @@ the other provider later, repeat steps 5 and 6 for it.
 
 ## 8. Watch the first block
 
-1. Under **Where your events go**, put your two calendars in the group **Block each other**, and
+1. On the **Rules** page, put your two calendars in the group **Block each other**, and
    choose **Save**. See below.
 2. In one calendar, create a test event for tomorrow.
 3. Watch the other calendar. With `PUBLIC_URL`, the block appears when the notification arrives. Without it, it
@@ -170,7 +170,7 @@ version later, see [Updating your deployment](../updating/).
 ![Connected accounts](../../../../../docs/images/accounts.png)
 
 1. Connect each account under **Accounts**.
-2. Open **Where your events go**. Put your calendars in the group **Block each other**: each then
+2. Open **Rules**. Put your calendars in the group **Block each other**: each then
    sees the others only as "Busy", marked private.
 3. For more detail in one direction, expand the card of the source account and choose **Not**,
    **As busy**, **With title** or **Everything** per target. **Looks like this there** shows an

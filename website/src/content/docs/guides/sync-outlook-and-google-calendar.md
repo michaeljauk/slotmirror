@@ -22,7 +22,7 @@ other.
    [Google OAuth client](../../docs/google-setup/).
 3. Set `PUBLIC_URL`, so that the providers notify your deployment of changes.
 4. Sign in and connect both accounts under **Accounts**.
-5. In **Where your events go**, use **Quick start**: both calendars then block each other as busy.
+5. On the **Rules** page, use **Quick start**: both calendars then block each other as busy.
 6. Expand the card of the Outlook account. For the Google target, choose **With title** or
    **Everything**. **Looks like this there** shows the result.
 7. Choose **Save**.

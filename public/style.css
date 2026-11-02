@@ -2620,14 +2620,43 @@ details.swatch > summary::-webkit-details-marker {
   display: none;
 }
 
-/* Long names stop after two lines and stay complete in the tooltip. */
+/* A name stays on one line and ends in an ellipsis; the tooltip has the complete name. It never
+   breaks inside a word. */
 .matrix .account-label {
-  display: -webkit-box;
-  max-width: 56px;
+  display: block;
+  min-width: 0;
+  max-width: 64px;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Fixed columns share the width of the overview, so a long name cannot push the table wider. */
+.matrix:not(.compact) {
+  table-layout: fixed;
+}
+
+.matrix:not(.compact) th:first-child {
+  width: 26%;
+}
+
+.matrix:not(.compact) th.col {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.matrix:not(.compact) .account-name {
+  display: flex;
+  max-width: 100%;
+}
+
+.matrix:not(.compact) th.col .account-name {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.matrix:not(.compact) .account-label {
+  max-width: 100%;
 }
 
 .matrix.compact .account-label {

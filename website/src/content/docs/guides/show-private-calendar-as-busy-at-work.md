@@ -13,7 +13,7 @@ private appointment, and nothing else.
 
 1. Deploy slotmirror with the [Quickstart](../../docs/quickstart/) and connect your work and your
    private account.
-2. In **Where your events go**, add both calendars to the group **Block each other**.
+2. On the **Rules** page, add both calendars to the group **Block each other**.
 3. Expand the card of the private account. Keep **As busy** for the work calendar.
 4. Under **For all calendars**, keep **Mark copies as private** on. Colleagues then see
    "Private". You still see everything.

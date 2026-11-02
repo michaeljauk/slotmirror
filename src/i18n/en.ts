@@ -58,6 +58,8 @@ export const en = {
     workHoursInUse: (hours: string, used: number, total: number) =>
       `Working hours ${hours} · used by ${used} of ${total} ${total === 1 ? "direction" : "directions"}`,
     workHoursUnused: (hours: string) => `Working hours ${hours} filter nothing yet.`,
+    noCalendars: "No calendars could be loaded.",
+    noCalendarsLink: "Open the rules",
     workHoursChoose: "Choose directions",
     workHoursIdle: (hours: string) =>
       `Working hours ${hours} · nothing copies into this account yet`,
@@ -122,6 +124,10 @@ export const en = {
     runNow: "Run now",
     delete: "Delete",
     refreshCalendars: "Reload calendars",
+    calendarsMissing: (names: string) =>
+      `No calendars could be loaded for ${names}, so the rules do not show this account.`,
+    calendarsMissingGoogle:
+      "For a Google account, the operator must turn on the Google Calendar API in the Google Cloud project.",
     noCalendars: "Connect an account first; its calendars appear here.",
     previewResult: (create: number, update: number, remove: number, unchanged: number) =>
       `Preview: ${create} to create, ${update} to update, ${remove} to delete, ${unchanged} unchanged. Nothing was written.`,

@@ -42,7 +42,6 @@ export interface ChangeFeed {
 /** Optional fields of a source read. */
 export interface SourceFields {
   withBody?: boolean;
-  withLink?: boolean;
 }
 
 export interface TimeWindow {
@@ -65,7 +64,7 @@ export interface CalendarClient {
   listCalendars(options?: { complete?: boolean }): Promise<CalendarInfo[]>;
   /**
    * Every occurrence in the window, series expanded, with our own blocks recognisable. The body
-   * and the web link of each occurrence only on request.
+   * of each occurrence only on request.
    */
   sourceEvents(
     calendarId: string,

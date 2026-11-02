@@ -140,8 +140,8 @@ export class GoogleCalendar implements CalendarClient {
     options: SourceFields = {},
   ): Promise<SourceEvent[]> {
     const events: SourceEvent[] = [];
-    const { withBody = false, withLink = false } = options;
-    for (const raw of await this.listEvents(calendarId, window, withBody, withLink)) {
+    const { withBody = false } = options;
+    for (const raw of await this.listEvents(calendarId, window, withBody)) {
       const event = fromGoogleEvent(raw);
       if (event) events.push(event);
     }
@@ -327,7 +327,6 @@ export class GoogleCalendar implements CalendarClient {
     calendarId: string,
     window: TimeWindow,
     withBody: boolean,
-    withLink = false,
   ): Promise<unknown[]> {
     const items: unknown[] = [];
     let pageToken: string | undefined;
@@ -338,7 +337,7 @@ export class GoogleCalendar implements CalendarClient {
         singleEvents: "true",
         showDeleted: "false",
         maxResults: "2500",
-        fields: googleEventFields(withBody, withLink),
+        fields: googleEventFields(withBody),
       });
       if (pageToken) params.set("pageToken", pageToken);
       const page = eventsPageSchema.parse(

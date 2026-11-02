@@ -224,9 +224,6 @@ export const OPTION_ROLES: Record<keyof RuleOptions, "filter" | "times" | "horiz
   blockColor: "content",
   bufferBefore: "times",
   bufferAfter: "times",
-  showOrigin: "content",
-  linkOrigin: "content",
-  originLocale: "content",
 };
 
 const encoder = new TextEncoder();

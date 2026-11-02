@@ -47,7 +47,6 @@ import {
   edgeReadWindow,
   leftoverCalendars,
   loadRule,
-  originLine,
   ownerMayRun,
   ruleWritesInto,
   rulesIntoCalendar,
@@ -1401,28 +1400,19 @@ export class AccountSync extends DurableObject<Env> {
     return (await this.client()).listCalendars();
   }
 
-  /**
-   * Source events of one calendar of this account. Called by the target account's instance. With
-   * `withLink`, each event carries its web link, for rules that write the origin link.
-   */
+  /** Source events of one calendar of this account. Called by the target account's instance. */
   async readSourceEvents(
     remoteCalendarId: string,
     window: { start: Date; end: Date },
     withBody: boolean,
-    options: { respectPenalty?: boolean; withLink?: boolean } = {},
+    options: { respectPenalty?: boolean } = {},
   ): Promise<SourceEvent[]> {
-    const withLink = options.withLink === true;
     // A read that respects the penalty fails differently, so it shares no cache entry with others.
-    // Reads without the link stay under the key they had before it existed.
-    const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}|${options.respectPenalty === true}${withLink ? "|link" : ""}`;
+    const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}|${options.respectPenalty === true}`;
     const cached = this.sourceCache.get(key);
     if (cached && Date.now() - cached.at < SOURCE_CACHE_MS) return cached.events;
     const events = this.client(options).then((client) =>
-      client.sourceEvents(
-        remoteCalendarId,
-        window,
-        withLink ? { withBody, withLink } : { withBody },
-      ),
+      client.sourceEvents(remoteCalendarId, window, { withBody }),
     );
     this.sourceCache.set(key, { at: Date.now(), events });
     // A failed read is not cached.
@@ -1543,12 +1533,9 @@ export class AccountSync extends DurableObject<Env> {
     remoteCalendarId: string,
     window: { start: Date; end: Date },
     withBody: boolean,
-    withLink = false,
   ): Promise<SourceRead> {
     try {
-      return {
-        events: await this.readSourceEvents(remoteCalendarId, window, withBody, { withLink }),
-      };
+      return { events: await this.readSourceEvents(remoteCalendarId, window, withBody) };
     } catch (error) {
       const waitMs = throttleDelayMs(error);
       if (waitMs === null || !(error instanceof Error)) throw error;
@@ -1838,14 +1825,7 @@ export class AccountSync extends DurableObject<Env> {
     const withBody = ruleOptions.detailLevel === "full";
     // A buffered rule reads the source wider than the sync window; see `readWindow`.
     const read = readWindow(window, ruleOptions);
-    // The origin note names the source account. Where any cap below "full" applies to the
-    // direction, the org limits what crosses from this source, so the rule writes neither the note
-    // nor the link, even if the cap does not lower this rule's level.
-    const capApplies = detailLevelFor(this.env, "full", rule.source, rule.target).level !== "full";
-    const origin = ruleOptions.showOrigin && !capApplies ? originLine(rule) : null;
-    // The link needs one more field per occurrence, and detail level "title" or more.
-    const withLink = origin !== null && ruleOptions.linkOrigin && effective.level !== "busy";
-    const sourceEvents = await this.readRuleSource(rule, read ?? window, withBody, withLink);
+    const sourceEvents = await this.readRuleSource(rule, read ?? window, withBody);
 
     const target = await this.client();
     const ruleTag = await ruleTagFor(rule.id);
@@ -1863,13 +1843,10 @@ export class AccountSync extends DurableObject<Env> {
     ]);
     const existing = blocks.filter((block) => block.ruleTag === ruleTag);
     const claimed = claimsFrom(blocks.filter((block) => block.ruleTag !== ruleTag));
-    const desired = await desiredBlocks(
-      rule.id,
-      sourceEvents,
-      ruleOptions,
-      { scope: rule.userId, claimed },
-      origin,
-    );
+    const desired = await desiredBlocks(rule.id, sourceEvents, ruleOptions, {
+      scope: rule.userId,
+      claimed,
+    });
     // A run reads the edge only for a block at the edge without a wanted event; see `planSync`.
     // That is not rare. With a source at UTC or east of it, the main read no longer returns
     // yesterday's all-day event after midnight UTC, even if the event exists. The same holds for
@@ -2042,12 +2019,11 @@ export class AccountSync extends DurableObject<Env> {
     rule: RuleContext,
     window: { start: Date; end: Date },
     withBody: boolean,
-    withLink: boolean,
   ): Promise<SourceEvent[]> {
     const { accountId, remoteCalendarId } = rule.source;
     return accountId === this.accountId()
-      ? this.readSourceEvents(remoteCalendarId, window, withBody, { withLink })
-      : this.readOtherSource(accountId, remoteCalendarId, { window, withBody, withLink });
+      ? this.readSourceEvents(remoteCalendarId, window, withBody)
+      : this.readOtherSource(accountId, remoteCalendarId, { window, withBody });
   }
 
   /**
@@ -2055,7 +2031,7 @@ export class AccountSync extends DurableObject<Env> {
    * edge. The next run reads again. If the read fails for the rest of the UTC day, the block no
    * longer ends at the start of the window, and it stays for good. So the audit of the run counts
    * a failed read. A throttled read stops the run, as the main read does, so that the rule waits
-   * for `Retry-After`. The read needs identity only, so it asks for no description and no link.
+   * for `Retry-After`. The read needs identity only, so it asks for no description.
    */
   private async readEdge(
     rule: RuleContext,
@@ -2063,7 +2039,7 @@ export class AccountSync extends DurableObject<Env> {
   ): Promise<EdgeRead | undefined> {
     const window = edgeReadWindow(sync);
     try {
-      const events = await this.readRuleSource(rule, window, false, false);
+      const events = await this.readRuleSource(rule, window, false);
       const markers = await Promise.all(
         events.map((event) => markerFor(rule.id, event.occurrenceKey)),
       );
@@ -2079,11 +2055,7 @@ export class AccountSync extends DurableObject<Env> {
   private async readOtherSource(
     accountId: string,
     remoteCalendarId: string,
-    {
-      window,
-      withBody,
-      withLink,
-    }: { window: { start: Date; end: Date }; withBody: boolean; withLink: boolean },
+    { window, withBody }: { window: { start: Date; end: Date }; withBody: boolean },
   ): Promise<SourceEvent[]> {
     // One subrequest here; the other instance reads the pages on its own budget.
     this.providerReads++;
@@ -2091,7 +2063,6 @@ export class AccountSync extends DurableObject<Env> {
       remoteCalendarId,
       window,
       withBody,
-      withLink,
     );
     if ("throttled" in read) {
       throw new SourceThrottledError(read.throttled.message, read.throttled.waitMs);

@@ -597,9 +597,6 @@ const OPTION_CASES: Record<string, () => Promise<OptionRole>> = {
   blockTitle: () => ignored({ blockTitle: "Away" }),
   markPrivate: () => ignored({ markPrivate: false }),
   blockColor: () => ignored({ blockColor: "5" }),
-  showOrigin: () => ignored({ showOrigin: true }),
-  linkOrigin: () => ignored({ linkOrigin: true }),
-  originLocale: () => ignored({ originLocale: "de" }),
 };
 
 /** With `drop` the rule wants no block for the event, with `keep` it does. */

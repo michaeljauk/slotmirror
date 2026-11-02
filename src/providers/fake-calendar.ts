@@ -160,9 +160,6 @@ export class FakeCalendar implements CalendarClient {
       location: "",
       body: "",
       isMirror: false,
-      ...(options.withLink
-        ? { link: `https://calendar.invalid/event?id=${encodeURIComponent(event.id)}` }
-        : {}),
     }));
     // Blocks other rules wrote into this calendar are events too; the loop guard skips them.
     const mirrors = stored.rows.map((row) => ({

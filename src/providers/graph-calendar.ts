@@ -178,7 +178,7 @@ export class GraphCalendar implements CalendarClient {
 
   /**
    * Every occurrence in the window, with the marker property so that our own blocks are known.
-   * The full body is read only if a rule needs it (detail level "full"), and so is the web link.
+   * The full body is read only if a rule needs it (detail level "full").
    */
   async sourceEvents(
     calendarId: string,

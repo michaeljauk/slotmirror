@@ -65,7 +65,8 @@ export type CompareFailureReason =
   | "slice_too_large"
   | "empty_horizon"
   | "timeout"
-  | "superseded";
+  | "superseded"
+  | "owner_not_admitted";
 
 export interface CompareFailure {
   reason: CompareFailureReason;

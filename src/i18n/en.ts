@@ -491,6 +491,7 @@ export const en = {
       empty_horizon: "The sync windows are too short to compare",
       timeout: "The comparison did not end within a day",
       superseded: "A comparison of the whole window replaced this one",
+      owner_not_admitted: "The owner of this calendar no longer has access",
     },
   },
   cleanup: {

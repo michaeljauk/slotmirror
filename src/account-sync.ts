@@ -43,6 +43,7 @@ import {
   type EdgeRead,
 } from "./sync/plan";
 import {
+  accountOwnerAdmitted,
   cleanupWindow,
   edgeReadWindow,
   leftoverCalendars,
@@ -2912,7 +2913,8 @@ export class AccountSync extends DurableObject<Env> {
 
   /**
    * Why a calendar cannot be compared now, or null. A queued removal is about to change the
-   * calendar, and a paused account cannot be read to the end.
+   * calendar, and a paused account cannot be read to the end. A leftover comparison has no rule, so
+   * the rule queries say nothing about its owner; it asks for the owner of the account.
    */
   private async compareStop(
     state: CompareState,
@@ -2925,9 +2927,13 @@ export class AccountSync extends DurableObject<Env> {
       return { reason: "paused" };
     }
     const removals = (await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY)) ?? [];
-    return removals.some((job) => job.remoteCalendarId === state.remoteCalendarId)
-      ? { reason: "removal_queue" }
-      : null;
+    if (removals.some((job) => job.remoteCalendarId === state.remoteCalendarId)) {
+      return { reason: "removal_queue" };
+    }
+    if (state.mode === "leftover" && !(await accountOwnerAdmitted(this.env, this.accountId()))) {
+      return { reason: "owner_not_admitted" };
+    }
+    return null;
   }
 
   /**

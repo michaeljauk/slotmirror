@@ -494,6 +494,7 @@ export const de: Messages = {
       empty_horizon: "Die Sync-Fenster sind für einen Vergleich zu kurz",
       timeout: "Der Vergleich endete nicht innerhalb eines Tages",
       superseded: "Ein Vergleich des ganzen Fensters hat diesen abgelöst",
+      owner_not_admitted: "Der Inhaber dieses Kalenders hat keinen Zugang mehr",
     },
   },
   cleanup: {

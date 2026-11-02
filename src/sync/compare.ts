@@ -217,6 +217,7 @@ export const OPTION_ROLES: Record<keyof RuleOptions, "filter" | "times" | "horiz
   skipTentative: "filter",
   skipDeclined: "filter",
   skipCategories: "filter",
+  onlyCategories: "filter",
   workDays: "filter",
   workStart: "filter",
   workEnd: "filter",
@@ -324,7 +325,10 @@ function isWanted(event: SourceEvent, options: RuleOptions): boolean {
   if (options.skipFree && event.showAs === "free") return false;
   if (options.skipTentative && event.showAs === "tentative") return false;
   const skipped = options.skipCategories.map((name) => name.trim().toLowerCase());
-  if (event.categories.some((name) => skipped.includes(name.trim().toLowerCase()))) return false;
+  const categories = event.categories.map((name) => name.trim().toLowerCase());
+  if (categories.some((name) => skipped.includes(name))) return false;
+  const needed = options.onlyCategories.map((name) => name.trim().toLowerCase()).filter(Boolean);
+  if (needed.length > 0 && !categories.some((name) => needed.includes(name))) return false;
   return inWorkingHours(event, options);
 }
 

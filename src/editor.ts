@@ -697,6 +697,9 @@ export async function setDefaultBlockTitle(env: Env, userId: string, title: stri
 /** Longest Outlook category name for blocks. */
 export const MAX_CATEGORY_LENGTH = 100;
 
+/** A Google event colour as a source event carries it in `categories`. */
+const GOOGLE_COLOR_CATEGORY = /^color:(?:[1-9]|1[01])$/;
+
 /** Why a block colour is not valid for a target provider, or null if it is valid. */
 export function blockColorProblem(
   provider: Provider,
@@ -810,11 +813,13 @@ export function sourceBuffer(
  * - `colors`: the block colour of one direction.
  * - `workHours`: per direction, true copies the target account's working hours into the rules,
  *   false clears them.
+ * - `onlyCategories`: per direction, the opt-in list of its rules. An empty list is no filter.
  * - `sources`: per source account, options for the account and every rule from it.
  */
 export interface RuleDetails {
   colors?: { from: string; to: string; value: string }[];
   workHours?: { from: string; to: string; on: boolean }[];
+  onlyCategories?: { from: string; to: string; names: string[] }[];
   sources?: { from: string; options: Partial<SourceOptions> }[];
 }
 
@@ -823,8 +828,10 @@ export type RuleDetailsProblem =
   | { kind: "color"; problem: "comma" | "tooLong" | "invalid" }
   | { kind: "source" }
   | { kind: "noWorkHours"; account: string }
+  /** A Google source has colours only, so a name would stop every event of the direction. */
+  | { kind: "onlyCategories" }
   /** The direction is not the user's, or no longer exists. */
-  | { kind: "direction"; field: "color" | "workHours" };
+  | { kind: "direction"; field: "color" | "workHours" | "onlyCategories" };
 
 /**
  * Check rule details against a state before anything is written, so that an invalid detail
@@ -852,6 +859,14 @@ export function ruleDetailsProblem(
     // Rules that kept hours from before the account had any keep them; see `setRuleDetails`.
     const has = direction.options !== null && hasWorkingHours(direction.options);
     if (on && !target.workHours && !has) return { kind: "noWorkHours", account: target.name };
+  }
+  for (const { from, to, names } of details.onlyCategories ?? []) {
+    const source = state.accounts.find((account) => account.id === from);
+    const known = state.directions.some((d) => d.from === from && d.to === to);
+    if (!source || !known) return { kind: "direction", field: "onlyCategories" };
+    if (source.provider === "google" && !names.every((name) => GOOGLE_COLOR_CATEGORY.test(name))) {
+      return { kind: "onlyCategories" };
+    }
   }
   return null;
 }
@@ -911,6 +926,10 @@ export async function setRuleDetails(
     if (!target || !direction) continue;
     if (!on) forDirection(direction, NO_WORKING_HOURS);
     else if (target.workHours) forDirection(direction, target.workHours);
+  }
+  for (const { from, to, names } of details.onlyCategories ?? []) {
+    const direction = state.directions.find((d) => d.from === from && d.to === to);
+    if (direction) forDirection(direction, { onlyCategories: names });
   }
   await writePatches(env, user, patches, accounts, syncs);
   return true;
@@ -1007,6 +1026,10 @@ async function writePatches(
     const detail: Record<string, string> = {};
     // The category name is the user's own word; the log records that the colour changed.
     if (options.blockColor !== old.blockColor) detail.blockColor = "changed";
+    // Category names are the user's own words too; the log keeps the count.
+    if (options.onlyCategories.join("\u0000") !== old.onlyCategories.join("\u0000")) {
+      detail.onlyCategories = String(options.onlyCategories.length);
+    }
     if (options.bufferBefore !== old.bufferBefore || options.bufferAfter !== old.bufferAfter) {
       detail.bufferBefore = String(options.bufferBefore);
       detail.bufferAfter = String(options.bufferAfter);
@@ -1451,6 +1474,13 @@ export async function resetDirection(
     const choice = from.inGroup && to.inGroup ? "busy" : "off";
     await setDirection(env, user, fromId, toId, choice, syncs);
     await setBlockColor(env, user, fromId, toId, "", syncs);
+    // Last, so that a rule that goes away never runs without its list.
+    await setRuleDetails(
+      env,
+      user,
+      { onlyCategories: [{ from: fromId, to: toId, names: [] }] },
+      syncs,
+    );
   } finally {
     await requestSyncs(env, syncs);
   }

@@ -8,10 +8,13 @@ import {
   setDirection,
   setGroupMembership,
   setRuleDetails,
+  setSettings,
   setSourceCalendar,
   shortNames,
 } from "../src/editor";
 import { BASE, signIn } from "./helpers";
+// @ts-expect-error `?raw` imports are untyped without `vite/client`
+import editorScript from "../public/editor.js?raw";
 
 describe("shortNames", () => {
   it("names public providers and work domains, and tells duplicates apart", () => {
@@ -453,6 +456,317 @@ describe("title and filter settings", () => {
       blockTitle: "Belegt",
       skipCategories: ["Privat", "Fokus", "color:11"],
     });
+  });
+});
+
+describe("opt-in categories", () => {
+  async function optionsOf(column: "id" | "source_calendar_id", id: string) {
+    const row = await env.DB.prepare(`SELECT options FROM rules WHERE ${column} = ?`)
+      .bind(id)
+      .first<{ options: string }>();
+    return JSON.parse(row?.options ?? "{}") as { onlyCategories?: string[] };
+  }
+
+  const listOf = async (calendar: string) =>
+    (await optionsOf("source_calendar_id", calendar)).onlyCategories;
+
+  async function page(cookie: string) {
+    const response = await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } });
+    return response.text();
+  }
+
+  function saveAll(cookie: string, fields: Record<string, string>) {
+    return exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields),
+    });
+  }
+
+  function saveWithoutScript(cookie: string, body: URLSearchParams) {
+    return exports.default.fetch(`${BASE}/rules/direction/details`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+  }
+
+  /** The part of the page with the row of a direction, up to the next row. */
+  function rowOf(html: string, from: string, to: string) {
+    const start = html.indexOf(`class="dest" data-key="${from}&gt;${to}"`);
+    const open = start >= 0 ? start : html.indexOf(`class="dest" data-key="${from}>${to}"`);
+    const rest = html.slice(open);
+    return rest.slice(0, rest.indexOf('class="dest"', 20) + 1 || undefined);
+  }
+
+  const SAVED = {
+    skipAllDay: false,
+    skipTentative: false,
+    markPrivate: true,
+    blockTitle: "Busy",
+    skipCategories: [],
+  };
+
+  it("applies to one direction only, and leaves the exclusions alone", async () => {
+    const { user, cookie, w, o, g } = await setup("onlyone");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, o, g, "busy");
+    await setDirection(env, user, w, o, "busy");
+    await setSettings(env, user, { ...SAVED, skipCategories: ["Privat"] });
+    const response = await saveAll(cookie, {
+      [`onlyCategories.${w}.${g}`]: "Kunde, Arbeit,, Kunde",
+    });
+    expect(response.status).toBe(204);
+    const rules = await env.DB.prepare(
+      `SELECT sc.account_id AS source, tc.account_id AS target, r.options
+       FROM rules r JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
+    )
+      .bind(user.id)
+      .all<{ source: string; target: string; options: string }>();
+    const lists = rules.results.map((rule) => {
+      const options = JSON.parse(rule.options) as {
+        onlyCategories: string[];
+        skipCategories: string[];
+      };
+      expect(options.skipCategories).toEqual(["Privat"]);
+      return [`${rule.source}>${rule.target}`, options.onlyCategories];
+    });
+    expect(Object.fromEntries(lists)).toEqual({
+      [`${w}>${g}`]: ["Kunde", "Arbeit"],
+      [`${o}>${g}`]: [],
+      [`${w}>${o}`]: [],
+    });
+  });
+
+  it("is not part of the settings for all calendars", async () => {
+    const { user, cookie, w, g } = await setup("onlynotall");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+    expect(Object.keys((await loadEditorState(env, user.id)).settings)).not.toContain(
+      "onlyCategories",
+    );
+    // A save of the settings keeps the list of the rule, and sends none itself.
+    await setSettings(env, user, SAVED);
+    expect(await listOf(`${w}-cal`)).toEqual(["Kunde"]);
+    const form = /<form[^>]*id="settings"[\s\S]*?<\/form>/.exec(await page(cookie))?.[0] ?? "";
+    expect(form).toContain('name="skipCategories"');
+    expect(form).not.toContain("onlyCategories");
+  });
+
+  it("stores a list from the form without the script, and shows it again", async () => {
+    const { user, cookie, w, g } = await setup("onlynojs");
+    await setDirection(env, user, w, g, "busy");
+    const response = await saveWithoutScript(
+      cookie,
+      new URLSearchParams({
+        from: w,
+        to: g,
+        onlyCategoriesShown: "1",
+        onlyCategories: "Kunde, Arbeit",
+      }),
+    );
+    expect(response.status).toBe(302);
+    expect(await listOf(`${w}-cal`)).toEqual(["Kunde", "Arbeit"]);
+    const row = rowOf(await page(cookie), w, g);
+    expect(/<input[^>]*name="onlyCategories"[^>]*>/.exec(row)?.[0]).toMatch(
+      new RegExp(`form="details-${w}-${g}"[^>]*value="Kunde, Arbeit"[^>]*data-tokens`),
+    );
+    expect(row).toContain("Copies only 2 categories");
+    expect(row).toMatch(/<details class="only-edit" open/);
+  });
+
+  it("stays closed while the list is empty", async () => {
+    const { user, cookie, w, g } = await setup("onlyclosed");
+    await setDirection(env, user, w, g, "busy");
+    const row = rowOf(await page(cookie), w, g);
+    expect(row).toMatch(/<details class="only-edit">/);
+    expect(row).toContain("Copy only some categories");
+  });
+
+  it("clears the list with an empty field, from both forms", async () => {
+    const { user, cookie, w, g } = await setup("onlyclear");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "" });
+    expect(await listOf(`${w}-cal`)).toEqual([]);
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+    await saveWithoutScript(
+      cookie,
+      new URLSearchParams({ from: w, to: g, onlyCategoriesShown: "1", onlyCategories: "" }),
+    );
+    expect(await listOf(`${w}-cal`)).toEqual([]);
+  });
+
+  it("keeps the list if a page from before the option saves its details", async () => {
+    const { user, cookie, w, g } = await setup("onlystale");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+    await saveWithoutScript(cookie, new URLSearchParams({ from: w, to: g, blockColor: "3" }));
+    await saveAll(cookie, { [`blockColor.${w}.${g}`]: "5" });
+    expect(await listOf(`${w}-cal`)).toEqual(["Kunde"]);
+  });
+
+  it("shows colours for a Google source and names for an Outlook source", async () => {
+    const { user, cookie, w, g } = await setup("onlykinds");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, g, w, "busy");
+    const html = await page(cookie);
+    const outlook = rowOf(html, w, g);
+    const google = rowOf(html, g, w);
+    expect(outlook).toContain('name="onlyCategories"');
+    expect(outlook).not.toContain('name="onlyColor"');
+    expect(google).toContain('name="onlyColor"');
+    expect(google).toContain('class="color-row pick"');
+    expect(google).not.toContain('name="onlyCategories"');
+    // Both tell what the list does to events and to existing blocks.
+    expect(outlook).toContain("their existing blocks disappear");
+    expect(google).toContain("their existing blocks disappear");
+  });
+
+  it("stores colours of a Google source, and shows them checked", async () => {
+    const { user, cookie, w, g } = await setup("onlycolor");
+    await setDirection(env, user, g, w, "busy");
+    const body = new URLSearchParams({ from: g, to: w, onlyCategoriesShown: "1" });
+    body.append("onlyColor", "color:5");
+    body.append("onlyColor", "color:11");
+    await saveWithoutScript(cookie, body);
+    expect(await listOf(`${g}-cal`)).toEqual(["color:5", "color:11"]);
+    const row = rowOf(await page(cookie), g, w);
+    expect(row).toContain("Copies only 2 colours");
+    expect(/<input[^>]*name="onlyColor"[^>]*value="color:5"[^>]*>/.exec(row)?.[0]).toContain(
+      "checked",
+    );
+    expect(/<input[^>]*name="onlyColor"[^>]*value="color:6"[^>]*>/.exec(row)?.[0]).not.toContain(
+      "checked",
+    );
+  });
+
+  it("refuses names for a Google source, which would stop every event", async () => {
+    const { user, cookie, w, g } = await setup("onlyrefused");
+    await setDirection(env, user, g, w, "busy");
+    await setDirection(env, user, w, g, "busy");
+    for (const value of ["Kunde", "color:12", "color:5, Kunde"]) {
+      const response = await saveAll(cookie, {
+        [`onlyCategories.${g}.${w}`]: value,
+        [`onlyCategories.${w}.${g}`]: "Kunde",
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("Google events have colours");
+    }
+    // The whole save is refused, also the valid field.
+    expect(await listOf(`${g}-cal`)).toEqual([]);
+    expect(await listOf(`${w}-cal`)).toEqual([]);
+  });
+
+  it("refuses a list for a direction that does not exist", async () => {
+    const { user, cookie, w, g } = await setup("onlygone");
+    await setDirection(env, user, w, g, "busy");
+    const response = await saveAll(cookie, { [`onlyCategories.${w}.no-such-account`]: "Kunde" });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("no longer exists");
+  });
+
+  it("reads a rule stored before the option as a rule without the filter", async () => {
+    const { user, w, g } = await setup("onlyold");
+    await setDirection(env, user, w, g, "busy");
+    const stored = await env.DB.prepare("SELECT id, options FROM rules WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ id: string; options: string }>();
+    const { onlyCategories: _gone, ...old } = JSON.parse(stored?.options ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    await env.DB.prepare("UPDATE rules SET options = ? WHERE id = ?")
+      .bind(JSON.stringify(old), stored?.id)
+      .run();
+    const state = await loadEditorState(env, user.id);
+    expect(state.rules[0]?.rule.options.onlyCategories).toEqual([]);
+  });
+
+  it("gives a rule copy the list of its direction, and a new direction none", async () => {
+    const { user, cookie, w, o, g } = await setup("onlycopy");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+
+    await setDirection(env, user, o, g, "busy");
+    expect(await listOf(`${o}-cal`)).toEqual([]);
+
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_source) VALUES (?, ?, ?, 'Second', 1, 0)",
+    )
+      .bind(`${w}-second`, w, `${w}-second-remote`)
+      .run();
+    await setSourceCalendar(env, user, `${w}-second`, true);
+    expect(await listOf(`${w}-second`)).toEqual(["Kunde"]);
+    // A change to the direction reaches both rules.
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Arbeit" });
+    expect(await listOf(`${w}-cal`)).toEqual(["Arbeit"]);
+    expect(await listOf(`${w}-second`)).toEqual(["Arbeit"]);
+  });
+
+  it("keeps the list through another choice of the direction", async () => {
+    const { user, cookie, w, g } = await setup("onlychoice");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+    await setDirection(env, user, w, g, "title");
+    expect(await listOf(`${w}-cal`)).toEqual(["Kunde"]);
+  });
+
+  it("behaves on a group rule like the colour of the row", async () => {
+    const { user, cookie, w, g } = await setup("onlygroup");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await saveAll(cookie, {
+      [`onlyCategories.${w}.${g}`]: "Kunde",
+      [`blockColor.${w}.${g}`]: "5",
+    });
+    const rows = await rulesOf(user.id);
+    expect(rows.find((rule) => rule.source === w && rule.target === g)?.origin).toBe("group");
+    expect(await listOf(`${w}-cal`)).toEqual(["Kunde"]);
+    // The other direction of the group has its own list.
+    expect(await listOf(`${g}-cal`)).toEqual([]);
+  });
+
+  it("goes away with a reset of the direction, as colour and hours do", async () => {
+    const { user, cookie, w, g } = await setup("onlyreset");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, w, g, "title");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Kunde" });
+    await resetDirection(env, user, w, g);
+    expect(await listOf(`${w}-cal`)).toEqual([]);
+  });
+
+  it("asks the target to sync and logs the number of names, never a name", async () => {
+    const { user, cookie, w, g } = await setup("onlyaudit");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, { [`onlyCategories.${w}.${g}`]: "Geheimkunde, Arbeit" });
+    const row = await env.DB.prepare(
+      "SELECT detail, account_id AS accountId FROM audit_events WHERE user_id = ? AND kind = 'rule_updated' ORDER BY id DESC",
+    )
+      .bind(user.id)
+      .first<{ detail: string; accountId: string }>();
+    expect(JSON.parse(row?.detail ?? "{}")).toEqual({ onlyCategories: "2" });
+    expect(row?.accountId).toBe(g);
+    expect(row?.detail).not.toContain("Geheimkunde");
+  });
+
+  it("restores the saved list of a token field before the page counts its changes", () => {
+    // The editor script has no DOM test harness. A reset leaves a hidden field at its last value.
+    const script = String(editorScript);
+    const handler = script.split('addEventListener("reset"')[1] ?? "";
+    expect(script).toContain("const saved = field.value;");
+    expect(handler.slice(0, 80)).toContain("field.value = saved");
+    expect(handler.slice(0, 80)).not.toContain("setTimeout");
+  });
+
+  it("sends the list of a direction with the other changes of the page", () => {
+    const script = String(editorScript);
+    expect(script).toContain('data.has("onlyCategoriesShown")');
+    expect(script).toContain("body.append(`onlyCategories.${from}.${to}`");
   });
 });
 

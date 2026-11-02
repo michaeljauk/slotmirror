@@ -227,19 +227,7 @@ function SettingsCard(props: { state: EditorState }) {
       </label>
       <div class="settings-field">
         <span class="switch-title">{t.editor.skipColorsLabel}</span>
-        <span class="color-row">
-          {GOOGLE_COLORS.map((color) => (
-            <label class="color-choice" title={t.editor.googleColor(color.id)}>
-              <input
-                type="checkbox"
-                name="skipColor"
-                value={`color:${color.id}`}
-                checked={settings.skipCategories.includes(`color:${color.id}`)}
-              />
-              <span class="color-dot" style={`background:${color.hex}`} />
-            </label>
-          ))}
-        </span>
+        <ColorChoices name="skipColor" chosen={settings.skipCategories} />
       </div>
       <Switch
         name="skipAllDay"
@@ -257,6 +245,35 @@ function SettingsCard(props: { state: EditorState }) {
         {t.editor.save}
       </button>
     </form>
+  );
+}
+
+/**
+ * Checkboxes for Google's event colours. `form` names the form of fields outside it. With `tick`,
+ * a chosen colour shows a tick because it stays in; otherwise it shows the cross of the skip filter.
+ */
+function ColorChoices(props: {
+  name: string;
+  chosen: readonly string[];
+  form?: string;
+  tick?: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <span class={props.tick ? "color-row pick" : "color-row"}>
+      {GOOGLE_COLORS.map((color) => (
+        <label class="color-choice" title={t.editor.googleColor(color.id)}>
+          <input
+            type="checkbox"
+            name={props.name}
+            form={props.form}
+            value={`color:${color.id}`}
+            checked={props.chosen.includes(`color:${color.id}`)}
+          />
+          <span class="color-dot" style={`background:${color.hex}`} />
+        </label>
+      ))}
+    </span>
   );
 }
 
@@ -317,7 +334,7 @@ export function workHoursText(t: Messages, hours: AccountWorkHours): string {
   return `${dayText} ${timeText}`;
 }
 
-/** The ID of the form that holds the colour and working hours of a direction. */
+/** The ID of the form that holds the colour, working hours and opt-in list of a direction. */
 function detailsFormId(source: EditorAccount, target: EditorAccount): string {
   return `details-${source.id}-${target.id}`;
 }
@@ -427,6 +444,59 @@ function WorkHoursToggle(props: {
   );
 }
 
+/**
+ * The opt-in list of a direction, closed while it is empty. It fits the source: an Outlook source
+ * has category names, a Google source has colours only. So a list cannot name what the source
+ * does not have, which would stop every event of the direction.
+ */
+function OnlyCategories(props: {
+  source: EditorAccount;
+  target: EditorAccount;
+  direction: EditorDirection;
+}) {
+  const { t } = useI18n();
+  const { source, target, direction } = props;
+  const names = direction.options?.onlyCategories ?? [];
+  const form = detailsFormId(source, target);
+  const google = source.provider === "google";
+  return (
+    <details class="only-edit" open={names.length > 0}>
+      <summary>
+        <span class="edit-link">
+          {google
+            ? t.editor.onlyColorsSummary(names.length)
+            : t.editor.onlyCategoriesSummary(names.length)}
+        </span>
+      </summary>
+      {/* The script turns the comma list into single entries; the field stays what is sent. */}
+      <input type="hidden" name="onlyCategoriesShown" value="1" form={form} />
+      {google ? (
+        <div class="only-field">
+          <span class="switch-hint">{t.editor.onlyColorsHint}</span>
+          <ColorChoices name="onlyColor" chosen={names} form={form} tick />
+        </div>
+      ) : (
+        <label class="only-field">
+          <span class="switch-hint">
+            {t.editor.onlyCategoriesHint}{" "}
+            <span class="nojs-only">{t.editor.skipCategoriesCommas}</span>
+          </span>
+          <input
+            type="text"
+            name="onlyCategories"
+            form={form}
+            placeholder={t.editor.onlyCategoriesPlaceholder}
+            value={names.join(", ")}
+            data-tokens
+            data-add={t.editor.skipCategoriesAdd}
+            data-remove={t.editor.skipCategoriesRemove("{name}")}
+          />
+        </label>
+      )}
+    </details>
+  );
+}
+
 function DestinationRow(props: {
   state: EditorState;
   source: EditorAccount;
@@ -524,6 +594,11 @@ function DestinationRow(props: {
             <WorkHoursToggle source={source} target={target} direction={direction} />
           </div>
         ) : null}
+        {active ? (
+          <div class="dest-line">
+            <OnlyCategories source={source} target={target} direction={direction} />
+          </div>
+        ) : null}
         {isException && canEdit ? (
           <form method="post" action="/rules/direction/reset" class="dest-line faint">
             <input type="hidden" name="from" value={source.id} />
@@ -543,7 +618,7 @@ function DestinationRow(props: {
           <div class="cap-note">{t.editor.capNote(t.editor.choices[direction.maxChoice])}</div>
         ) : null}
         {active ? (
-          /* Colour and working hours of the direction; their fields sit in the row above. */
+          /* Colour, working hours and opt-in list; their fields sit in the row above. */
           <form
             method="post"
             action="/rules/direction/details"

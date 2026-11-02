@@ -559,6 +559,12 @@ const OPTION_CASES: Record<string, () => Promise<OptionRole>> = {
       { skipCategories: [] },
       event("event:1", { categories: ["privat"] }),
     ),
+  onlyCategories: () =>
+    filters(
+      { onlyCategories: ["Kunde"] },
+      { onlyCategories: [" ANDERE "] },
+      event("event:1", { categories: ["andere"] }),
+    ),
   // 2026-11-04 is a Wednesday, 10:00 UTC.
   workDays: () =>
     filters(

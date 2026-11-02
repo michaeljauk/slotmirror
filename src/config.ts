@@ -37,6 +37,16 @@ const ruleOptionsFields = z.object({
     [],
   ),
   /**
+   * Mirror only events with at least one of these categories, in the form of `skipCategories`. An
+   * event in both lists stays out. Empty: no such filter, so an event without a category stays in.
+   * The editor sets this list per direction, not for all rules of a user: Outlook events have
+   * names and Google events have colours, so one list cannot fit both.
+   */
+  onlyCategories: z._default(
+    z.array(z.string().check(z.maxLength(100))).check(z.maxLength(50)),
+    [],
+  ),
+  /**
    * Working hours: mirror only events that overlap `workStart` to `workEnd` on one of `workDays`
    * (ISO weekdays, Monday 1), read in `workTimeZone`. Blocks keep the event's times. All seven
    * days and no times: no filter. `workEnd` "24:00" is the end of the day. An empty zone means

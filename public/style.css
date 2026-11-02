@@ -1948,7 +1948,8 @@ a.status.error {
   color: var(--danger);
 }
 
-.settings-field input[type="text"] {
+.settings-field input[type="text"],
+.only-edit input[type="text"] {
   max-width: 360px;
   margin-top: 4px;
   padding: 7px 10px;
@@ -1958,7 +1959,8 @@ a.status.error {
   font: inherit;
 }
 
-.settings-field .tokens input[type="text"] {
+.settings-field .tokens input[type="text"],
+.only-edit .tokens input[type="text"] {
   flex: 1 1 180px;
   min-width: 0;
   max-width: none;
@@ -2191,7 +2193,7 @@ details.source > .source-head .provider-icon,
   color: #fff;
 }
 
-/* Picks a single colour: the chosen one shows a tick, not the cross of the skip filter. */
+/* Picks colours to keep: a chosen one shows a tick, not the cross of the skip filter. */
 .color-row.pick .color-choice input:checked + .color-dot::after {
   content: "✓";
 }
@@ -2431,7 +2433,8 @@ details.source > .source-head .provider-icon,
 
 /* The buffer of a source: a summary line that opens the two fields. */
 
-.buffer-edit > summary {
+.buffer-edit > summary,
+.only-edit > summary {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -2440,7 +2443,8 @@ details.source > .source-head .provider-icon,
   cursor: pointer;
 }
 
-.buffer-edit > summary::-webkit-details-marker {
+.buffer-edit > summary::-webkit-details-marker,
+.only-edit > summary::-webkit-details-marker {
   display: none;
 }
 
@@ -2588,6 +2592,19 @@ details.swatch > summary::-webkit-details-marker {
   color: var(--accent);
 }
 
+/* The opt-in list of a direction: a summary line that opens its field. */
+
+.only-edit {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.only-field {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
 .quiet-link {
   color: var(--muted);
   text-decoration: underline;
@@ -2648,6 +2665,7 @@ details.swatch > summary::-webkit-details-marker {
   .category-field,
   .hours-check,
   .buffer-edit > summary,
+  .only-edit > summary,
   .token button,
   .table td .inline-form .link-button,
   .table td a.link-button {

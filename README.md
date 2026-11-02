@@ -150,6 +150,7 @@ locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy k
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                                                                                        |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                                                                                         |
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See below.                                                                                                  |
+| `HEARTBEAT_URL`                   | secret   | Optional. Outside monitor that hears a GET once an hour. See below.                                                                                         |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last 12
 hours; signing in again is one click with the provider. Their rules stop at the next sync, and their
@@ -269,6 +270,12 @@ event. This is the format of Slack incoming webhooks; Google
 Chat and Mattermost accept it too. Microsoft Teams needs its own card format, so use a Teams
 workflow that takes the `text` field. The URL must start with `https://`. A failed post is logged
 without the URL and sent again. The settings reference describes each alert and its repeat lock.
+
+**Heartbeat.** The alerts above need a running Worker. To learn when it stops, set the secret
+`HEARTBEAT_URL` to the URL of an outside monitor such as healthchecks.io. The cron calls it with a
+plain GET once an hour, without any data, and the monitor alerts when the calls stop. Set the
+monitor's period to 1 hour and its grace time to 3 hours. The URL must start with `https://`. The
+call needs a free subrequest, so it stops above about 44 accounts.
 
 ## Logs
 

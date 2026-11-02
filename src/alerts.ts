@@ -402,6 +402,31 @@ export async function sendCompareAlert(
 }
 
 /** The cron runs every 10 minutes. The first tick of an hour runs the hourly check. */
+/**
+ * Tell an outside monitor that the hourly cron still runs. The monitor alerts when the calls stop,
+ * which covers the failure that the app cannot report itself: a Worker that no longer runs. The
+ * call carries no data. A failed call only logs, and the monitor notices the gap.
+ */
+export async function pingHeartbeat(env: Env): Promise<void> {
+  const url = env.HEARTBEAT_URL?.trim();
+  if (!url) return;
+  if (!url.startsWith("https://")) {
+    console.error("HEARTBEAT_URL must start with https://");
+    return;
+  }
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
+    });
+    if (!response.ok) console.error("Heartbeat answered", response.status);
+  } catch (error) {
+    // The fields leave out the message, which can quote the URL.
+    console.error("Heartbeat failed", ...errorLogFields(error));
+  }
+}
+
 export function isHourlyTick(scheduledTime: number): boolean {
   return new Date(scheduledTime).getUTCMinutes() < 10;
 }

@@ -36,6 +36,8 @@ interface WorkerSecrets {
    * account needs to be connected again.
    */
   ALERT_WEBHOOK_URL?: string;
+  /** Optional. An outside monitor's URL that hears a plain GET once an hour from the cron. */
+  HEARTBEAT_URL?: string;
   /** Local load tests only, set with `wrangler dev --var`: "1" turns on simulated calendars. */
   DEV_FAKE_CALENDARS?: string;
   /** Local load tests only: simulated network time per provider call, in milliseconds. */

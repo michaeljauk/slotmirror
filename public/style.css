@@ -1311,32 +1311,78 @@ details.more summary {
   font-weight: 400;
 }
 
-details.rename {
+/*
+ * Account settings open inline, under the row, in the full width of the card. The summary stays
+ * at the right end of the row: the row wraps, and the opened part takes the second line.
+ */
+.list > li.account-row {
   position: relative;
+  flex-wrap: wrap;
+  row-gap: 0;
 }
 
-details.rename summary {
+.list > li.account-row > .status {
+  margin-right: 112px;
+}
+
+details.rename {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+details.rename > summary {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 43px;
   list-style: none;
   cursor: pointer;
 }
 
-details.rename summary::-webkit-details-marker {
+details.rename > summary::-webkit-details-marker {
   display: none;
 }
 
-.rename-form {
-  position: absolute;
-  z-index: 10;
-  right: 0;
-  top: 28px;
+details.rename > summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+details.rename[open] > summary::after {
+  transform: rotate(-135deg) translate(-2px, 0);
+}
+
+details.rename > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.account-settings {
   display: grid;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 16px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.rename-form {
+  display: grid;
+  gap: 18px 32px;
+}
+
+.settings-col {
+  display: grid;
+  align-content: start;
   gap: 6px;
-  width: 320px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgb(28 28 26 / 10%);
+  min-width: 0;
 }
 
 .rename-form label {
@@ -1359,23 +1405,47 @@ details.rename summary::-webkit-details-marker {
   text-align: left;
 }
 
-.rename-form .button {
-  justify-self: start;
-}
-
 .rename-actions {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 12px;
   align-items: center;
-  margin-top: 6px;
-  padding-top: 10px;
+  gap: 12px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 
-.rename-actions .link-button {
-  font-size: 12.5px;
+.account-danger {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.account-danger h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.account-danger .fineprint {
+  margin: 0;
+  text-align: left;
+}
+
+.account-danger .link-button {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+@media (min-width: 761px) {
+  .rename-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .rename-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 /* Editor polish */
@@ -1749,10 +1819,6 @@ details.source.dirty {
 
   .list li .status {
     flex-basis: calc(100% - 46px);
-  }
-
-  .list li details.rename {
-    margin-left: 46px;
   }
 
   .page-bar {
@@ -2225,7 +2291,12 @@ details.source > .source-head .provider-icon,
 
 .color-row.pick .color-choice.auto input:checked + .color-dot {
   border-style: solid;
+  border-color: var(--text);
   color: var(--text);
+  font-weight: 600;
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--text);
 }
 
 .color-row.pick .color-choice.auto input:checked + .color-dot::after {
@@ -2255,7 +2326,7 @@ details.source > .source-head .provider-icon,
 .account-hours {
   display: grid;
   gap: 6px;
-  margin: 4px 0 0;
+  margin: 0;
   padding: 0;
   border: 0;
 }
@@ -2664,21 +2735,20 @@ details.swatch > summary::-webkit-details-marker {
 }
 
 @media (max-width: 560px) {
-  /* The settings of an account open in the row: a popover would end at the edge of the screen. */
-  .list li details.rename {
-    flex-basis: 100%;
-    margin-left: 0;
+  /* On a phone the summary leaves the corner and takes its own line under the row. */
+  .list > li.account-row > .status {
+    margin-right: 0;
   }
 
-  .list li details.rename > summary {
+  details.rename > summary {
+    position: static;
+    height: auto;
+    min-height: 44px;
     margin-left: 46px;
   }
 
-  .rename-form {
-    position: static;
-    width: auto;
-    margin-top: 8px;
-    box-shadow: none;
+  .account-settings {
+    margin-top: 0;
   }
 
   /* Thumbs: every control reaches 44px, through padding and not through larger text. */
@@ -2746,8 +2816,29 @@ details.swatch > summary::-webkit-details-marker {
   }
 
   .weekday span {
-    min-width: 40px;
+    min-width: 44px;
+    min-height: 44px;
     padding: 12px 4px;
+    box-sizing: border-box;
+  }
+
+  .weekday-row {
+    gap: 4px;
+  }
+
+  .rename-form .hours-switch,
+  .rename-form .hours-apply-row,
+  .rename-form .work-midnight {
+    min-height: 44px;
+  }
+
+  .rename-actions .button {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .account-danger .link-button {
+    min-height: 44px;
   }
 
   .choice-radio .choice {

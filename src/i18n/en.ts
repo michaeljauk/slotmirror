@@ -79,6 +79,10 @@ export const en = {
     nameLabel: "Name",
     nameHint: "Leave empty for the name from the address.",
     save: "Save",
+    disconnectHeading: "Disconnect account",
+    disconnectAbout:
+      "slotmirror first removes the blocks it wrote into the calendars of this account. Then it deletes the tokens.",
+    disconnectLink: "Disconnect this account…",
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
     disconnectText: (email: string) =>

@@ -370,7 +370,7 @@ describe("provider calls", () => {
    */
   const ALLOWED: Record<string, number> = {
     "../src/providers/provider-fetch.ts": 1,
-    "../src/alerts.ts": 1,
+    "../src/alerts.ts": 2,
     "../src/providers/fake-calendar.ts": 2,
     "../src/routes/dev.tsx": 1,
   };

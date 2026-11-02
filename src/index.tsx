@@ -6,6 +6,8 @@ import * as z from "zod/mini";
 import {
   alertsConfigured,
   checkSilentRules,
+  isHourlyTick,
+  pingHeartbeat,
   sendTestAlert,
   silenceCheckCost,
   TEST_ALERT_OUTCOMES,
@@ -637,6 +639,10 @@ async function scheduled(controller: ScheduledController, env: Env): Promise<voi
     } catch (error) {
       console.error("Cron tick failed", id, errorCode(error));
     }
+  }
+  // Last, so that a call proves a finished run, and only with a subrequest left over.
+  if (isHourlyTick(controller.scheduledTime) && ids.length + holdsCost < tickLimit) {
+    await pingHeartbeat(env);
   }
 }
 

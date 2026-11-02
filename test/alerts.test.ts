@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sendCompareAlert, sendReconnectAlert } from "../src/alerts";
+import { pingHeartbeat, sendCompareAlert, sendReconnectAlert } from "../src/alerts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -133,5 +133,40 @@ describe("comparison alert through the real fetch", () => {
     expect(result).toEqual({ outcome: "failed", open: [alert] });
     expect(error.mock.calls).toEqual([["Alert webhook answered", 302]]);
     expect(await locksOf("real-redirected")).toBe(0);
+  });
+});
+
+describe("heartbeat", () => {
+  const url = "https://ping.example/check";
+
+  it("sends nothing without HEARTBEAT_URL", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await pingHeartbeat({ ...env, HEARTBEAT_URL: undefined });
+    await pingHeartbeat({ ...env, HEARTBEAT_URL: " " });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("calls the URL with a plain GET and no calendar data", async () => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("OK", { status: 200 }));
+    await pingHeartbeat({ ...env, HEARTBEAT_URL: url });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [target, init] = fetch.mock.calls[0] ?? [];
+    expect(target).toBe(url);
+    expect(init?.method).toBe("GET");
+    expect(init?.body).toBeUndefined();
+  });
+
+  it("never throws, whatever the URL answers", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("down"));
+    await expect(pingHeartbeat({ ...env, HEARTBEAT_URL: url })).resolves.toBeUndefined();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 500 }));
+    await expect(pingHeartbeat({ ...env, HEARTBEAT_URL: url })).resolves.toBeUndefined();
+    await expect(
+      pingHeartbeat({ ...env, HEARTBEAT_URL: "http://ping.example/check" }),
+    ).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledTimes(3);
   });
 });

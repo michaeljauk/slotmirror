@@ -277,6 +277,11 @@ plain GET once an hour, without any data, and the monitor alerts when the calls 
 monitor's period to 1 hour and its grace time to 3 hours. The URL must start with `https://`. The
 call needs a free subrequest, so it stops above about 44 accounts.
 
+**healthchecks.io.** One check covers both secrets. Set `HEARTBEAT_URL` to the ping URL and
+`ALERT_WEBHOOK_URL` to the ping URL plus `/fail`. An alert then shows up as a failure with the text
+as its ping body, and goes to the check's integrations, such as e-mail or Discord. The next heartbeat
+marks the check as up again, so an alert does not stay visible in the check.
+
 ## Logs
 
 `wrangler.jsonc` keeps Workers Logs on and turns invocation logs off:

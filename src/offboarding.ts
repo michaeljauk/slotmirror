@@ -3,7 +3,6 @@ import { auditStatement, errorLogFields, recordAudit } from "./audit";
 import { HOLD_LEASE_MS, openTombstone } from "./cleanup";
 import { parseRuleOptions } from "./config";
 import { accountSync } from "./durable";
-import { deleteEmptyFeeds } from "./feeds";
 import { ruleTagFor } from "./sync/plan";
 import { syncWindow } from "./sync/rules";
 
@@ -299,7 +298,6 @@ export async function removeAccounts(
       const cancelled = await cancelRetirement(env, accountId, generation);
       await reportKept(env, user, kept, { rules: rules.length, retireFailed: true });
       await resumeRules(env, generation, kept, stopped, new Set(cancelled ? [] : [accountId]));
-      await deleteFeedsAfterFailure(env, user);
       throw error;
     }
     await recordAudit(env.DB, {
@@ -311,31 +309,13 @@ export async function removeAccounts(
       detail: { rules: rules.length },
     });
   }
-  // The accounts' calendars left every feed with them; a feed without calendars goes too.
-  await deleteEmptyFeeds(env, user);
-}
-
-/**
- * Accounts that went before a failure can take the last calendar of a feed with them. A failure
- * here is logged, so that the caller's error stays.
- */
-async function deleteFeedsAfterFailure(
-  env: Env,
-  user: { id: string; orgId: string },
-): Promise<void> {
-  try {
-    await deleteEmptyFeeds(env, user);
-  } catch (error) {
-    console.error("Deleting empty feeds failed", ...errorLogFields(error));
-  }
 }
 
 /** Who started a deletion or a change of state; recorded without names. */
 export type Actor = "self" | "admin";
 
 /**
- * Delete a user with every account, rule, feed and block. Activity entries stay until retention.
- * Feeds go with the user row.
+ * Delete a user with every account, rule and block. Activity entries stay until retention.
  */
 export async function deleteUser(
   env: Env,

@@ -34,7 +34,6 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `src/cleanup.ts`                | Tombstones of offboarding jobs: end state and the blocks left per calendar        |
 | `src/providers/`                | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
 | `src/access.ts`, `src/users.ts` | Orgs, users, roles, access policy                                                 |
-| `src/feeds.ts`, `src/ics.ts`    | Private free/busy ICS feeds: tokens, access checks, busy events, ICS writer       |
 | `src/i18n/`                     | Message catalogs. `en.ts` defines the shape; every locale must match it           |
 | `src/pages/`                    | Server-rendered Hono JSX pages                                                    |
 | `migrations/`                   | D1 migrations (registry: orgs, users, accounts, calendars, rules, runs)           |

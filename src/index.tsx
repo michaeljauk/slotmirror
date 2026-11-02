@@ -1,4 +1,4 @@
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
@@ -70,9 +70,6 @@ import {
   type HeldRule,
 } from "./offboarding";
 import { crossSiteGuard, securityHeaders } from "./request-guard";
-import { feeds } from "./routes/feeds";
-import { feedResponse, listFeeds } from "./feeds";
-import { userCalendars } from "./calendars";
 
 export { AccountSync } from "./account-sync";
 
@@ -83,16 +80,6 @@ function countParam(value: string | undefined): number {
 }
 
 const app = new Hono<AppEnv>();
-
-const noReferrer: MiddlewareHandler<AppEnv> = async (c, next) => {
-  await next();
-  c.header("Referrer-Policy", "no-referrer");
-};
-
-// A feed address is a secret. These answers keep their stricter referrer policy: this runs after
-// the headers below, which set the default for every other answer.
-app.use("/ics/*", noReferrer);
-app.use("/feeds/*", noReferrer);
 
 // First, so that every answer of the Worker carries the headers, also errors and redirects.
 app.use("*", securityHeaders);
@@ -143,12 +130,6 @@ app.post("/webhooks/google", async (c) => {
   return c.body(null, 200);
 });
 
-// Private free/busy feeds for calendar apps. Before the language detector, which sets a cookie,
-// and before the session middleware: the secret in the address is the only credential.
-app.get("/ics/:feedId/:file", (c) =>
-  feedResponse(c.env, c.req.param("feedId"), c.req.param("file"), new URL(c.req.url).origin),
-);
-
 // Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
 app.use(
   "*",
@@ -193,7 +174,6 @@ app.use("*", async (c, next) => {
 app.route("/auth", auth);
 app.route("/rules", rules);
 app.route("/dev", dev);
-app.route("/feeds", feeds);
 
 app.get("/", async (c) => {
   const user = c.get("user");
@@ -226,11 +206,9 @@ async function renderHome(
   )
     .bind(user.id)
     .all<AccountRow>();
-  const [outcomes, editor, userFeeds, calendars, cleanups] = await Promise.all([
+  const [outcomes, editor, cleanups] = await Promise.all([
     latestRuleOutcomes(c.env.DB, user.id),
     loadEditorState(c.env, user.id),
-    listFeeds(c.env.DB, user.id),
-    userCalendars(c.env.DB, user.id),
     ownCleanups(c.env.DB, user.id),
   ]);
   return render(
@@ -242,8 +220,6 @@ async function renderHome(
       operatorNotice={operatorNotice(c.env)}
       statuses={accountStatuses(outcomes)}
       editor={editor}
-      feeds={userFeeds}
-      calendars={calendars}
       cleanups={cleanups.left.length}
       cleanupsRunning={cleanups.running.length}
       notice={options.notice}

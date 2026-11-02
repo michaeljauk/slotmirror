@@ -322,7 +322,6 @@ export const en = {
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
       "A session cookie and a language cookie in your browser.",
-      "For each free/busy feed you create: its calendars, its settings and a hash of its secret address. Whoever has the address sees your busy times, without content. The last rendered feed, busy times only, is kept with the feed and in Cloudflare's cache to answer the next fetches.",
     ],
     notStoredTitle: "What is not stored",
     notStored:
@@ -437,9 +436,6 @@ export const en = {
       alert_test: "Test alert requested",
       compare_run: "Comparison finished",
       compare_failed: "Comparison failed",
-      feed_created: "Free/busy feed created",
-      feed_rotated: "Free/busy feed address renewed",
-      feed_deleted: "Free/busy feed deleted",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} new, ${update} changed, ${remove} removed`,
@@ -540,49 +536,6 @@ export const en = {
       count === 1
         ? "Blocks of a deleted user are left in 1 calendar"
         : `Blocks of deleted users are left in ${count} calendars`,
-  },
-  feeds: {
-    title: "Free/busy feed",
-    lead: "A secret calendar address for people outside this deployment. It shows when you are busy, never what you do.",
-    empty: "No feed yet.",
-    noCalendars:
-      "Your calendars are listed here once you open the rules after connecting an account.",
-    feedTitle: (date: string) => `Feed from ${date}`,
-    renewedOn: (date: string) => `new address ${date}`,
-    daysAhead: (count: number) => `${count} days ahead`,
-    withAllDay: "with all-day events",
-    cut: (date: string) =>
-      `Too many busy times: the feed ends before ${date}. Choose fewer days or calendars.`,
-    calendarUnreadable: (name: string) =>
-      `“${name}” cannot be read any more, so subscribers get no update. Remove it from the feed.`,
-    removeCalendar: "Remove calendar",
-    create: "New feed",
-    calendarsLabel: (max: number) => `Calendars, at most ${max}`,
-    daysLabel: "Days ahead",
-    allDayLabel: "Include all-day events",
-    shares:
-      "Subscribers see when you are busy, from 7 days ago on: blocks titled “Busy”, marked private, where overlapping events form one block. Titles, places, notes and attendees stay out, and so do free and declined events. Only calendars your accounts own can be chosen.",
-    submit: "Create feed",
-    rotate: "New address",
-    rotateText:
-      "The current address stops working at once. Everyone who subscribed needs the new one.",
-    rotateConfirm: "Make a new address",
-    remove: "Delete",
-    removeText: "The address stops working at once. Subscribers no longer see your busy times.",
-    removeConfirm: "Delete feed",
-    urlTitle: "Your feed address",
-    urlLead: "Copy the address now. It is shown only once; slotmirror keeps only a hash of it.",
-    urlHint:
-      "Anyone with this address sees your busy times. Share it only with people who should. They subscribe to it by URL in their calendar app. A change shows within about 15 minutes, plus the refresh interval of their app.",
-    copy: "Copy",
-    copied: "Copied",
-    back: "Back to the accounts",
-    errorTitle: "Feed not created",
-    noCalendar: "Choose at least one calendar.",
-    tooManyCalendars: (max: number) => `Choose at most ${max} calendars.`,
-    tooManyFeeds: (max: number) => `You already have ${max} feeds. Delete one first.`,
-    calendarName: "Busy times",
-    eventTitle: "Busy",
   },
   setup: {
     title: "Finish the setup",

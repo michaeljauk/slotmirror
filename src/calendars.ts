@@ -2,7 +2,6 @@ import type { CalendarInfo } from "./providers/calendar-client";
 import { errorCode, errorLogFields } from "./audit";
 import { accountSync } from "./durable";
 import { reconcileRules } from "./editor";
-import { namesOwners } from "./feeds";
 
 export interface CalendarRow {
   id: string;
@@ -12,8 +11,6 @@ export interface CalendarRow {
   name: string;
   canEdit: boolean;
   isDefault: boolean;
-  /** The calendar's data belongs to the account; only such calendars may go into a feed. */
-  dataOwned: boolean;
 }
 
 /** Calendars of all accounts of a user, from the registry. */
@@ -22,7 +19,7 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
     .prepare(
       `SELECT c.id, c.account_id AS accountId, a.email AS accountEmail,
               a.tenant_id AS accountTenantId, c.name,
-              c.can_edit AS canEdit, c.is_default AS isDefault, c.data_owned AS dataOwned
+              c.can_edit AS canEdit, c.is_default AS isDefault
        FROM calendars c JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ?
        ORDER BY a.email, c.is_default DESC, c.name`,
@@ -36,13 +33,11 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
       name: string;
       canEdit: number;
       isDefault: number;
-      dataOwned: number;
     }>();
   return results.map((row) => ({
     ...row,
     canEdit: row.canEdit === 1,
     isDefault: row.isDefault === 1,
-    dataOwned: row.dataOwned === 1,
   }));
 }
 
@@ -65,20 +60,15 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
       continue;
     }
     if (calendars.length === 0) continue;
-    // Otherwise known calendars keep their owner, and a new calendar counts as not owned. Only
-    // a list that lacks the main calendar, as the first Graph page can, lets its entries speak.
-    const ownersKnown = namesOwners(calendars);
-    const newOwnersKnown = ownersKnown || !calendars.some((calendar) => calendar.isDefault);
     await env.DB.batch(
       calendars.map((calendar) =>
         env.DB.prepare(
           // A new main calendar starts as a source; is_source never changes on an update.
           `INSERT INTO calendars
-             (id, account_id, remote_id, name, can_edit, is_default, is_source, data_owned)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             (id, account_id, remote_id, name, can_edit, is_default, is_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (account_id, remote_id) DO UPDATE SET
-             name = excluded.name, can_edit = excluded.can_edit, is_default = excluded.is_default
-             ${ownersKnown ? ", data_owned = excluded.data_owned" : ""}`,
+             name = excluded.name, can_edit = excluded.can_edit, is_default = excluded.is_default`,
         ).bind(
           crypto.randomUUID(),
           account.id,
@@ -89,7 +79,6 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
           calendar.canEdit && calendar.owned ? 1 : 0,
           calendar.isDefault ? 1 : 0,
           calendar.isDefault ? 1 : 0,
-          newOwnersKnown && calendar.dataOwned ? 1 : 0,
         ),
       ),
     );

@@ -17,7 +17,6 @@ import {
   setRuleDetails,
   setSettings,
 } from "../src/editor";
-import { busyEvents } from "../src/feeds";
 import { messagesFor } from "../src/i18n";
 import { toGraphBlock } from "../src/providers/graph-calendar";
 import {
@@ -245,18 +244,6 @@ describe("the default for all-day events", () => {
     const free = { start: { date: dateOn(3) }, end: { date: dateOn(4) } };
     const parsed = fromGoogleEvent({ id: "g", transparency: "transparent", ...free });
     expect(isIncluded(parsed!, options)).toBe(false);
-  });
-});
-
-describe("a busy feed", () => {
-  const read = async (includeAllDay: boolean) => {
-    const reads = [{ calendarId: "c1", events: [allDay("event:1", 1)] }];
-    return (await busyEvents(reads, { includeAllDay, uidSalt: "salt", today: NOW })).events;
-  };
-
-  it("takes all-day events from its own switch, not from the rule default", async () => {
-    expect(await read(false)).toEqual([]);
-    expect(await read(true)).toHaveLength(1);
   });
 });
 

@@ -364,52 +364,26 @@ describe("rule across providers", () => {
 });
 
 describe("Google calendar list", () => {
-  it("keeps the owner role for targets and the data owner for feeds", async () => {
+  it("keeps the owner role for targets", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json({
         items: [
           { id: "me@example.com", summary: "Me", accessRole: "owner", primary: true },
           {
-            id: "own-project@group.calendar.google.com",
-            summary: "My project",
-            accessRole: "owner",
-            dataOwner: "me@example.com",
-          },
-          {
             id: "managed@group.calendar.google.com",
             summary: "Shared with manage sharing",
             accessRole: "owner",
-            dataOwner: "colleague@example.com",
           },
           { id: "colleague@example.com", summary: "Colleague", accessRole: "writer" },
         ],
       }),
     );
-    const flags = Object.fromEntries(
+    const owned = Object.fromEntries(
       (await new GoogleCalendar("token").listCalendars()).map((calendar) => [
         calendar.name,
-        [calendar.owned, calendar.dataOwned],
+        calendar.owned,
       ]),
     );
-    // [owned: decides mirror targets as on main, dataOwned: decides feeds]
-    expect(flags).toEqual({
-      Me: [true, true],
-      "My project": [true, true],
-      "Shared with manage sharing": [true, false],
-      Colleague: [false, false],
-    });
-  });
-
-  it("asks for hidden calendars only for a complete list", async () => {
-    const urls: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      urls.push(input instanceof Request ? input.url : String(input));
-      return Response.json({ items: [] });
-    });
-    const google = new GoogleCalendar("token");
-    await google.listCalendars();
-    await google.listCalendars({ complete: true });
-    expect(urls[0]).not.toContain("showHidden");
-    expect(urls[1]).toContain("showHidden=true");
+    expect(owned).toEqual({ Me: true, "Shared with manage sharing": true, Colleague: false });
   });
 });

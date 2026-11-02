@@ -35,10 +35,7 @@ export type AuditKind =
   | "alert_sent"
   | "alert_test"
   | "compare_run"
-  | "compare_failed"
-  | "feed_created"
-  | "feed_rotated"
-  | "feed_deleted";
+  | "compare_failed";
 
 /** How the removal of an offboarding ended. */
 export type CleanupResult =

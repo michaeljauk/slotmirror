@@ -234,23 +234,6 @@ function tokenEndpoint(answer: () => Response) {
   });
 }
 
-/** A feed that shows one calendar. */
-async function addFeed(userId: string, feedId: string, calendarId: string): Promise<void> {
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO feeds (id, user_id, token_hash, uid_salt) VALUES (?, ?, ?, ?)",
-    ).bind(feedId, userId, `hash-${feedId}`, `salt-${feedId}`),
-    env.DB.prepare("INSERT INTO feed_calendars (feed_id, calendar_id) VALUES (?, ?)").bind(
-      feedId,
-      calendarId,
-    ),
-  ]);
-}
-
-async function feedExists(feedId: string): Promise<boolean> {
-  return (await env.DB.prepare("SELECT 1 FROM feeds WHERE id = ?").bind(feedId).first()) !== null;
-}
-
 /** Run the alarms of a waiting removal up to its end. */
 async function runAttempts(stub: Stub, attempts: number): Promise<void> {
   for (let attempt = 0; attempt < attempts; attempt++) await runDurableObjectAlarm(stub);
@@ -726,13 +709,12 @@ describe("a retirement that fails after the queueing", () => {
     });
   });
 
-  it("reports only the accounts that stay and deletes a feed that lost its calendars", async () => {
+  it("reports only the accounts that stay", async () => {
     const { user, sourceId, targetId } = await setup("no-retire-two");
     const thirdId = "no-retire-two-c";
     const keptRule = "no-retire-two-kept";
     await addAccount(user.id, thirdId);
     await addRule(user.id, keptRule, targetId, thirdId);
-    await addFeed(user.id, "no-retire-two-feed", `${sourceId}-main`);
     const original = methods.retire;
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(methods, "retire")
@@ -752,7 +734,6 @@ describe("a retirement that fails after the queueing", () => {
     expect(await eventsOf(targetId, "account_disconnected")).toEqual([]);
     expect(await eventsOf(targetId, "account_disconnect_failed")).toHaveLength(1);
     expect(await ruleEnabled(keptRule)).toBe(1);
-    expect(await feedExists("no-retire-two-feed")).toBe(false);
   });
 });
 
@@ -1470,13 +1451,12 @@ describe("a reconnect of a retiring account", () => {
 });
 
 describe("a row that cannot be deleted after the retirement", () => {
-  it("cancels the retirement, reports the accounts that stay and deletes an empty feed", async () => {
+  it("cancels the retirement and reports the accounts that stay", async () => {
     const { user, source, target, sourceId, targetId } = await setup("no-delete");
     const thirdId = "no-delete-c";
     const keptRule = "no-delete-kept";
     await addAccount(user.id, thirdId);
     await addRule(user.id, keptRule, targetId, thirdId);
-    await addFeed(user.id, "no-delete-feed", `${sourceId}-main`);
     vi.spyOn(console, "error").mockImplementation(() => {});
     let deletes = 0;
     const hooked = envWithHook(async () => {
@@ -1496,7 +1476,6 @@ describe("a row that cannot be deleted after the retirement", () => {
       retireFailed: true,
     });
     expect(await ruleEnabled(keptRule)).toBe(1);
-    expect(await feedExists("no-delete-feed")).toBe(false);
   });
 
   it("lets the tokens go if the delete landed and only its answer got lost", async () => {
@@ -1551,19 +1530,6 @@ describe("a failure while the rules start again", () => {
 
     expect(await ruleEnabled(ruleId)).toBe(0);
     expect(await eventsOf(sourceId, "account_disconnect_failed")).toHaveLength(1);
-  });
-
-  it("keeps the error of the retirement if the feeds cannot be deleted", async () => {
-    const { user, source, sourceId, ruleId } = await setup("feeds-fail");
-    retireStoresAndFails();
-    const refusing = envWithRefusal((query) => query.includes("FROM feeds f"));
-
-    await expect(removeAccounts(refusing, user, [sourceId])).rejects.toThrow(
-      "Network connection lost.",
-    );
-
-    expect(await ruleEnabled(ruleId)).toBe(1);
-    expect(await retiringFlag(source)).toBeUndefined();
   });
 
   it("writes the block again if the removal and a full cycle ran during the request", async () => {

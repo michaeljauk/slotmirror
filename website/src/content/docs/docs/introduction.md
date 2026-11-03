@@ -1,6 +1,6 @@
 ---
-title: Introduction
-description: What slotmirror does, who it is for, and how it works.
+title: How slotmirror syncs your calendars
+description: What slotmirror does, who it is for, and how it mirrors busy blocks between Microsoft 365 and Google calendars.
 ---
 
 slotmirror keeps several calendars in sync, so that nobody books you twice. It copies your events

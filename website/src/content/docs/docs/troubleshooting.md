@@ -1,5 +1,5 @@
 ---
-title: Troubleshooting
+title: Troubleshooting calendar sync
 description: What the error codes on the slotmirror sign-in pages mean and what to do.
 ---
 

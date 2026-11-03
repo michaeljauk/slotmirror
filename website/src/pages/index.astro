@@ -4,9 +4,12 @@ import editor from "../../../docs/images/editor.png";
 import "../styles/home.css";
 import { previewAlt, previewHeight, previewWidth, repo } from "../site";
 
+// The search title is short enough for a result page (about 60 characters). Link previews keep
+// the hero headline as their title.
+const searchTitle = "slotmirror: busy-time sync for Outlook and Google calendars";
 const title = "slotmirror: stop getting double-booked across Microsoft and Google calendars";
 const description =
-  "Self-hosted busy-time sync between Microsoft 365 and Google calendars. By default only Busy leaves a calendar. Runs in your own Cloudflare account, on the free plan.";
+  "Sync Outlook and Google calendars as busy blocks. By default only Busy leaves a calendar. Self-hosted in your own Cloudflare account, on the free plan.";
 
 // Hero sentence, two variants. No latency has been measured yet, so the live variant names no
 // number. After the measurement, replace `null` with the measured values and the conditions, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
@@ -105,7 +108,7 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
+    <title>{searchTitle}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
     <link rel="icon" href={page("favicon.svg")} type="image/svg+xml" />

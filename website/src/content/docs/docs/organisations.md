@@ -1,5 +1,5 @@
 ---
-title: Organisations
+title: "Organisations: calendar sync for a team"
 description: Run slotmirror for a team, with sign-in limited to your tenant and detail caps.
 ---
 

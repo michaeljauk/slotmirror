@@ -54,6 +54,8 @@ describe("api tokens", () => {
       .first<Record<string, unknown>>();
     expect(JSON.stringify(row)).not.toContain(token);
     expect(row?.last_four).toBe(token.slice(-4));
+    // Every token reads; a later write scope gets tokens of its own.
+    expect(row?.scope).toBe("read");
   });
 
   it("admits a valid token as its user", async () => {

@@ -408,7 +408,7 @@ export const en = {
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
       "A session cookie and a language cookie in your browser.",
-      "If you create an API token: a hash of it, its name and when it was last used.",
+      "If you create an API token: a hash of it, its last four characters, its name and when it was last used. For agents: the number of tool calls on the day of your last call.",
     ],
     notStoredTitle: "What is not stored",
     notStored:

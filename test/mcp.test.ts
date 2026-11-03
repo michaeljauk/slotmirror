@@ -3,7 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fromJSONSchema, type z } from "zod";
 import * as zm from "zod/mini";
-import { createApiToken, DAILY_TOOL_CALLS, DEPLOYMENT_DAILY_TOOL_CALLS } from "../src/api-tokens";
+import { createApiToken, DAILY_TOOL_CALLS, DEPLOYMENT_DAILY_ROWS } from "../src/api-tokens";
 import { accountsAnswer, rulesAnswer, statusAnswer } from "../src/read-model";
 import worker from "../src/index";
 import { addAccount, BASE, signIn } from "./helpers";
@@ -898,6 +898,26 @@ describe("tools", () => {
     }
   });
 
+  it("shows a rule whose last run was aborted as an error, after a clean run", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    const ruleId = await seedRule(userId, "abort");
+    await addRun(userId, ruleId, "sync_run", { unchanged: 4 }, "2036-01-01T00:00:00.000Z");
+    await addRun(
+      userId,
+      ruleId,
+      "sync_run_aborted",
+      { runId: "r", startedAt: "2036-01-02T00:00:00.000Z" },
+      "2036-01-02T00:00:01.000Z",
+    );
+    expect(await statusOf(token, ruleId)).toMatchObject({
+      state: "error",
+      code: "aborted",
+      at: "2036-01-02T00:00:01.000Z",
+      blocks: 4,
+      blocksExact: false,
+    });
+  });
+
   it("shows a turned-off rule as paused even if an account needs reconnecting", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
     const ruleId = await seedRule(userId, "offstall", "{}", 0);
@@ -1088,13 +1108,15 @@ describe("daily limit", () => {
     expect(row).toEqual({ day: today(), calls: 1 });
   });
 
-  it("stops every user at the deployment's daily limit, and writes nothing", async () => {
+  it("stops every user once the deployment's calls read their daily rows, and writes nothing", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
-    // Ten other users share the deployment's budget, one below the limit.
-    const share = DEPLOYMENT_DAILY_TOOL_CALLS / 10;
+    // Ten other users read the deployment's budget, one row short of it.
+    const share = DEPLOYMENT_DAILY_ROWS / 10;
     for (let i = 1; i <= 10; i++) {
       const { user } = await signIn(`share${i}@org.example`);
-      await env.DB.prepare("INSERT INTO api_usage (user_id, day, calls) VALUES (?, ?, ?)")
+      await env.DB.prepare(
+        "INSERT INTO api_usage (user_id, day, calls, rows_read) VALUES (?, ?, 1, ?)",
+      )
         .bind(user.id, today(), i === 10 ? share - 1 : share)
         .run();
     }
@@ -1108,11 +1130,39 @@ describe("daily limit", () => {
     expect(row?.calls).toBe(1);
   });
 
-  it("counts calls of earlier days not toward the deployment's limit", async () => {
+  it("records the rows a call read, more for a costly call than for a cheap one", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    const ruleId = await seedRule(userId, "rows");
+    for (let i = 0; i < 30; i++) {
+      await addRun(
+        userId,
+        ruleId,
+        "sync_run",
+        { unchanged: 1 },
+        `2036-01-01T00:00:${String(i).padStart(2, "0")}.000Z`,
+      );
+    }
+    const rowsAfter = async () =>
+      (
+        await env.DB.prepare("SELECT rows_read AS n FROM api_usage WHERE user_id = ?")
+          .bind(userId)
+          .first<{ n: number }>()
+      )?.n ?? 0;
+    await call(token, "list_accounts");
+    const cheap = await rowsAfter();
+    await call(token, "get_sync_status");
+    const costly = (await rowsAfter()) - cheap;
+    expect(cheap).toBeGreaterThan(0);
+    expect(costly).toBeGreaterThan(30);
+  });
+
+  it("counts rows of earlier days not toward the deployment's budget", async () => {
     const { token } = await tokenFor("owner@example.com");
     const { user } = await signIn("yesterday@org.example");
-    await env.DB.prepare("INSERT INTO api_usage (user_id, day, calls) VALUES (?, '2020-01-01', ?)")
-      .bind(user.id, DEPLOYMENT_DAILY_TOOL_CALLS)
+    await env.DB.prepare(
+      "INSERT INTO api_usage (user_id, day, calls, rows_read) VALUES (?, '2020-01-01', 1, ?)",
+    )
+      .bind(user.id, DEPLOYMENT_DAILY_ROWS)
       .run();
     const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
     expect((await rpcBody(response)).result?.isError).toBeUndefined();

@@ -201,13 +201,17 @@ function ruleStatus(
   latest: RecentRun | undefined,
   lastRun: RecentRun | undefined,
 ): RuleStatusView {
+  // An aborted run ended at a platform limit and wrote no result: it counts as a failure.
+  const aborted = latest?.kind === "sync_run_aborted";
   const state = !rule.enabled
     ? "paused"
     : rule.stalled
       ? "reconnect"
-      : latest
-        ? statusOf(latest).state
-        : "unknown";
+      : !latest
+        ? "unknown"
+        : latest.kind === "sync_run_aborted"
+          ? "error"
+          : statusOf({ ...latest, kind: latest.kind }).state;
   const changes = lastRun ? changesOf(lastRun.detail) : undefined;
   const remaining = latest?.detail.remaining ?? 0;
   const failed = latest?.detail.failed ?? 0;
@@ -216,7 +220,7 @@ function ruleStatus(
     enabled: rule.enabled,
     state,
     at: latest?.createdAt ?? null,
-    ...(latest?.detail.code ? { code: latest.detail.code } : {}),
+    ...(aborted ? { code: "aborted" } : latest?.detail.code ? { code: latest.detail.code } : {}),
     ...(failed > 0 ? { failed } : {}),
     ...(remaining > 0 ? { remaining } : {}),
     ...(changes ? { changes } : {}),

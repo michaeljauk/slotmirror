@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as z from "zod/mini";
-import { authenticateToken, takeToolCall } from "./api-tokens";
+import { authenticateToken, mayCallTool, recordToolCall } from "./api-tokens";
 import type { AppEnv } from "./app-env";
 import { errorLogFields } from "./audit";
 import { APP_NAME } from "./brand";
 import { mcpEnabled, setupStatus } from "./config";
+import { countingRows } from "./d1-rows";
 import { i18nFor, type Messages } from "./i18n";
 import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
@@ -30,6 +31,8 @@ const VERSION_META = "io.modelcontextprotocol/protocolVersion";
 const SERVER_INFO_META = "io.modelcontextprotocol/serverInfo";
 
 const MAX_BODY_BYTES = 64 * 1024;
+/** Rows that the token check and the limit check read, about, charged to every call. */
+const CHECK_ROWS = 5;
 const CACHE_TTL_MS = 3_600_000;
 
 const PARSE_ERROR = -32700;
@@ -113,9 +116,13 @@ function mcpOrigins(c: Context<AppEnv>): string[] {
 // A failure of D1 or of the code reaches the client as JSON-RPC, never as the app's HTML page.
 mcp.onError(async (error, c) => {
   console.error("MCP request failed", ...errorLogFields(error));
+  // Parse the body only within the route's own size limit: D1 at its daily limit fails every
+  // request before `bodyLimit` runs, and a large body must not cost CPU then.
   let id: RequestId;
   try {
-    id = readableId(JSON.parse(await c.req.text()));
+    const declared = Number(c.req.header("content-length") ?? 0);
+    const text = declared <= MAX_BODY_BYTES ? await c.req.text() : "";
+    id = text !== "" && text.length <= MAX_BODY_BYTES ? readableId(JSON.parse(text)) : undefined;
   } catch {
     id = undefined;
   }
@@ -331,9 +338,10 @@ async function callTool(
   }
   const user = c.get("user");
   if (!user) throw new Error("the MCP route requires a user");
-  if (!(await takeToolCall(c.env.DB, user.id))) return toolError(t.errors.dailyLimit);
+  if (!(await mayCallTool(c.env.DB, user.id))) return toolError(t.errors.dailyLimit);
+  const counted = countingRows(c.env.DB);
   try {
-    const data = await tool.run(c.env, user);
+    const data = await tool.run({ ...c.env, DB: counted.db }, user);
     return respond({
       content: [{ type: "text", text: JSON.stringify(data) }],
       structuredContent: data,
@@ -341,5 +349,10 @@ async function callTool(
   } catch (error) {
     console.error("MCP tool failed", tool.name, ...errorLogFields(error));
     return toolError(t.errors.toolFailed);
+  } finally {
+    // A failed count must not cost the user an answer that is ready.
+    await recordToolCall(c.env.DB, user.id, counted.rows() + CHECK_ROWS).catch((error: unknown) => {
+      console.error("MCP usage count failed", ...errorLogFields(error));
+    });
   }
 }

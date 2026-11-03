@@ -42,13 +42,15 @@ run left work open, a later run failed, the rule is off, or an account needs rec
 | State       | Meaning                                                                    |
 | ----------- | -------------------------------------------------------------------------- |
 | `ok`        | The last run finished.                                                     |
-| `partial`   | The last run left work open, or some blocks failed.                        |
-| `error`     | The last run failed. `code` names the reason.                              |
+| `partial`   | The last run left work open. `remaining` counts it.                        |
+| `error`     | The last run failed, or some blocks failed. See `code` and `failed`.       |
 | `paused`    | The rule is off.                                                           |
 | `reconnect` | The source or target account needs reconnecting, so the rule does not run. |
 | `unknown`   | The recent log holds no run of the rule. This does not mean it is healthy. |
 
-An answer lists at most 200 rules or 100 accounts and sets `truncated` if more exist.
+For `error`, `code` names the reason of a failed run, and `aborted` means that the run stopped at a
+platform limit. `failed` counts blocks that failed in a run that otherwise finished. An answer lists
+at most 200 rules or 100 accounts and sets `truncated` if more exist.
 
 ## What a client can see
 
@@ -74,10 +76,12 @@ titles, tenant IDs or tokens.
 
 ## Limits
 
-A user can make 1,000 tool calls per UTC day, and all users of a deployment together 5,000. After
-that each call returns a tool error that says when the limit resets, so the agent can tell you. D1
-refuses every query of a deployment at its daily limit, also those of the sync. These limits keep
-agents in a loop away from that point. Listing the tools and the handshake do not count.
+A user can make 1,000 tool calls per UTC day. The tool calls of all users together may read
+1,000,000 database rows a day, a fifth of what D1 allows on the Free plan. A call reads 10 to 2,000
+rows, depending on the number of rules and the log. After a limit, each call returns a tool error
+that says when the limit resets, so the agent can tell you. D1 refuses every query of a deployment
+at its daily limit, also those of the sync. These limits keep agents in a loop away from that
+point. Listing the tools and the handshake are not counted; they read a few rows each.
 
 ## Protocol
 

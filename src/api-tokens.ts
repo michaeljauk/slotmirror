@@ -16,10 +16,11 @@ export const MAX_TOKEN_NAME_LENGTH = 64;
 export const DAILY_TOOL_CALLS = 1000;
 
 /**
- * Tool calls of all users of the deployment per UTC day. A typical call reads about 120 D1 rows,
- * so the limit keeps MCP near a tenth of D1's 5 million rows a day, however many users loop.
+ * D1 rows that the tool calls of all users may read per UTC day: a fifth of D1's 5 million. A
+ * budget of rows, not of calls, because one call reads 10 to 2,000 rows, depending on the user's
+ * rules and log. However many agents loop, the sync keeps four fifths.
  */
-export const DEPLOYMENT_DAILY_TOOL_CALLS = 5000;
+export const DEPLOYMENT_DAILY_ROWS = 1_000_000;
 
 const TOKEN_PREFIX = "sm_pat_";
 const TOKEN_PATTERN = /^sm_pat_[A-Za-z0-9_-]{43}$/;
@@ -65,8 +66,9 @@ export async function createApiToken(
       new Date(now).toISOString(),
     ),
     env.DB.prepare(
-      `INSERT INTO api_tokens (token_hash, id, user_id, name, last_four, session_version, expires_at)
-       SELECT ?, ?, u.id, ?, ?, u.session_version, ? FROM users u
+      `INSERT INTO api_tokens (token_hash, id, user_id, name, last_four, scope, session_version,
+                               expires_at)
+       SELECT ?, ?, u.id, ?, ?, 'read', u.session_version, ? FROM users u
        WHERE u.id = ? AND u.session_version = ?
          AND (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id) < ?`,
     ).bind(
@@ -179,11 +181,13 @@ export async function authenticateToken(
 }
 
 /**
- * Count one tool call. Return false at the user's or the deployment's daily limit. At a limit the
- * statement writes no row, so that a client in a loop cannot use up the deployment's daily D1
- * writes. The sum reads one row per user who ever made a call.
+ * True if the user may make one more tool call today: below the user's call limit, and the calls of
+ * the whole deployment below their budget of D1 rows. The check writes nothing, so that a client in
+ * a loop at a limit cannot use up the deployment's daily D1 writes. Concurrent calls can pass the
+ * budget by a few calls; the budget leaves room for that. The sum reads one row per user who ever
+ * made a call.
  */
-export async function takeToolCall(
+export async function mayCallTool(
   db: D1Database,
   userId: string,
   now = Date.now(),
@@ -191,16 +195,31 @@ export async function takeToolCall(
   const day = new Date(now).toISOString().slice(0, 10);
   const row = await db
     .prepare(
-      `INSERT INTO api_usage (user_id, day, calls)
-       SELECT ?1, ?2, 1
-       WHERE (SELECT COALESCE(SUM(calls), 0) FROM api_usage WHERE day = ?2) < ?4
-       ON CONFLICT (user_id) DO UPDATE
-         SET calls = CASE WHEN api_usage.day = excluded.day THEN api_usage.calls + 1 ELSE 1 END,
-             day = excluded.day
-         WHERE api_usage.day <> excluded.day OR api_usage.calls < ?3
-       RETURNING calls`,
+      `SELECT (SELECT calls FROM api_usage WHERE user_id = ?1 AND day = ?2) AS mine,
+              (SELECT COALESCE(SUM(rows_read), 0) FROM api_usage WHERE day = ?2) AS total`,
     )
-    .bind(userId, day, DAILY_TOOL_CALLS, DEPLOYMENT_DAILY_TOOL_CALLS)
-    .first<{ calls: number }>();
-  return row !== null;
+    .bind(userId, day)
+    .first<{ mine: number | null; total: number }>();
+  return (row?.mine ?? 0) < DAILY_TOOL_CALLS && (row?.total ?? 0) < DEPLOYMENT_DAILY_ROWS;
+}
+
+/** Count one tool call and the D1 rows it read. A new day starts the user's row again. */
+export async function recordToolCall(
+  db: D1Database,
+  userId: string,
+  rowsRead: number,
+  now = Date.now(),
+): Promise<void> {
+  const day = new Date(now).toISOString().slice(0, 10);
+  await db
+    .prepare(
+      `INSERT INTO api_usage (user_id, day, calls, rows_read) VALUES (?1, ?2, 1, ?3)
+       ON CONFLICT (user_id) DO UPDATE SET
+         calls = CASE WHEN api_usage.day = excluded.day THEN api_usage.calls + 1 ELSE 1 END,
+         rows_read = CASE WHEN api_usage.day = excluded.day
+                          THEN api_usage.rows_read + excluded.rows_read ELSE excluded.rows_read END,
+         day = excluded.day`,
+    )
+    .bind(userId, day, rowsRead)
+    .run();
 }

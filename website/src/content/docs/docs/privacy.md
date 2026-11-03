@@ -16,8 +16,8 @@ service between your calendars and your deployment.
   90 days are deleted.
 - A session cookie and a language cookie in the browser.
 - For API tokens, if the [MCP server](/docs/mcp/) is on: a hash of each token, its last four
-  characters, its name, and when it was last used. A counter of tool calls per user holds only the
-  current day.
+  characters, its name, and when it was last used. One row per user counts the tool calls and the
+  database rows they read, for the day of the user's last call.
 
 ## What is not stored
 

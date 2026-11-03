@@ -411,7 +411,7 @@ export const de: Messages = {
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
       "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
-      "Wenn du einen API-Token erstellst: ein Hash davon, sein Name und die letzte Nutzung.",
+      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe am Tag deines letzten Aufrufs.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:

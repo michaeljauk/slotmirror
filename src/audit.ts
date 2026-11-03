@@ -510,7 +510,13 @@ export function parseDetail(json: string): RuleOutcome["detail"] {
 }
 
 /** One run or failure of a rule, as `recentRuleRuns` reads it. */
-export type RecentRun = Pick<RuleOutcome, "ruleId" | "kind" | "createdAt" | "detail">;
+/** A run, a failure, or a run that the platform stopped at its CPU or subrequest limit. */
+export interface RecentRun {
+  ruleId: string;
+  kind: "sync_run" | "sync_failed" | "sync_run_aborted";
+  createdAt: string;
+  detail: Partial<SyncRunDetail> & { code?: string };
+}
 
 /**
  * The runs and failures among the newest `limit` audit rows of a user, newest first, without dry
@@ -532,7 +538,7 @@ export async function recentRuleRuns(
          ORDER BY created_at DESC, id DESC
          LIMIT ?
        )
-       WHERE rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
+       WHERE rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed', 'sync_run_aborted')
        ORDER BY created_at DESC, id DESC`,
     )
     .bind(userId, limit)

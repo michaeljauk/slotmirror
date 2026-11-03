@@ -33,9 +33,9 @@ Anbieter sie meldet. Ohne `PUBLIC_URL` kommt die Änderung beim nächsten Lauf a
 
 ## Schritte
 
-1. Richte slotmirror mit dem [Quickstart](../../docs/quickstart/) ein.
-2. Lege eine [Microsoft-Entra-App](../../docs/entra-setup/) und einen
-   [Google-OAuth-Client](../../docs/google-setup/) an.
+1. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein.
+2. Lege eine [Microsoft-Entra-App](../../../docs/entra-setup/) und einen
+   [Google-OAuth-Client](../../../docs/google-setup/) an.
 3. Setze `PUBLIC_URL`, damit die Anbieter deine Installation über Änderungen informieren.
 4. Melde dich an und verbinde beide Konten unter **Konten**.
 5. Nutze auf der Seite **Regeln** den **Schnellstart**: Beide Kalender blocken sich dann
@@ -58,7 +58,7 @@ Anbieter sie meldet. Ohne `PUBLIC_URL` kommt die Änderung beim nächsten Lauf a
 
 Ja. Auf der Microsoft-Seite verbindet slotmirror Geschäfts- und Schulkonten von Microsoft 365 und
 persönliche Microsoft-Konten wie Outlook.com. Persönliche Konten brauchen in der
-[Entra-App](../../docs/entra-setup/) den Kontotyp **Accounts in any organizational directory and
+[Entra-App](../../../docs/entra-setup/) den Kontotyp **Accounts in any organizational directory and
 personal Microsoft accounts**. Auf der Google-Seite verbindet es Google-Konten.
 
 ### Sieht der Google Kalender die Titel meiner Outlook-Termine?
@@ -76,7 +76,7 @@ mit. Wird er abgesagt, verschwindet seine Kopie.
 ### Brauche ich einen Server?
 
 Nein. slotmirror läuft heute in deinem eigenen Cloudflare-Konto, im Workers-Free-Plan. Ein großes
-Team kann Workers Paid brauchen. Siehe [Limits](../../docs/limits/).
+Team kann Workers Paid brauchen. Siehe [Limits](../../../docs/limits/).
 
 ## Verwandte Anleitungen
 

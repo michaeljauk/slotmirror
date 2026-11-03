@@ -22,8 +22,8 @@ slotmirror sieht eine Änderung im Spielplan erst nach dieser Aktualisierung.
 ## Schritte
 
 1. Abonniere den Spielplan in dem Konto, in dem du ihn schon hast, zum Beispiel im Google Kalender.
-2. Richte slotmirror mit dem [Quickstart](../../docs/quickstart/) ein und verbinde dieses Konto und
-   dein Arbeitskonto.
+2. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein. Verbinde dieses Konto
+   und dein Arbeitskonto.
 3. Klappe auf der Seite **Regeln** die Karte des Kontos mit dem Spielplan auf.
 4. Schalte in der Zeile **Kalender** den Spielplan neben **Hauptkalender** ein.
 5. Lass für den Arbeitskalender **Als belegt** stehen, oder wähle **Mit Titel**, wenn Kolleginnen

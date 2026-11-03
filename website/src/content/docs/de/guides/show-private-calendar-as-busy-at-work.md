@@ -21,7 +21,7 @@ der Termin, verschiebt oder entfernt es den Block.
 
 ## Schritte
 
-1. Richte slotmirror mit dem [Quickstart](../../docs/quickstart/) ein und verbinde dein Arbeits-
+1. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein und verbinde dein Arbeits-
    und dein privates Konto.
 2. Füge auf der Seite **Regeln** beide Kalender zur Gruppe **Blocken sich gegenseitig** hinzu.
 3. Klappe die Karte des privaten Kontos auf. Lass für den Arbeitskalender **Als belegt** stehen.
@@ -38,7 +38,7 @@ Titel, Ort und Teilnehmende des privaten Termins gelangen nicht in den Arbeitska
 
 Ein Admin kann das für alle festlegen: `MAX_DETAIL_FROM_EXTERNAL=busy` begrenzt jede Richtung von
 einem privaten Konto zu einem Arbeitskonto auf „Belegt“. Siehe
-[Organisations](../../docs/organisations/).
+[Organisations](../../../docs/organisations/).
 
 ## Fragen
 
@@ -54,7 +54,7 @@ Teilnehmende des Termins bleiben in deinem privaten Kalender.
 Wer die Installation betreibt. Richtest du slotmirror selbst ein, liegen die Tokens in deinem
 eigenen Cloudflare-Konto. Betreibt dein Arbeitgeber die Installation, liegen sie in dessen Konto.
 Die Seite `/privacy` der Installation zeigt den Kontakt des Betreibers, wenn er einen eingetragen
-hat. Siehe [Privacy and data location](../../docs/privacy/).
+hat. Siehe [Privacy and data location](../../../docs/privacy/).
 
 ### Was ist mit Feiertagen und freien Tagen?
 

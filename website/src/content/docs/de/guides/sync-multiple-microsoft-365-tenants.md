@@ -6,9 +6,9 @@ sidebar:
 ---
 
 Du arbeitest in zwei Microsoft-365-Tenants, zum Beispiel als Gründerin oder Gründer zweier Firmen
-oder in der Beratung mit einem Konto beim Kunden. Frei/Gebucht-Freigaben zwischen Tenants brauchen einen Admin
-auf beiden Seiten und fehlen oft. Mit dieser Anleitung synchronisierst du die Kalender selbst, als
-belegte Blöcke.
+oder in der Beratung mit einem Konto beim Kunden. Frei/Gebucht-Freigaben zwischen Tenants brauchen
+einen Admin auf beiden Seiten und fehlen oft. Mit dieser Anleitung synchronisierst du die Kalender
+selbst, als belegte Blöcke.
 
 ## Warum keine Frei/Gebucht-Freigabe zwischen den Tenants?
 
@@ -22,10 +22,10 @@ jedem Tenant sehen sie deshalb.
 
 ## Schritte
 
-1. Lege eine [Microsoft-Entra-App](../../docs/entra-setup/) mit dem Kontotyp **Accounts in any
+1. Lege eine [Microsoft-Entra-App](../../../docs/entra-setup/) mit dem Kontotyp **Accounts in any
    organizational directory and personal Microsoft accounts** an. Eine App für nur einen Tenant
    kann den zweiten Tenant nicht verbinden.
-2. Richte slotmirror mit dem [Quickstart](../../docs/quickstart/) ein und setze `PUBLIC_URL`.
+2. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein und setze `PUBLIC_URL`.
 3. Verbinde unter **Konten** ein Konto pro Tenant. Blockt ein Tenant die Zustimmung durch Benutzer,
    muss sein Admin der App einmal zustimmen.
 4. Füge auf der Seite **Regeln** die Kalender zur Gruppe **Blocken sich gegenseitig** hinzu.
@@ -41,7 +41,7 @@ Beispiel nach der Firma. Die Übersicht liest sich dann „von Firma A an Firma 
 - Jeder Tenant sieht nur „Belegt“, als privat markiert, außer du wählst für eine Richtung mehr
   Details.
 - Wenn du dich mit einem Tenant anmeldest und nur dessen Konten zulassen willst, siehe
-  [Organisations](../../docs/organisations/).
+  [Organisations](../../../docs/organisations/).
 
 ## Fragen
 
@@ -49,7 +49,7 @@ Beispiel nach der Firma. Die Übersicht liest sich dann „von Firma A an Firma 
 
 Meistens nicht. Du verbindest in jedem Tenant dein eigenes Konto. Blockt ein Tenant die
 Zustimmung durch Benutzer, muss sein Admin der App einmal zustimmen. Siehe
-[Microsoft Entra app](../../docs/entra-setup/).
+[Microsoft Entra app](../../../docs/entra-setup/).
 
 ### Kann ich mehr als zwei Tenants verbinden?
 

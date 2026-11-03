@@ -9,7 +9,6 @@ CREATE TABLE api_tokens (
   user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   last_four TEXT NOT NULL,
-  scope TEXT NOT NULL DEFAULT 'read' CHECK (scope IN ('read')),
   session_version INTEGER NOT NULL,
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

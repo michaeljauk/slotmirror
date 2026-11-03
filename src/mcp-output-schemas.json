@@ -30,9 +30,12 @@
           "required": ["id", "provider", "email", "name", "needsReconnect", "calendars"],
           "additionalProperties": false
         }
+      },
+      "truncated": {
+        "type": "boolean"
       }
     },
-    "required": ["accounts"],
+    "required": ["accounts", "truncated"],
     "additionalProperties": false
   },
   "list_rules": {
@@ -77,16 +80,44 @@
               "type": "boolean"
             },
             "detailLevel": {
-              "type": ["string", "null"]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "daysAhead": {
-              "type": ["number", "null"]
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "bufferBefore": {
-              "type": ["number", "null"]
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "bufferAfter": {
-              "type": ["number", "null"]
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "filters": {
               "anyOf": [
@@ -147,10 +178,17 @@
             },
             "state": {
               "type": "string",
-              "enum": ["ok", "partial", "error", "paused", "unknown"]
+              "enum": ["ok", "partial", "error", "paused", "reconnect", "unknown"]
             },
             "at": {
-              "type": ["string", "null"]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "code": {
               "type": "string"
@@ -181,13 +219,27 @@
               "additionalProperties": false
             },
             "blocks": {
-              "type": ["number", "null"]
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "blocksExact": {
               "type": "boolean"
             },
             "blocksAt": {
-              "type": ["string", "null"]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": ["ruleId", "enabled", "state", "at", "blocks", "blocksExact", "blocksAt"],

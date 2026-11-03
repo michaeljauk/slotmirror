@@ -9,7 +9,6 @@ import { mcpEnabled, setupStatus } from "./config";
 import { i18nFor, type Messages } from "./i18n";
 import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
-import { allowedOrigins } from "./request-guard";
 import type { CurrentUser } from "./users";
 import { buildVersionLabel } from "./version";
 
@@ -37,6 +36,7 @@ const PARSE_ERROR = -32700;
 const INVALID_REQUEST = -32600;
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
+const INTERNAL_ERROR = -32603;
 const SERVER_ERROR = -32000;
 const HEADER_MISMATCH = -32020;
 const UNSUPPORTED_VERSION = -32022;
@@ -72,7 +72,7 @@ function messages(c: Context<AppEnv>): Messages["mcp"] {
 
 function rpcError(
   c: Context<AppEnv>,
-  status: 200 | 400 | 401 | 403 | 404 | 413 | 503,
+  status: 200 | 400 | 401 | 403 | 404 | 413 | 500 | 503,
   id: RequestId,
   code: number,
   message: string,
@@ -90,13 +90,45 @@ function rpcError(
 
 export const mcp = new Hono<AppEnv>();
 
+/** The request's ID, if its body is a JSON-RPC message with one. Error answers carry it. */
+function readableId(body: unknown): RequestId {
+  const id = (body as { id?: unknown } | null)?.id;
+  return typeof id === "string" || typeof id === "number" ? id : undefined;
+}
+
+/**
+ * The deployment's origins for this route. Once PUBLIC_URL is set, only its origin counts: an
+ * Origin that matches the Host header proves nothing under DNS rebinding.
+ */
+function mcpOrigins(c: Context<AppEnv>): string[] {
+  const configured = c.env.PUBLIC_URL?.trim();
+  if (!configured) return [new URL(c.req.url).origin];
+  try {
+    return [new URL(configured).origin];
+  } catch {
+    return []; // A malformed PUBLIC_URL admits no browser origin.
+  }
+}
+
+// A failure of D1 or of the code reaches the client as JSON-RPC, never as the app's HTML page.
+mcp.onError(async (error, c) => {
+  console.error("MCP request failed", ...errorLogFields(error));
+  let id: RequestId;
+  try {
+    id = readableId(JSON.parse(await c.req.text()));
+  } catch {
+    id = undefined;
+  }
+  return rpcError(c, 500, id, INTERNAL_ERROR, messages(c).errors.internal);
+});
+
 // Each check ends the request at its first failure. See the design: the order is the contract.
 mcp.use("*", async (c, next) => {
   if (!mcpEnabled(c.env)) return c.notFound();
   c.header("Cache-Control", "no-store");
   const t = messages(c);
   const origin = c.req.header("origin");
-  if (origin !== undefined && !allowedOrigins(c.req.raw, c.env.PUBLIC_URL).includes(origin)) {
+  if (origin !== undefined && !mcpOrigins(c).includes(origin)) {
     return rpcError(c, 403, undefined, SERVER_ERROR, t.errors.forbiddenOrigin);
   }
   if (!setupStatus(c.env).ready) {
@@ -136,7 +168,7 @@ mcp.post(
     }
     const parsed = messageSchema.safeParse(body);
     if (!parsed.success) {
-      return rpcError(c, 400, undefined, INVALID_REQUEST, t.errors.invalidRequest);
+      return rpcError(c, 400, readableId(body), INVALID_REQUEST, t.errors.invalidRequest);
     }
     const message = parsed.data;
     if (message.id === undefined) return c.body(null, 202);
@@ -235,7 +267,8 @@ async function modern(c: Context<AppEnv>, message: Message) {
       capabilities: { tools: {} },
       instructions: messages(c).instructions,
       ttlMs: CACHE_TTL_MS,
-      cacheScope: "public",
+      // The instructions follow Accept-Language, so a cache shared across clients must not reuse them.
+      cacheScope: "private",
     });
   }
   if (method === "tools/list") {
@@ -288,7 +321,12 @@ async function callTool(
   // Since 2025-11-25, input errors are tool errors: the model reads them and can correct the call.
   const toolError = (text: string) => respond({ content: [{ type: "text", text }], isError: true });
   const args = message.params?.arguments ?? {};
-  if (typeof args !== "object" || args === null || Object.keys(args).length > 0) {
+  if (
+    typeof args !== "object" ||
+    args === null ||
+    Array.isArray(args) ||
+    Object.keys(args).length > 0
+  ) {
     return toolError(t.errors.unexpectedArguments);
   }
   const user = c.get("user");

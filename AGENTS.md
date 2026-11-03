@@ -57,7 +57,8 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **The MCP endpoint is read-only and D1-only.** It takes the user from the bearer token, never from a
   cookie or an argument. Name each field in `src/read-model.ts`; never pass on a row, `rules.options`
   or an audit `detail`. Every query has an upper bound: D1 refuses all queries of a deployment at its
-  daily limit, also those of the sync.
+  daily limit, also those of the sync. Tool handlers hold no SQL: each query is a function in
+  `src/read-model.ts` or `src/api-tokens.ts`, so that a later hosting adapter can replace D1.
 - **Recurring events are read per occurrence** (Graph `calendarView`, Google `singleEvents=true`).
   Never sync series masters.
 - **Provider calls go through `client()` in `AccountSync`.** It runs them one at a time, because

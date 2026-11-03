@@ -368,6 +368,7 @@ export const en = {
       unsupportedVersion: "This protocol version is not supported.",
       dailyLimit: "The daily limit of tool calls is reached. It resets at 00:00 UTC.",
       toolFailed: "The tool failed. Try again later.",
+      internal: "The server failed. Try again later.",
     },
   },
   tokens: {

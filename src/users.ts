@@ -203,7 +203,17 @@ export async function resetSignInBinding(
     .bind(user.id, user.orgId)
     .run();
   // The new session version ends these tokens already. This frees their slots.
-  await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?").bind(user.id).run();
+  const tokens = await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?")
+    .bind(user.id)
+    .run();
+  if (tokens.meta.changes) {
+    await recordAudit(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      kind: "api_token_revoked",
+      detail: { count: tokens.meta.changes, by },
+    });
+  }
   await recordAudit(env.DB, {
     orgId: user.orgId,
     userId: user.id,

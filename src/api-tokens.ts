@@ -5,7 +5,7 @@ import { loadUser, type SignedInUser } from "./users";
 /** Lifetimes that the token page offers, in days. */
 export const TOKEN_DAYS = [7, 30, 90] as const;
 export const DEFAULT_TOKEN_DAYS = 30;
-const MAX_TOKEN_DAYS = 90;
+const MAX_TOKEN_DAYS = Math.max(...TOKEN_DAYS);
 export const MAX_TOKENS_PER_USER = 5;
 export const MAX_TOKEN_NAME_LENGTH = 64;
 
@@ -14,6 +14,12 @@ export const MAX_TOKEN_NAME_LENGTH = 64;
  * those of the sync, so an agent in a loop must hit this limit first.
  */
 export const DAILY_TOOL_CALLS = 1000;
+
+/**
+ * Tool calls of all users of the deployment per UTC day. A typical call reads about 120 D1 rows,
+ * so the limit keeps MCP near a tenth of D1's 5 million rows a day, however many users loop.
+ */
+export const DEPLOYMENT_DAILY_TOOL_CALLS = 5000;
 
 const TOKEN_PREFIX = "sm_pat_";
 const TOKEN_PATTERN = /^sm_pat_[A-Za-z0-9_-]{43}$/;
@@ -121,6 +127,7 @@ export async function revokeApiToken(
 export async function revokeUserTokens(
   env: Env,
   user: { id: string; orgId: string },
+  by: "admin",
 ): Promise<void> {
   const deleted = await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?")
     .bind(user.id)
@@ -130,14 +137,15 @@ export async function revokeUserTokens(
     orgId: user.orgId,
     userId: user.id,
     kind: "api_token_revoked",
-    detail: { count: deleted.meta.changes },
+    detail: { count: deleted.meta.changes, by },
   });
 }
 
 /**
  * The user of an `Authorization` header, or null. Accepts a token only in this header. `loadUser`
- * checks the org policy and the session version, so that leaving the policy or a sign-in reset ends
- * a token at the next request. Signing out ends a session, not a token.
+ * checks the org policy and the session version. A sign-in reset ends a token at the next request.
+ * While the policy does not admit the user, the token stops; it works again if the policy admits
+ * the user again. Signing out ends a session, not a token.
  */
 export async function authenticateToken(
   env: Env,
@@ -171,8 +179,9 @@ export async function authenticateToken(
 }
 
 /**
- * Count one tool call. Return false at the daily limit. At the limit the statement writes no row,
- * so that a client in a loop cannot use up the deployment's daily D1 writes.
+ * Count one tool call. Return false at the user's or the deployment's daily limit. At a limit the
+ * statement writes no row, so that a client in a loop cannot use up the deployment's daily D1
+ * writes. The sum reads one row per user who ever made a call.
  */
 export async function takeToolCall(
   db: D1Database,
@@ -182,14 +191,16 @@ export async function takeToolCall(
   const day = new Date(now).toISOString().slice(0, 10);
   const row = await db
     .prepare(
-      `INSERT INTO api_usage (user_id, day, calls) VALUES (?1, ?2, 1)
+      `INSERT INTO api_usage (user_id, day, calls)
+       SELECT ?1, ?2, 1
+       WHERE (SELECT COALESCE(SUM(calls), 0) FROM api_usage WHERE day = ?2) < ?4
        ON CONFLICT (user_id) DO UPDATE
          SET calls = CASE WHEN api_usage.day = excluded.day THEN api_usage.calls + 1 ELSE 1 END,
              day = excluded.day
          WHERE api_usage.day <> excluded.day OR api_usage.calls < ?3
        RETURNING calls`,
     )
-    .bind(userId, day, DAILY_TOOL_CALLS)
+    .bind(userId, day, DAILY_TOOL_CALLS, DEPLOYMENT_DAILY_TOOL_CALLS)
     .first<{ calls: number }>();
   return row !== null;
 }

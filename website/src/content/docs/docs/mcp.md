@@ -37,9 +37,18 @@ There is no OAuth sign-in yet. A client that takes only OAuth cannot connect.
 
 A rule is one direction, so `blocks` is the count for that direction. It is the result of the last
 run inside the rule's sync window, not a live count of the calendar. `blocksExact` is false if the
-run left work open, a later run failed, or the rule is off. The state `unknown` means that the recent
-log holds no run of the rule. It does not mean that the rule is healthy. An answer lists at most 500
-rules and sets `truncated` if more exist.
+run left work open, a later run failed, the rule is off, or an account needs reconnecting.
+
+| State       | Meaning                                                                    |
+| ----------- | -------------------------------------------------------------------------- |
+| `ok`        | The last run finished.                                                     |
+| `partial`   | The last run left work open, or some blocks failed.                        |
+| `error`     | The last run failed. `code` names the reason.                              |
+| `paused`    | The rule is off.                                                           |
+| `reconnect` | The source or target account needs reconnecting, so the rule does not run. |
+| `unknown`   | The recent log holds no run of the rule. This does not mean it is healthy. |
+
+An answer lists at most 200 rules or 100 accounts and sets `truncated` if more exist.
 
 ## What a client can see
 
@@ -52,17 +61,23 @@ titles, tenant IDs or tokens.
 ## Tokens
 
 - A token lasts 7, 30 or 90 days. A user can hold 5 active tokens.
-- slotmirror stores only a hash of the token.
-- If the access policy stops admitting a user, their tokens stop at the next request.
+- slotmirror stores a hash of the token and its last four characters, never the token.
+- If the access policy stops admitting a user, their tokens stop at the next request. They work
+  again if the policy admits the user again.
+- Turning `MCP_ENABLED` off hides the endpoint but keeps the tokens. If a token leaked, end it
+  before you turn the server on again.
 - "Reset sign-in" and deleting a user end their tokens. Signing out does not.
 - Removing someone in your identity provider does **not** end a token, unless the access policy
-  changes too. An admin ends it on the admin page with "End API tokens".
+  changes too. To offboard someone, an admin uses "Reset sign-in" on the admin page: it ends their
+  sessions and tokens. "End API tokens" ends only the tokens, and a signed-in user can create new
+  ones.
 
 ## Limits
 
-A user can make 1,000 tool calls per UTC day. After that each call returns a tool error that says
-when the limit resets, so the agent can tell you. D1 refuses every query of a deployment at its
-daily limit, also those of the sync. This limit keeps an agent in a loop away from that point.
+A user can make 1,000 tool calls per UTC day, and all users of a deployment together 5,000. After
+that each call returns a tool error that says when the limit resets, so the agent can tell you. D1
+refuses every query of a deployment at its daily limit, also those of the sync. These limits keep
+agents in a loop away from that point. Listing the tools and the handshake do not count.
 
 ## Protocol
 

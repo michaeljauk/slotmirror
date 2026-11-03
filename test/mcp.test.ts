@@ -3,7 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fromJSONSchema, type z } from "zod";
 import * as zm from "zod/mini";
-import { createApiToken, DAILY_TOOL_CALLS } from "../src/api-tokens";
+import { createApiToken, DAILY_TOOL_CALLS, DEPLOYMENT_DAILY_TOOL_CALLS } from "../src/api-tokens";
 import { accountsAnswer, rulesAnswer, statusAnswer } from "../src/read-model";
 import worker from "../src/index";
 import { addAccount, BASE, signIn } from "./helpers";
@@ -18,6 +18,22 @@ function post(body: unknown, headers: Headers = {}): Promise<Response> {
     headers: { "content-type": "application/json", ...headers },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
+}
+
+/** A POST to /mcp against a changed environment, for failures the shared bindings cannot show. */
+async function postWith(overrides: Partial<Env>, body: unknown, headers: Headers = {}) {
+  const ctx = createExecutionContext();
+  const response = await worker.fetch(
+    new Request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    }),
+    { ...env, ...overrides },
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return response;
 }
 
 function bearer(token: string): Headers {
@@ -55,6 +71,23 @@ function modern(token: string, method: string, params: object = {}): Promise<Res
       ...(name ? { "mcp-name": name } : {}),
     },
   );
+}
+
+/**
+ * The served form of a JSON Schema: a `type` list becomes `anyOf`, one type per branch. Some
+ * clients map tool schemas onto a dialect with a single `type`, and drop or refuse a list.
+ * `src/mcp-output-schemas.json` holds this form of the read-model shapes.
+ */
+function portable(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(portable);
+  if (typeof schema !== "object" || schema === null) return schema;
+  const entries = Object.entries(schema).map(([key, value]) => [key, portable(value)] as const);
+  const node: Record<string, unknown> = Object.fromEntries(entries);
+  if (Array.isArray(node.type)) {
+    const { type, ...rest } = node;
+    return { ...rest, anyOf: (type as string[]).map((one) => ({ type: one })) };
+  }
+  return node;
 }
 
 interface RpcBody {
@@ -180,11 +213,105 @@ describe("access to /mcp", () => {
 
   it("refuses a foreign Origin before it looks at the token", async () => {
     const { token } = await tokenFor("owner@example.com");
-    const response = await post(
+    const request = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    const withToken = await post(request, { ...bearer(token), origin: "https://evil.example" });
+    expect(withToken.status).toBe(403);
+    // Without a token the order shows: a check of the token first would answer 401.
+    const without = await post(request, { origin: "https://evil.example" });
+    expect(without.status).toBe(403);
+  });
+
+  it("answers 404 for MCP_ENABLED=0 as for an unset variable", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const response = await postWith(
+      { MCP_ENABLED: "0" },
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
-      { ...bearer(token), origin: "https://evil.example" },
+      bearer(token),
     );
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(404);
+  });
+
+  it("answers 503 with JSON-RPC while the deployment's setup is unfinished", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const response = await postWith(
+      { SESSION_SECRET: "short" },
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      bearer(token),
+    );
+    expect(response.status).toBe(503);
+    expect(((await response.json()) as RpcBody).error?.code).toBe(-32000);
+  });
+
+  it("answers a tool error without the cause if a tool's query fails", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await seedRule(userId, "throws");
+    const failing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("FROM rules r")) throw new Error("D1_ERROR: secret detail");
+            return target.prepare(sql);
+          };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    const response = await postWith(
+      { DB: failing },
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "list_rules", arguments: {} },
+      },
+      { ...bearer(token), "mcp-protocol-version": "2025-11-25" },
+    );
+    expect(response.status).toBe(200);
+    const body = await rpcBody(response);
+    expect(body.result?.isError).toBe(true);
+    expect(body.result?.content?.[0]?.text).toBe("The tool failed. Try again later.");
+    expect(body.result).not.toHaveProperty("structuredContent");
+    expect(JSON.stringify(body)).not.toContain("secret detail");
+  });
+
+  it("takes only the Origin of PUBLIC_URL once it is set, not one the Host header names", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const request = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    const rebound = await postWith({ PUBLIC_URL: "https://sync.example.com" }, request, {
+      ...bearer(token),
+      origin: BASE,
+    });
+    expect(rebound.status).toBe(403);
+    const own = await postWith({ PUBLIC_URL: "https://sync.example.com" }, request, {
+      ...bearer(token),
+      origin: "https://sync.example.com",
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it("answers a JSON-RPC error, not an HTML page, if the database fails", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const failing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "prepare") {
+          return () => {
+            throw new Error("D1_ERROR: daily limit");
+          };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    const response = await postWith(
+      { DB: failing },
+      { jsonrpc: "2.0", id: 9, method: "tools/list" },
+      bearer(token),
+    );
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    const body = (await response.json()) as RpcBody & { id?: number };
+    expect(body.error?.code).toBe(-32603);
+    expect(body.id).toBe(9);
+    expect(JSON.stringify(body)).not.toContain("D1_ERROR");
   });
 
   it("takes the deployment's own Origin", async () => {
@@ -310,7 +437,8 @@ describe("protocol", () => {
       resultType: "complete",
       supportedVersions: expect.arrayContaining([MODERN, "2025-11-25"]),
       capabilities: { tools: {} },
-      cacheScope: "public",
+      // Private: the instructions follow Accept-Language, so a shared cache must not reuse them.
+      cacheScope: "private",
     });
     expect(typeof result?.ttlMs).toBe("number");
     expect(result?._meta).toMatchObject({
@@ -353,10 +481,13 @@ describe("protocol", () => {
     const tools = result?.tools as { name: string; outputSchema: unknown }[];
     const served = Object.fromEntries(tools.map((tool) => [tool.name, tool.outputSchema]));
     expect(served).toEqual({
-      list_accounts: zm.toJSONSchema(accountsAnswer, { io: "output" }),
-      list_rules: zm.toJSONSchema(rulesAnswer, { io: "output" }),
-      get_sync_status: zm.toJSONSchema(statusAnswer, { io: "output" }),
+      list_accounts: portable(zm.toJSONSchema(accountsAnswer, { io: "output" })),
+      list_rules: portable(zm.toJSONSchema(rulesAnswer, { io: "output" })),
+      get_sync_status: portable(zm.toJSONSchema(statusAnswer, { io: "output" })),
     });
+    // Control: no `type` list is left, so clients with a single-type dialect read every field.
+    expect(JSON.stringify(served)).not.toMatch(/"type":\[/);
+    expect(JSON.stringify(served)).toContain('"anyOf"');
   });
 
   it("answers each tool with content that its output schema admits, and nothing more", async () => {
@@ -512,6 +643,19 @@ describe("protocol", () => {
     const batch = await post([{ jsonrpc: "2.0", id: 1, method: "ping" }], bearer(token));
     expect(batch.status).toBe(400);
     expect((await rpcBody(batch)).error?.code).toBe(-32600);
+  });
+
+  it("keeps the ID of a request it refuses as invalid", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const response = await post({ jsonrpc: "1.0", id: 5, method: "tools/list" }, bearer(token));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { id?: number }).id).toBe(5);
+  });
+
+  it("treats a list as arguments, as it treats any other argument", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const response = await legacy(token, "tools/call", { name: "list_rules", arguments: [] });
+    expect((await rpcBody(response)).result?.isError).toBe(true);
   });
 
   it("refuses an unknown tool with -32602", async () => {
@@ -736,6 +880,31 @@ describe("tools", () => {
     expect(await statusOf(token, ruleId)).toMatchObject({ state: "paused", enabled: false });
   });
 
+  it("shows a rule as stalled if one of its accounts needs reconnecting, after a clean run", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    for (const side of ["a", "b"]) {
+      const prefix = `stall${side}`;
+      const ruleId = await seedRule(userId, prefix);
+      await addRun(userId, ruleId, "sync_run", { unchanged: 3 }, "2036-01-01T00:00:00.000Z");
+      expect(await statusOf(token, ruleId)).toMatchObject({ state: "ok", blocksExact: true });
+      await env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = ?")
+        .bind(`${prefix}-${side}`)
+        .run();
+      expect(await statusOf(token, ruleId)).toMatchObject({
+        state: "reconnect",
+        blocks: 3,
+        blocksExact: false,
+      });
+    }
+  });
+
+  it("shows a turned-off rule as paused even if an account needs reconnecting", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    const ruleId = await seedRule(userId, "offstall", "{}", 0);
+    await env.DB.prepare("UPDATE accounts SET needs_reconnect = 1 WHERE id = 'offstall-a'").run();
+    expect(await statusOf(token, ruleId)).toMatchObject({ state: "paused" });
+  });
+
   it("shows a rule without a run in reach as unknown, never as ok", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
     const ruleId = await seedRule(userId, "none");
@@ -846,22 +1015,42 @@ describe("cost of a status call", () => {
     const { token, userId } = await tokenFor("owner@example.com");
     await seedRule(userId, "cap");
     await env.DB.prepare(
-      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
        INSERT INTO calendars (id, account_id, remote_id, name)
        SELECT 'many-' || i, 'cap-a', 'r' || i, 'C' FROM n`,
     ).run();
+    // Reverse insert order against the IDs, so that a sort by ID and the insert order differ.
     await env.DB.prepare(
       `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id)
-       SELECT 'rule-' || id, ?, id, 'cap-cb' FROM calendars WHERE id GLOB 'many-*'`,
+       SELECT 'rule-' || id, ?, id, 'cap-cb' FROM calendars WHERE id GLOB 'many-*'
+       ORDER BY id DESC`,
     )
       .bind(userId)
       .run();
     const listed = await call(token, "list_rules");
-    expect((listed.rules as unknown[]).length).toBe(500);
+    expect((listed.rules as unknown[]).length).toBe(200);
     expect(listed.truncated).toBe(true);
     const status = await call(token, "get_sync_status");
-    expect((status.rules as unknown[]).length).toBe(500);
+    expect((status.rules as unknown[]).length).toBe(200);
     expect(status.truncated).toBe(true);
+    // Both tools name the same 200 rules, so an agent can join their answers.
+    const ids = (listed.rules as { id: string }[]).map((rule) => rule.id).sort();
+    const statusIds = (status.rules as { ruleId: string }[]).map((rule) => rule.ruleId).sort();
+    expect(statusIds).toEqual(ids);
+  });
+
+  it("caps the accounts that one answer lists, and says so", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 120)
+       INSERT INTO accounts (id, user_id, provider, email)
+       SELECT 'acc-' || i, ?, 'google', 'a' || i || '@example.com' FROM n`,
+    )
+      .bind(userId)
+      .run();
+    const listed = await call(token, "list_accounts");
+    expect((listed.accounts as unknown[]).length).toBe(100);
+    expect(listed.truncated).toBe(true);
   });
 
   it("does not report a short list as cut", async () => {
@@ -873,6 +1062,17 @@ describe("cost of a status call", () => {
 
 describe("daily limit", () => {
   const today = () => new Date().toISOString().slice(0, 10);
+
+  it("allows the last call below the limit, then refuses the next", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await env.DB.prepare("INSERT INTO api_usage (user_id, day, calls) VALUES (?, ?, ?)")
+      .bind(userId, today(), DAILY_TOOL_CALLS - 1)
+      .run();
+    const last = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    expect((await rpcBody(last)).result?.isError).toBeUndefined();
+    const next = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    expect((await rpcBody(next)).result?.isError).toBe(true);
+  });
 
   it("counts tool calls and starts again on a new day", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
@@ -886,6 +1086,36 @@ describe("daily limit", () => {
       .bind(userId)
       .first<{ day: string; calls: number }>();
     expect(row).toEqual({ day: today(), calls: 1 });
+  });
+
+  it("stops every user at the deployment's daily limit, and writes nothing", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    // Ten other users share the deployment's budget, one below the limit.
+    const share = DEPLOYMENT_DAILY_TOOL_CALLS / 10;
+    for (let i = 1; i <= 10; i++) {
+      const { user } = await signIn(`share${i}@org.example`);
+      await env.DB.prepare("INSERT INTO api_usage (user_id, day, calls) VALUES (?, ?, ?)")
+        .bind(user.id, today(), i === 10 ? share - 1 : share)
+        .run();
+    }
+    const first = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    expect((await rpcBody(first)).result?.isError).toBeUndefined();
+    const second = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    expect((await rpcBody(second)).result?.isError).toBe(true);
+    const row = await env.DB.prepare("SELECT calls FROM api_usage WHERE user_id = ?")
+      .bind(userId)
+      .first<{ calls: number }>();
+    expect(row?.calls).toBe(1);
+  });
+
+  it("counts calls of earlier days not toward the deployment's limit", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const { user } = await signIn("yesterday@org.example");
+    await env.DB.prepare("INSERT INTO api_usage (user_id, day, calls) VALUES (?, '2020-01-01', ?)")
+      .bind(user.id, DEPLOYMENT_DAILY_TOOL_CALLS)
+      .run();
+    const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    expect((await rpcBody(response)).result?.isError).toBeUndefined();
   });
 
   it("does not count tools/list", async () => {

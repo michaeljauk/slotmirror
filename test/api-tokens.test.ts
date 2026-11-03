@@ -54,7 +54,6 @@ describe("api tokens", () => {
       .first<Record<string, unknown>>();
     expect(JSON.stringify(row)).not.toContain(token);
     expect(row?.last_four).toBe(token.slice(-4));
-    expect(row?.scope).toBe("read");
   });
 
   it("admits a valid token as its user", async () => {
@@ -127,9 +126,26 @@ describe("api tokens", () => {
     const { user } = await newToken();
     await resetSignInBinding(env, user, "admin");
     expect(await listApiTokens(env.DB, user.id)).toEqual([]);
+    const audit = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'api_token_revoked'",
+    )
+      .bind(user.id)
+      .first<{ detail: string }>();
+    expect(JSON.parse(audit?.detail ?? "{}")).toEqual({ count: 1, by: "admin" });
   });
 
-  it("ends tokens if the policy stops admitting the user", async () => {
+  it("writes no revocation entry for a reset of a user without tokens", async () => {
+    const { user } = await signIn("owner@example.com");
+    await resetSignInBinding(env, user, "admin");
+    const audit = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM audit_events WHERE user_id = ? AND kind = 'api_token_revoked'",
+    )
+      .bind(user.id)
+      .first<{ n: number }>();
+    expect(audit?.n).toBe(0);
+  });
+
+  it("stops tokens while the policy does not admit the user", async () => {
     const { token } = await newToken();
     const removed = { ...env, ALLOWED_EMAILS: "other@elsewhere.org" };
     expect(await authenticateToken(removed, HEADER(token))).toBeNull();
@@ -195,7 +211,7 @@ describe("api tokens", () => {
 
   it("lets an admin end all tokens of a user", async () => {
     const { token, user } = await newToken();
-    await revokeUserTokens(env, user);
+    await revokeUserTokens(env, user, "admin");
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
   });
 });
@@ -317,6 +333,12 @@ describe("admin", () => {
     );
     expect(response.status).toBe(302);
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
+    const audit = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'api_token_revoked'",
+    )
+      .bind(user.id)
+      .first<{ detail: string }>();
+    expect(JSON.parse(audit?.detail ?? "{}")).toEqual({ count: 1, by: "admin" });
   });
 
   it("refuses a member", async () => {

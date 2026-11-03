@@ -1,7 +1,7 @@
 import * as z from "zod/mini";
 import { recentRuleRuns, statusOf, type RecentRun, type SyncRunDetail } from "./audit";
 import { parseRuleOptions } from "./config";
-import { detailLevelFor } from "./detail-policy";
+import { detailLevelResolver } from "./detail-policy";
 import { hasWorkingHours } from "./sync/working-hours";
 
 /**
@@ -10,8 +10,14 @@ import { hasWorkingHours } from "./sync/working-hours";
  * titles and audit texts stay out. All queries read D1 and take the user from the token.
  */
 
-/** Rules in one answer. A LIMIT without ORDER BY stops the read; a sort would read all rows first. */
-const MAX_LISTED_RULES = 500;
+/**
+ * Rules in one answer. `ORDER BY r.rowid` follows the index `rules_user`, so the LIMIT stops the
+ * read without a sort, and both rule tools name the same rules. Each rule costs about 6 µs of CPU
+ * for its options (measured warm in Node), and a cold isolate is slower: 200 keeps far below 10 ms.
+ */
+const MAX_LISTED_RULES = 200;
+/** Accounts in one answer. The sort reads all accounts of the user, which this bounds as well. */
+const MAX_LISTED_ACCOUNTS = 100;
 
 /**
  * The answer shapes. They are strict: the MCP tools publish them as `outputSchema`, and a test
@@ -26,7 +32,10 @@ const accountView = z.strictObject({
   calendars: z.number(),
 });
 export type AccountView = z.infer<typeof accountView>;
-export const accountsAnswer = z.strictObject({ accounts: z.array(accountView) });
+export const accountsAnswer = z.strictObject({
+  accounts: z.array(accountView),
+  truncated: z.boolean(),
+});
 
 export async function readAccounts(
   db: D1Database,
@@ -37,12 +46,15 @@ export async function readAccounts(
       `SELECT a.id, a.provider, a.email, COALESCE(a.display_name, a.email) AS name,
               a.needs_reconnect AS needsReconnect,
               (SELECT COUNT(*) FROM calendars c WHERE c.account_id = a.id) AS calendars
-       FROM accounts a WHERE a.user_id = ? ORDER BY a.created_at, a.id`,
+       FROM accounts a WHERE a.user_id = ? ORDER BY a.created_at, a.id LIMIT ?`,
     )
-    .bind(userId)
+    .bind(userId, MAX_LISTED_ACCOUNTS + 1)
     .all<Omit<AccountView, "needsReconnect"> & { needsReconnect: number }>();
   return {
-    accounts: results.map((row) => ({ ...row, needsReconnect: row.needsReconnect === 1 })),
+    truncated: results.length > MAX_LISTED_ACCOUNTS,
+    accounts: results
+      .slice(0, MAX_LISTED_ACCOUNTS)
+      .map((row) => ({ ...row, needsReconnect: row.needsReconnect === 1 })),
   };
 }
 
@@ -65,7 +77,7 @@ export type RuleView = z.infer<typeof ruleView>;
 export const rulesAnswer = z.strictObject({ rules: z.array(ruleView), truncated: z.boolean() });
 
 function ruleSettings(
-  env: Env,
+  detailLevelFor: ReturnType<typeof detailLevelResolver>,
   json: string,
   source: { email: string; tenantId: string | null },
   target: { email: string; tenantId: string | null },
@@ -73,7 +85,7 @@ function ruleSettings(
   try {
     const options = parseRuleOptions(json);
     return {
-      detailLevel: detailLevelFor(env, options.detailLevel, source, target).level,
+      detailLevel: detailLevelFor(options.detailLevel, source, target).level,
       daysAhead: options.daysAhead,
       bufferBefore: options.bufferBefore,
       bufferAfter: options.bufferAfter,
@@ -105,7 +117,7 @@ export async function readRules(env: Env, userId: string): Promise<z.infer<typeo
      JOIN accounts sa ON sa.id = sc.account_id
      JOIN calendars tc ON tc.id = r.target_calendar_id
      JOIN accounts ta ON ta.id = tc.account_id
-     WHERE r.user_id = ? LIMIT ?`,
+     WHERE r.user_id = ? ORDER BY r.rowid LIMIT ?`,
   )
     .bind(userId, MAX_LISTED_RULES + 1)
     .all<{
@@ -121,6 +133,7 @@ export async function readRules(env: Env, userId: string): Promise<z.infer<typeo
       targetEmail: string;
       targetTenantId: string | null;
     }>();
+  const detailLevelFor = detailLevelResolver(env);
   return {
     truncated: results.length > MAX_LISTED_RULES,
     rules: results.slice(0, MAX_LISTED_RULES).map((row) => ({
@@ -129,7 +142,7 @@ export async function readRules(env: Env, userId: string): Promise<z.infer<typeo
       target: { accountId: row.targetAccountId, calendar: row.targetCalendar },
       enabled: row.enabled === 1,
       ...ruleSettings(
-        env,
+        detailLevelFor,
         row.options,
         { email: row.sourceEmail, tenantId: row.sourceTenantId },
         { email: row.targetEmail, tenantId: row.targetTenantId },
@@ -141,8 +154,12 @@ export async function readRules(env: Env, userId: string): Promise<z.infer<typeo
 const ruleStatusView = z.strictObject({
   ruleId: z.string(),
   enabled: z.boolean(),
-  /** "unknown": no run within the audit rows that one call reads. Never reported as healthy. */
-  state: z.enum(["ok", "partial", "error", "paused", "unknown"]),
+  /**
+   * "paused": the rule is off. "reconnect": an account of the rule needs reconnecting, so the
+   * rule does not run. "unknown": no run within the audit rows that one call reads. Neither
+   * "reconnect" nor "unknown" is ever reported as healthy.
+   */
+  state: z.enum(["ok", "partial", "error", "paused", "reconnect", "unknown"]),
   at: z.nullable(z.string()),
   code: z.optional(z.string()),
   failed: z.optional(z.number()),
@@ -180,29 +197,34 @@ function changesOf(detail: Partial<SyncRunDetail>) {
 }
 
 function ruleStatus(
-  ruleId: string,
-  enabled: boolean,
+  rule: { id: string; enabled: boolean; stalled: boolean },
   latest: RecentRun | undefined,
   lastRun: RecentRun | undefined,
 ): RuleStatusView {
-  const unknown = { state: "unknown", at: null, blocks: null, blocksExact: false, blocksAt: null };
-  if (!latest) return { ruleId, enabled, ...unknown } as RuleStatusView;
-  const state = enabled ? statusOf(latest).state : "paused";
+  const state = !rule.enabled
+    ? "paused"
+    : rule.stalled
+      ? "reconnect"
+      : latest
+        ? statusOf(latest).state
+        : "unknown";
   const changes = lastRun ? changesOf(lastRun.detail) : undefined;
-  const remaining = latest.detail.remaining ?? 0;
-  const failed = latest.detail.failed ?? 0;
+  const remaining = latest?.detail.remaining ?? 0;
+  const failed = latest?.detail.failed ?? 0;
   return {
-    ruleId,
-    enabled,
+    ruleId: rule.id,
+    enabled: rule.enabled,
     state,
-    at: latest.createdAt,
-    ...(latest.detail.code ? { code: latest.detail.code } : {}),
+    at: latest?.createdAt ?? null,
+    ...(latest?.detail.code ? { code: latest.detail.code } : {}),
     ...(failed > 0 ? { failed } : {}),
     ...(remaining > 0 ? { remaining } : {}),
     ...(changes ? { changes } : {}),
     blocks: changes ? changes.unchanged + changes.create + changes.update : null,
     blocksExact:
-      enabled &&
+      rule.enabled &&
+      !rule.stalled &&
+      latest !== undefined &&
       latest === lastRun &&
       latest.kind === "sync_run" &&
       failed === 0 &&
@@ -220,10 +242,20 @@ export async function readSyncStatus(
   db: D1Database,
   userId: string,
 ): Promise<z.infer<typeof statusAnswer>> {
+  // A rule does not run while its source or target account needs reconnecting: the sync skips it,
+  // and writes no audit row that would show it.
   const { results } = await db
-    .prepare("SELECT id, enabled FROM rules WHERE user_id = ? LIMIT ?")
+    .prepare(
+      `SELECT r.id, r.enabled, MAX(sa.needs_reconnect, ta.needs_reconnect) AS stalled
+       FROM rules r
+       JOIN calendars sc ON sc.id = r.source_calendar_id
+       JOIN accounts sa ON sa.id = sc.account_id
+       JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN accounts ta ON ta.id = tc.account_id
+       WHERE r.user_id = ? ORDER BY r.rowid LIMIT ?`,
+    )
     .bind(userId, MAX_LISTED_RULES + 1)
-    .all<{ id: string; enabled: number }>();
+    .all<{ id: string; enabled: number; stalled: number }>();
   const rules = results.slice(0, MAX_LISTED_RULES);
   const runs = await recentRuleRuns(db, userId, runRowLimit(rules.length));
   const latest = new Map<string, RecentRun>();
@@ -235,7 +267,11 @@ export async function readSyncStatus(
   return {
     truncated: results.length > MAX_LISTED_RULES,
     rules: rules.map((rule) =>
-      ruleStatus(rule.id, rule.enabled === 1, latest.get(rule.id), lastRun.get(rule.id)),
+      ruleStatus(
+        { id: rule.id, enabled: rule.enabled === 1, stalled: rule.stalled === 1 },
+        latest.get(rule.id),
+        lastRun.get(rule.id),
+      ),
     ),
   };
 }

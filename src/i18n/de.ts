@@ -371,6 +371,7 @@ export const de: Messages = {
       unsupportedVersion: "Diese Protokollversion wird nicht unterstützt.",
       dailyLimit: "Das Tageslimit für Tool-Aufrufe ist erreicht. Es beginnt um 00:00 UTC neu.",
       toolFailed: "Das Tool ist fehlgeschlagen. Bitte später erneut versuchen.",
+      internal: "Der Server ist fehlgeschlagen. Bitte später erneut versuchen.",
     },
   },
   tokens: {

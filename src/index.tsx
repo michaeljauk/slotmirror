@@ -481,7 +481,7 @@ app.post("/admin/users/:id/revoke-tokens", async (c) => {
   if (user.role !== "admin") return c.notFound();
   const target = await deletableUser(c.env, user, c.req.param("id"));
   if (!target) return c.notFound();
-  await revokeUserTokens(c.env, { id: target.id, orgId: user.orgId });
+  await revokeUserTokens(c.env, { id: target.id, orgId: user.orgId }, "admin");
   return c.redirect("/admin");
 });
 

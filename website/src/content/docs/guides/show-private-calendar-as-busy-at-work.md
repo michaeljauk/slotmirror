@@ -43,8 +43,9 @@ from a private account to a work account at "Busy". See [Organisations](../../do
 ### Can colleagues see what the appointment is?
 
 No. A block carries the title from **Title of busy blocks**, "Busy" by default. **Mark copies as
-private** is on by default, so colleagues see "Private" instead. The title, the location and the
-attendees of the appointment stay in your private calendar.
+private** is on by default, so colleagues who can open your calendar see "Private" instead.
+Colleagues who only check when you are free see that you are busy. The title, the location and
+the attendees of the appointment stay in your private calendar.
 
 ### Who holds the access to my private calendar?
 

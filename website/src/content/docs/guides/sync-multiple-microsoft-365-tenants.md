@@ -44,8 +44,8 @@ name of the company, so that the overview reads "from Company A to Company B".
 
 ### Do I need admin rights in each tenant?
 
-No. You connect your own account in each tenant. If a tenant blocks user consent, its admin must
-grant consent to the app once. See [Microsoft Entra app](../../docs/entra-setup/).
+Usually not. You connect your own account in each tenant. If a tenant blocks user consent, its
+admin must grant consent to the app once. See [Microsoft Entra app](../../docs/entra-setup/).
 
 ### Can I connect more than two tenants?
 

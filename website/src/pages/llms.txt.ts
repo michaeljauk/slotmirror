@@ -18,7 +18,7 @@ const sections = [
 export const GET: APIRoute = async ({ site }) => {
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const url = (path: string) => new URL(`${base}/${path}`, site).href;
-  const entries = await getCollection("docs");
+  const entries = await getCollection("docs", ({ data }) => !data.draft);
 
   const lines = ["# slotmirror", "", `> ${summary}`, ""];
   for (const { prefix, heading } of sections) {

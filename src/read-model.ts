@@ -1,3 +1,4 @@
+import * as z from "zod/mini";
 import { recentRuleRuns, statusOf, type RecentRun, type SyncRunDetail } from "./audit";
 import { parseRuleOptions } from "./config";
 import { detailLevelFor } from "./detail-policy";
@@ -12,19 +13,25 @@ import { hasWorkingHours } from "./sync/working-hours";
 /** Rules in one answer. A LIMIT without ORDER BY stops the read; a sort would read all rows first. */
 const MAX_LISTED_RULES = 500;
 
-export interface AccountView {
-  id: string;
-  provider: string;
-  email: string;
-  name: string;
-  needsReconnect: boolean;
-  calendars: number;
-}
+/**
+ * The answer shapes. They are strict: the MCP tools publish them as `outputSchema`, and a test
+ * refuses an answer that carries a field outside them.
+ */
+const accountView = z.strictObject({
+  id: z.string(),
+  provider: z.string(),
+  email: z.string(),
+  name: z.string(),
+  needsReconnect: z.boolean(),
+  calendars: z.number(),
+});
+export type AccountView = z.infer<typeof accountView>;
+export const accountsAnswer = z.strictObject({ accounts: z.array(accountView) });
 
 export async function readAccounts(
   db: D1Database,
   userId: string,
-): Promise<{ accounts: AccountView[] }> {
+): Promise<z.infer<typeof accountsAnswer>> {
   const { results } = await db
     .prepare(
       `SELECT a.id, a.provider, a.email, COALESCE(a.display_name, a.email) AS name,
@@ -39,19 +46,23 @@ export async function readAccounts(
   };
 }
 
-export interface RuleView {
-  id: string;
-  source: { accountId: string; calendar: string };
-  target: { accountId: string; calendar: string };
-  enabled: boolean;
+const calendarRef = z.strictObject({ accountId: z.string(), calendar: z.string() });
+
+const ruleView = z.strictObject({
+  id: z.string(),
+  source: calendarRef,
+  target: calendarRef,
+  enabled: z.boolean(),
   /** The level the rule runs with, after the deployment's caps. Null: the options do not parse. */
-  detailLevel: string | null;
-  daysAhead: number | null;
-  bufferBefore: number | null;
-  bufferAfter: number | null;
+  detailLevel: z.nullable(z.string()),
+  daysAhead: z.nullable(z.number()),
+  bufferBefore: z.nullable(z.number()),
+  bufferAfter: z.nullable(z.number()),
   /** Whether a filter is on. Category names can be content themselves, so they stay out. */
-  filters: { categories: boolean; workingHours: boolean } | null;
-}
+  filters: z.nullable(z.strictObject({ categories: z.boolean(), workingHours: z.boolean() })),
+});
+export type RuleView = z.infer<typeof ruleView>;
+export const rulesAnswer = z.strictObject({ rules: z.array(ruleView), truncated: z.boolean() });
 
 function ruleSettings(
   env: Env,
@@ -82,10 +93,7 @@ function ruleSettings(
   }
 }
 
-export async function readRules(
-  env: Env,
-  userId: string,
-): Promise<{ rules: RuleView[]; truncated: boolean }> {
+export async function readRules(env: Env, userId: string): Promise<z.infer<typeof rulesAnswer>> {
   const { results } = await env.DB.prepare(
     `SELECT r.id, r.options, r.enabled,
             sc.account_id AS sourceAccountId, sc.name AS sourceCalendar,
@@ -130,25 +138,37 @@ export async function readRules(
   };
 }
 
-export interface RuleStatusView {
-  ruleId: string;
-  enabled: boolean;
+const ruleStatusView = z.strictObject({
+  ruleId: z.string(),
+  enabled: z.boolean(),
   /** "unknown": no run within the audit rows that one call reads. Never reported as healthy. */
-  state: "ok" | "partial" | "error" | "paused" | "unknown";
-  at: string | null;
-  code?: string;
-  failed?: number;
-  remaining?: number;
-  changes?: { create: number; update: number; delete: number; unchanged: number };
+  state: z.enum(["ok", "partial", "error", "paused", "unknown"]),
+  at: z.nullable(z.string()),
+  code: z.optional(z.string()),
+  failed: z.optional(z.number()),
+  remaining: z.optional(z.number()),
+  changes: z.optional(
+    z.strictObject({
+      create: z.number(),
+      update: z.number(),
+      delete: z.number(),
+      unchanged: z.number(),
+    }),
+  ),
   /**
    * Blocks that the last successful run wanted in the target, inside the rule's sync window. This
    * is the state of that run, not a live count of the calendar. `blocksExact` is true only if the
    * run finished all its work, it is the latest outcome, and the rule still runs.
    */
-  blocks: number | null;
-  blocksExact: boolean;
-  blocksAt: string | null;
-}
+  blocks: z.nullable(z.number()),
+  blocksExact: z.boolean(),
+  blocksAt: z.nullable(z.string()),
+});
+export type RuleStatusView = z.infer<typeof ruleStatusView>;
+export const statusAnswer = z.strictObject({
+  rules: z.array(ruleStatusView),
+  truncated: z.boolean(),
+});
 
 function changesOf(detail: Partial<SyncRunDetail>) {
   return {
@@ -199,7 +219,7 @@ function runRowLimit(rules: number): number {
 export async function readSyncStatus(
   db: D1Database,
   userId: string,
-): Promise<{ rules: RuleStatusView[]; truncated: boolean }> {
+): Promise<z.infer<typeof statusAnswer>> {
   const { results } = await db
     .prepare("SELECT id, enabled FROM rules WHERE user_id = ? LIMIT ?")
     .bind(userId, MAX_LISTED_RULES + 1)

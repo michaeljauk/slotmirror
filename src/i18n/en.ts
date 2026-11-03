@@ -342,6 +342,11 @@ export const en = {
   mcp: {
     instructions:
       "Read-only view of the user's slotmirror deployment. A rule mirrors one direction, from a source calendar to a target calendar. Block counts come from the last sync run, not from the calendar.",
+    titles: {
+      list_accounts: "Connected accounts",
+      list_rules: "Sync rules",
+      get_sync_status: "Sync status",
+    },
     tools: {
       list_accounts: "List the connected calendar accounts and whether one needs reconnecting.",
       list_rules:
@@ -361,7 +366,7 @@ export const en = {
       unexpectedArguments: "This tool takes no arguments.",
       headerMismatch: "The MCP headers are missing or do not match the request body.",
       unsupportedVersion: "This protocol version is not supported.",
-      dailyLimit: "The daily limit of tool calls is reached.",
+      dailyLimit: "The daily limit of tool calls is reached. It resets at 00:00 UTC.",
       toolFailed: "The tool failed. Try again later.",
     },
   },

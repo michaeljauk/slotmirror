@@ -193,8 +193,3 @@ export async function takeToolCall(
     .first<{ calls: number }>();
   return row !== null;
 }
-
-/** Seconds until the daily limit starts again. */
-export function secondsToNextDay(now = Date.now()): number {
-  return Math.ceil((DAY_MS - (now % DAY_MS)) / 1000);
-}

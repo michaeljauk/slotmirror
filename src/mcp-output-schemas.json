@@ -1,0 +1,204 @@
+{
+  "list_accounts": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "accounts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "needsReconnect": {
+              "type": "boolean"
+            },
+            "calendars": {
+              "type": "number"
+            }
+          },
+          "required": ["id", "provider", "email", "name", "needsReconnect", "calendars"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["accounts"],
+    "additionalProperties": false
+  },
+  "list_rules": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "type": "string"
+                },
+                "calendar": {
+                  "type": "string"
+                }
+              },
+              "required": ["accountId", "calendar"],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "type": "string"
+                },
+                "calendar": {
+                  "type": "string"
+                }
+              },
+              "required": ["accountId", "calendar"],
+              "additionalProperties": false
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "detailLevel": {
+              "type": ["string", "null"]
+            },
+            "daysAhead": {
+              "type": ["number", "null"]
+            },
+            "bufferBefore": {
+              "type": ["number", "null"]
+            },
+            "bufferAfter": {
+              "type": ["number", "null"]
+            },
+            "filters": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "categories": {
+                      "type": "boolean"
+                    },
+                    "workingHours": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["categories", "workingHours"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "source",
+            "target",
+            "enabled",
+            "detailLevel",
+            "daysAhead",
+            "bufferBefore",
+            "bufferAfter",
+            "filters"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": ["rules", "truncated"],
+    "additionalProperties": false
+  },
+  "get_sync_status": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "ruleId": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "enum": ["ok", "partial", "error", "paused", "unknown"]
+            },
+            "at": {
+              "type": ["string", "null"]
+            },
+            "code": {
+              "type": "string"
+            },
+            "failed": {
+              "type": "number"
+            },
+            "remaining": {
+              "type": "number"
+            },
+            "changes": {
+              "type": "object",
+              "properties": {
+                "create": {
+                  "type": "number"
+                },
+                "update": {
+                  "type": "number"
+                },
+                "delete": {
+                  "type": "number"
+                },
+                "unchanged": {
+                  "type": "number"
+                }
+              },
+              "required": ["create", "update", "delete", "unchanged"],
+              "additionalProperties": false
+            },
+            "blocks": {
+              "type": ["number", "null"]
+            },
+            "blocksExact": {
+              "type": "boolean"
+            },
+            "blocksAt": {
+              "type": ["string", "null"]
+            }
+          },
+          "required": ["ruleId", "enabled", "state", "at", "blocks", "blocksExact", "blocksAt"],
+          "additionalProperties": false
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": ["rules", "truncated"],
+    "additionalProperties": false
+  }
+}

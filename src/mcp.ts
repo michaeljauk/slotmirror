@@ -1,12 +1,13 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as z from "zod/mini";
-import { authenticateToken, secondsToNextDay, takeToolCall } from "./api-tokens";
+import { authenticateToken, takeToolCall } from "./api-tokens";
 import type { AppEnv } from "./app-env";
 import { errorLogFields } from "./audit";
 import { APP_NAME } from "./brand";
 import { mcpEnabled, setupStatus } from "./config";
 import { i18nFor, type Messages } from "./i18n";
+import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
 import { allowedOrigins } from "./request-guard";
 import type { CurrentUser } from "./users";
@@ -23,7 +24,8 @@ import { buildVersionLabel } from "./version";
  */
 
 const MODERN_VERSION = "2026-07-28";
-const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+// 2025-03-26 is left out: its servers must accept JSON-RPC batches, and this one takes one message.
+const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18"];
 const VERSIONS = [MODERN_VERSION, ...LEGACY_VERSIONS];
 const VERSION_META = "io.modelcontextprotocol/protocolVersion";
 const SERVER_INFO_META = "io.modelcontextprotocol/serverInfo";
@@ -50,6 +52,11 @@ type RequestId = string | number | undefined;
 
 const SERVER_INFO = () => ({ name: APP_NAME, version: buildVersionLabel() ?? "dev" });
 
+/**
+ * `outputSchema` of each tool: JSON Schema 2020-12 of the strict answer shapes in `read-model.ts`.
+ * The file is static, because `z.toJSONSchema` adds 10 KB gzip and CPU to every isolate. A test
+ * fails if the file and the shapes differ.
+ */
 const TOOLS = [
   { name: "list_accounts", run: (env: Env, user: CurrentUser) => readAccounts(env.DB, user.id) },
   { name: "list_rules", run: (env: Env, user: CurrentUser) => readRules(env, user.id) },
@@ -65,7 +72,7 @@ function messages(c: Context<AppEnv>): Messages["mcp"] {
 
 function rpcError(
   c: Context<AppEnv>,
-  status: 200 | 400 | 401 | 403 | 404 | 413 | 429 | 503,
+  status: 200 | 400 | 401 | 403 | 404 | 413 | 503,
   id: RequestId,
   code: number,
   message: string,
@@ -95,9 +102,11 @@ mcp.use("*", async (c, next) => {
   if (!setupStatus(c.env).ready) {
     return rpcError(c, 503, undefined, SERVER_ERROR, t.errors.notReady);
   }
-  const user = await authenticateToken(c.env, c.req.header("authorization"));
+  const authorization = c.req.header("authorization");
+  const user = await authenticateToken(c.env, authorization);
   if (!user) {
-    c.header("WWW-Authenticate", "Bearer");
+    // RFC 6750: a request without credentials gets no error code, a refused token gets one.
+    c.header("WWW-Authenticate", authorization ? 'Bearer error="invalid_token"' : "Bearer");
     return rpcError(c, 401, undefined, SERVER_ERROR, t.errors.unauthorized);
   }
   c.set("user", user);
@@ -196,9 +205,16 @@ function toolList(c: Context<AppEnv>) {
   const t = messages(c);
   return TOOLS.map((tool) => ({
     name: tool.name,
+    title: t.titles[tool.name],
     description: t.tools[tool.name],
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    outputSchema: outputSchemas[tool.name],
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   }));
 }
 
@@ -269,16 +285,15 @@ async function callTool(
   const t = messages(c);
   const tool = TOOLS.find((candidate) => candidate.name === message.params?.name);
   if (!tool) return rpcError(c, 200, message.id, INVALID_PARAMS, t.errors.unknownTool);
+  // Since 2025-11-25, input errors are tool errors: the model reads them and can correct the call.
+  const toolError = (text: string) => respond({ content: [{ type: "text", text }], isError: true });
   const args = message.params?.arguments ?? {};
   if (typeof args !== "object" || args === null || Object.keys(args).length > 0) {
-    return rpcError(c, 200, message.id, INVALID_PARAMS, t.errors.unexpectedArguments);
+    return toolError(t.errors.unexpectedArguments);
   }
   const user = c.get("user");
   if (!user) throw new Error("the MCP route requires a user");
-  if (!(await takeToolCall(c.env.DB, user.id))) {
-    c.header("Retry-After", String(secondsToNextDay()));
-    return rpcError(c, 429, message.id, SERVER_ERROR, t.errors.dailyLimit);
-  }
+  if (!(await takeToolCall(c.env.DB, user.id))) return toolError(t.errors.dailyLimit);
   try {
     const data = await tool.run(c.env, user);
     return respond({
@@ -287,6 +302,6 @@ async function callTool(
     });
   } catch (error) {
     console.error("MCP tool failed", tool.name, ...errorLogFields(error));
-    return respond({ content: [{ type: "text", text: t.errors.toolFailed }], isError: true });
+    return toolError(t.errors.toolFailed);
   }
 }

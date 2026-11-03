@@ -1,7 +1,10 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { fromJSONSchema, type z } from "zod";
+import * as zm from "zod/mini";
 import { createApiToken, DAILY_TOOL_CALLS } from "../src/api-tokens";
+import { accountsAnswer, rulesAnswer, statusAnswer } from "../src/read-model";
 import worker from "../src/index";
 import { addAccount, BASE, signIn } from "./helpers";
 
@@ -146,7 +149,13 @@ describe("access to /mcp", () => {
   it("refuses a request without a token, and points to Bearer", async () => {
     const response = await post({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toContain("Bearer");
+    expect(response.headers.get("www-authenticate")).toBe("Bearer");
+  });
+
+  it("names an invalid token as such, as RFC 6750 asks", async () => {
+    const response = await legacy(`sm_pat_${"b".repeat(43)}`, "tools/list");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"');
   });
 
   it("refuses a session cookie without a token", async () => {
@@ -259,6 +268,26 @@ describe("protocol", () => {
     expect((await rpcBody(response)).result?.protocolVersion).toBe("2025-11-25");
   });
 
+  it("does not offer 2025-03-26, whose servers must take batches", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const init = await post(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t" } },
+      },
+      bearer(token),
+    );
+    expect((await rpcBody(init)).result?.protocolVersion).toBe("2025-11-25");
+    const response = await post(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      { ...bearer(token), "mcp-protocol-version": "2025-03-26" },
+    );
+    expect(response.status).toBe(400);
+    expect((await rpcBody(response)).error?.code).toBe(-32022);
+  });
+
   it("accepts the initialized notification with 202 and no body", async () => {
     const { token } = await tokenFor("owner@example.com");
     const response = await post(
@@ -294,16 +323,73 @@ describe("protocol", () => {
     const { result } = await rpcBody(await modern(token, "tools/list"));
     const tools = result?.tools as {
       name: string;
+      title: string;
       description: string;
-      annotations: { readOnlyHint: boolean };
+      outputSchema: { type: string };
+      annotations: Record<string, boolean>;
     }[];
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_accounts",
       "list_rules",
       "get_sync_status",
     ]);
-    expect(tools.every((tool) => tool.annotations.readOnlyHint)).toBe(true);
+    for (const tool of tools) {
+      expect(tool.title.length).toBeGreaterThan(0);
+      expect(tool.title).not.toBe(tool.name);
+      expect(tool.outputSchema.type).toBe("object");
+      expect(tool.annotations).toEqual({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+    }
     expect(result).toMatchObject({ resultType: "complete", cacheScope: "private" });
+  });
+
+  it("publishes output schemas that equal the answer shapes of the read model", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const { result } = await rpcBody(await modern(token, "tools/list"));
+    const tools = result?.tools as { name: string; outputSchema: unknown }[];
+    const served = Object.fromEntries(tools.map((tool) => [tool.name, tool.outputSchema]));
+    expect(served).toEqual({
+      list_accounts: zm.toJSONSchema(accountsAnswer, { io: "output" }),
+      list_rules: zm.toJSONSchema(rulesAnswer, { io: "output" }),
+      get_sync_status: zm.toJSONSchema(statusAnswer, { io: "output" }),
+    });
+  });
+
+  it("answers each tool with content that its output schema admits, and nothing more", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    const clean = await seedRule(userId, "schema", '{"skipCategories":["x"]}');
+    const failed = await seedRule(userId, "schema2");
+    await addRun(
+      userId,
+      clean,
+      "sync_run",
+      { create: 1, update: 0, delete: 0, unchanged: 2, failed: 1, remaining: 3 },
+      "2036-01-01T00:00:00.000Z",
+    );
+    await addRun(userId, failed, "sync_failed", { code: "503" }, "2036-01-01T00:00:00.000Z");
+    await seedRule(userId, "schema3");
+    await env.DB.prepare("UPDATE rules SET options = '{broken' WHERE id = 'schema3-rule'").run();
+
+    const { result } = await rpcBody(await modern(token, "tools/list"));
+    const tools = result?.tools as { name: string; outputSchema: z.core.JSONSchema.BaseSchema }[];
+    for (const tool of tools) {
+      const schema = fromJSONSchema(tool.outputSchema);
+      const content = await call(token, tool.name);
+      expect(schema.safeParse(content).error).toBeUndefined();
+      // Control: the schema refuses a field that is not part of it, at the top and inside a list.
+      expect(schema.safeParse({ ...content, tenantId: "t" }).success).toBe(false);
+      const [key, list] = Object.entries(content).find(([, value]) => Array.isArray(value)) as [
+        string,
+        object[],
+      ];
+      expect(list.length).toBeGreaterThan(0);
+      const widened = { ...content, [key]: [{ ...list[0], remoteId: "r" }, ...list.slice(1)] };
+      expect(schema.safeParse(widened).success).toBe(false);
+    }
   });
 
   it("gives tool descriptions in the language of Accept-Language", async () => {
@@ -428,15 +514,26 @@ describe("protocol", () => {
     expect((await rpcBody(batch)).error?.code).toBe(-32600);
   });
 
-  it("refuses an unknown tool and unexpected arguments with -32602", async () => {
+  it("refuses an unknown tool with -32602", async () => {
     const { token } = await tokenFor("owner@example.com");
     const unknown = await legacy(token, "tools/call", { name: "delete_event", arguments: {} });
     expect((await rpcBody(unknown)).error?.code).toBe(-32602);
-    const args = await legacy(token, "tools/call", {
+  });
+
+  it("answers unexpected arguments with a tool error the model can read, and no data", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await seedRule(userId, "args");
+    const response = await legacy(token, "tools/call", {
       name: "list_rules",
       arguments: { userId: "someone" },
     });
-    expect((await rpcBody(args)).error?.code).toBe(-32602);
+    expect(response.status).toBe(200);
+    const body = await rpcBody(response);
+    expect(body.error).toBeUndefined();
+    expect(body.result?.isError).toBe(true);
+    expect(body.result?.content?.[0]?.text).toMatch(/argument/i);
+    expect(body.result).not.toHaveProperty("structuredContent");
+    expect(JSON.stringify(body)).not.toContain("args-rule");
   });
 
   it("returns the data as text too, for clients without structured content", async () => {
@@ -800,14 +897,18 @@ describe("daily limit", () => {
     expect(row).toBeNull();
   });
 
-  it("answers 429 at the limit and writes nothing", async () => {
+  it("answers a tool error at the limit, names the reset, and writes nothing", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
+    await seedRule(userId, "limit");
     await env.DB.prepare("INSERT INTO api_usage (user_id, day, calls) VALUES (?, ?, ?)")
       .bind(userId, today(), DAILY_TOOL_CALLS)
       .run();
     const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
-    expect(response.status).toBe(429);
-    expect(Number(response.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(response.status).toBe(200);
+    const body = await rpcBody(response);
+    expect(body.result?.isError).toBe(true);
+    expect(body.result?.content?.[0]?.text).toContain("00:00 UTC");
+    expect(JSON.stringify(body)).not.toContain("limit-rule");
     const row = await env.DB.prepare("SELECT calls FROM api_usage WHERE user_id = ?")
       .bind(userId)
       .first<{ calls: number }>();

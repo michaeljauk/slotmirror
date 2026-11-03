@@ -60,6 +60,12 @@ titles, tenant IDs or tokens.
 
 ## Limits
 
-A user can make 1,000 tool calls per UTC day. After that the endpoint answers `429` with a
-`Retry-After` header. D1 refuses every query of a deployment at its daily limit, also those of the
-sync. This limit keeps an agent in a loop away from that point.
+A user can make 1,000 tool calls per UTC day. After that each call returns a tool error that says
+when the limit resets, so the agent can tell you. D1 refuses every query of a deployment at its
+daily limit, also those of the sync. This limit keeps an agent in a loop away from that point.
+
+## Protocol
+
+The server speaks MCP over Streamable HTTP, revisions 2026-07-28, 2025-11-25 and 2025-06-18. Each
+request gets one JSON answer, without a session. Every tool publishes an `outputSchema`, and its
+answer matches it.

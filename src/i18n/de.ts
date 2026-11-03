@@ -344,6 +344,11 @@ export const de: Messages = {
   mcp: {
     instructions:
       "Lesende Sicht auf die slotmirror-Instanz des Nutzers. Eine Regel spiegelt eine Richtung, von einem Quellkalender in einen Zielkalender. Blockzahlen stammen aus dem letzten Sync-Lauf, nicht aus dem Kalender.",
+    titles: {
+      list_accounts: "Verbundene Konten",
+      list_rules: "Sync-Regeln",
+      get_sync_status: "Sync-Status",
+    },
     tools: {
       list_accounts:
         "Listet die verbundenen Kalenderkonten und zeigt, ob eines neu verbunden werden muss.",
@@ -364,7 +369,7 @@ export const de: Messages = {
       unexpectedArguments: "Dieses Tool nimmt keine Argumente an.",
       headerMismatch: "Die MCP-Header fehlen oder passen nicht zum Body.",
       unsupportedVersion: "Diese Protokollversion wird nicht unterstützt.",
-      dailyLimit: "Das Tageslimit für Tool-Aufrufe ist erreicht.",
+      dailyLimit: "Das Tageslimit für Tool-Aufrufe ist erreicht. Es beginnt um 00:00 UTC neu.",
       toolFailed: "Das Tool ist fehlgeschlagen. Bitte später erneut versuchen.",
     },
   },

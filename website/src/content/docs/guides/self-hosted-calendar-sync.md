@@ -16,7 +16,7 @@ Cloudflare account. There is no slotmirror service between your calendars and yo
 - **The account data.** The email address of each user, the names of the calendars and, for
   Microsoft accounts, the tenant ID and the object ID.
 - **The rules and the activity log.** The log has times, counts and error codes, and no event
-  content.
+  content. Entries older than 90 days are deleted.
 - **No event content.** Titles, descriptions, locations and attendees are read during a sync and
   kept only in memory. They are not written to the database. One exception: if blocks cannot be
   removed, their title stays for 90 days, so that someone can delete them by hand. See
@@ -57,8 +57,9 @@ see. Members see this notice before they connect an account. See
 [Settings reference](../../docs/settings/).
 
 To limit sign-in to your tenant, you need three settings together. See
-[Limit who signs in](../../docs/organisations/#limit-who-signs-in). An admin can also cap the
-detail between work and private calendars.
+[Limit who signs in](../../docs/organisations/#limit-who-signs-in). An admin can also cap how much
+detail moves between org accounts and other accounts. See
+[Org accounts and detail caps](../../docs/organisations/#org-accounts-and-detail-caps).
 
 ## Related guides
 

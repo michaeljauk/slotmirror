@@ -1,4 +1,6 @@
 // @ts-check
+import { readdirSync } from "node:fs";
+import sitemap from "@astrojs/sitemap";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import { previewAlt, previewHeight, previewWidth, repo } from "./src/site.ts";
@@ -20,13 +22,46 @@ const head = [
   { tag: "meta", attrs: { name: "twitter:image:alt", content: previewAlt } },
 ];
 
+// English lives at the root. For another locale, only the pages under src/content/docs/<locale>/
+// are translated. For every other page, Starlight builds an English fallback under /<locale>/;
+// src/route-data.ts marks those noindex, and the sitemap leaves them out.
+const locales = {
+  root: { label: "English", lang: "en" },
+  de: { label: "Deutsch", lang: "de" },
+};
+const translations = Object.keys(locales).filter((locale) => locale !== "root");
+const translated = new Set(
+  translations.flatMap((locale) =>
+    readdirSync(new URL(`./src/content/docs/${locale}/`, import.meta.url), { recursive: true })
+      .map(String)
+      .filter((file) => /\.mdx?$/.test(file))
+      .map((file) =>
+        file
+          .replaceAll("\\", "/")
+          .replace(/\.mdx?$/, "")
+          .replace(/(^|\/)index$/, ""),
+      )
+      .map((page) => (page ? `${locale}/${page}` : locale)),
+  ),
+);
+
 export default defineConfig({
   site,
   base,
   output: "static",
   integrations: [
+    // Starlight adds this integration itself unless the config has it. It is here for the filter.
+    sitemap({
+      filter: (page) => {
+        const path = new URL(page).pathname.slice(base.length).replace(/^\/|\/$/g, "");
+        const locale = translations.find((code) => path === code || path.startsWith(`${code}/`));
+        return !locale || translated.has(path);
+      },
+    }),
     starlight({
       title: "slotmirror",
+      defaultLocale: "root",
+      locales,
       description:
         "Stop getting double-booked across Microsoft 365 and Google calendars. By default only Busy leaves a calendar. Self-hosted on Cloudflare Workers, free plan.",
       logo: {
@@ -45,6 +80,7 @@ export default defineConfig({
       sidebar: [
         {
           label: "Start here",
+          translations: { de: "Erste Schritte" },
           items: [
             { label: "Introduction", slug: "docs/introduction" },
             { label: "Quickstart", slug: "docs/quickstart" },
@@ -52,6 +88,7 @@ export default defineConfig({
         },
         {
           label: "Set up",
+          translations: { de: "Einrichten" },
           items: [
             { label: "Settings reference", slug: "docs/settings" },
             { label: "Microsoft Entra app", slug: "docs/entra-setup" },
@@ -63,6 +100,7 @@ export default defineConfig({
         },
         {
           label: "Teams and privacy",
+          translations: { de: "Teams und Datenschutz" },
           items: [
             { label: "Privacy and data location", slug: "docs/privacy" },
             { label: "Organisations", slug: "docs/organisations" },
@@ -70,6 +108,7 @@ export default defineConfig({
         },
         {
           label: "Reference",
+          translations: { de: "Referenz" },
           items: [
             { label: "Limits", slug: "docs/limits" },
             { label: "Troubleshooting", slug: "docs/troubleshooting" },
@@ -77,7 +116,11 @@ export default defineConfig({
             { label: "Local development and load tests", slug: "docs/development" },
           ],
         },
-        { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
+        {
+          label: "Guides",
+          translations: { de: "Anleitungen" },
+          items: [{ autogenerate: { directory: "guides" } }],
+        },
         { label: "Changelog", link: "/changelog/" },
       ],
     }),

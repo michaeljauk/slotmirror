@@ -1,16 +1,23 @@
 // @ts-check
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import { previewAlt, previewHeight, previewWidth, repo } from "./src/site.ts";
 
-const repo = "https://github.com/michaeljauk/slotmirror";
 // The only place that sets where the site lives. Pages build links from these two values.
 const site = "https://slotmirror.com";
 const base = "";
 
+const previewImage = `${site}${base}/social-preview.png`;
+
 /** @type {import("@astrojs/starlight/types").StarlightUserConfig["head"]} */
 const head = [
-  { tag: "meta", attrs: { property: "og:image", content: `${site}${base}/social-preview.png` } },
+  { tag: "meta", attrs: { property: "og:image", content: previewImage } },
+  { tag: "meta", attrs: { property: "og:image:width", content: previewWidth } },
+  { tag: "meta", attrs: { property: "og:image:height", content: previewHeight } },
+  { tag: "meta", attrs: { property: "og:image:alt", content: previewAlt } },
   { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
+  { tag: "meta", attrs: { name: "twitter:image", content: previewImage } },
+  { tag: "meta", attrs: { name: "twitter:image:alt", content: previewAlt } },
 ];
 
 export default defineConfig({
@@ -31,6 +38,7 @@ export default defineConfig({
       favicon: "/favicon.svg",
       head,
       components: { Head: "./src/components/Head.astro" },
+      routeMiddleware: "./src/route-data.ts",
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/website/` },
       customCss: ["./src/styles/custom.css"],

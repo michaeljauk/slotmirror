@@ -34,10 +34,11 @@ export function countingRows(db: D1Database): { db: D1Database; rows: () => numb
     });
   const counted = new Proxy(db, {
     get(target, key) {
-      // `batch` is left out on purpose: D1 may refuse statements that are proxies, and the read
-      // model sends no batch. A test fails if it ever does.
+      // The read model sends no batch, `exec` or session. They would read uncounted, so they fail.
       if (key === "prepare") return (sql: string) => wrapStatement(target.prepare(sql));
-      if (key === "batch") throw new Error("countingRows does not support batch");
+      if (key === "batch" || key === "exec" || key === "withSession") {
+        throw new Error(`countingRows does not count ${String(key)}`);
+      }
       const value: unknown = Reflect.get(target, key);
       return typeof value === "function" ? value.bind(target) : value;
     },

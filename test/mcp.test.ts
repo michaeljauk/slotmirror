@@ -3,7 +3,16 @@ import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fromJSONSchema, type z } from "zod";
 import * as zm from "zod/mini";
-import { createApiToken, DAILY_TOOL_CALLS, DEPLOYMENT_DAILY_ROWS } from "../src/api-tokens";
+import {
+  createApiToken,
+  DAILY_TOOL_CALLS,
+  DEPLOYMENT_DAILY_CALLS,
+  DEPLOYMENT_DAILY_ROWS,
+  RESERVED_ROWS,
+  reserveToolCall,
+  USER_DAILY_ROWS,
+  settleToolCall,
+} from "../src/api-tokens";
 import { accountsAnswer, rulesAnswer, statusAnswer } from "../src/read-model";
 import worker from "../src/index";
 import { addAccount, BASE, signIn } from "./helpers";
@@ -158,8 +167,8 @@ async function statusOf(token: string, ruleId: string) {
 // Tests of a file share one database, and each test expects its users without tokens and rules.
 beforeEach(async () => {
   await env.DB.batch(
-    ["api_tokens", "api_usage", "rules", "accounts", "audit_events"].map((table) =>
-      env.DB.prepare(`DELETE FROM ${table}`),
+    ["api_tokens", "api_usage", "api_usage_total", "rules", "accounts", "audit_events"].map(
+      (table) => env.DB.prepare(`DELETE FROM ${table}`),
     ),
   );
 });
@@ -288,6 +297,39 @@ describe("access to /mcp", () => {
     });
     expect(own.status).toBe(200);
   });
+
+  it("stops reading an endless body when the database fails before the size check", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const failing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "prepare") {
+          return () => {
+            throw new Error("D1_ERROR: daily limit");
+          };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    const chunk = new TextEncoder().encode(" ".repeat(16 * 1024));
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+      },
+    });
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request(`${BASE}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...bearer(token) },
+        body: endless,
+      }),
+      { ...env, DB: failing },
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(500);
+    expect(((await response.json()) as RpcBody).error?.code).toBe(-32603);
+  }, 10_000);
 
   it("answers a JSON-RPC error, not an HTML page, if the database fails", async () => {
     const { token } = await tokenFor("owner@example.com");
@@ -616,6 +658,21 @@ describe("protocol", () => {
     expect(error?.data?.supported).toContain(MODERN);
   });
 
+  it("echoes only a string as the requested version", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    const response = await post(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { _meta: { "io.modelcontextprotocol/protocolVersion": 5 } },
+      },
+      { ...bearer(token), "mcp-protocol-version": "5", "mcp-method": "tools/list" },
+    );
+    expect(response.status).toBe(400);
+    expect((await rpcBody(response)).error?.data).not.toHaveProperty("requested");
+  });
+
   it("refuses an unknown version in the header of a legacy request", async () => {
     const { token } = await tokenFor("owner@example.com");
     const response = await post(
@@ -925,6 +982,29 @@ describe("tools", () => {
     expect(await statusOf(token, ruleId)).toMatchObject({ state: "paused" });
   });
 
+  it("shows a rule as stale once its last run is older than the alert window", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    const old = await seedRule(userId, "old");
+    const fresh = await seedRule(userId, "fresh");
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+    await addRun(userId, old, "sync_run", { unchanged: 2 }, hoursAgo(4));
+    await addRun(userId, fresh, "sync_run", { unchanged: 2 }, hoursAgo(1));
+    expect(await statusOf(token, old)).toMatchObject({
+      state: "stale",
+      blocks: 2,
+      blocksExact: false,
+    });
+    expect(await statusOf(token, fresh)).toMatchObject({ state: "ok", blocksExact: true });
+  });
+
+  it("keeps an old failure an error, not stale", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    const ruleId = await seedRule(userId, "oldfail");
+    const at = new Date(Date.now() - 5 * 3_600_000).toISOString();
+    await addRun(userId, ruleId, "sync_failed", { code: "503" }, at);
+    expect(await statusOf(token, ruleId)).toMatchObject({ state: "error", code: "503" });
+  });
+
   it("shows a rule without a run in reach as unknown, never as ok", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
     const ruleId = await seedRule(userId, "none");
@@ -1091,7 +1171,29 @@ describe("daily limit", () => {
     const last = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
     expect((await rpcBody(last)).result?.isError).toBeUndefined();
     const next = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
-    expect((await rpcBody(next)).result?.isError).toBe(true);
+    const refused = await rpcBody(next);
+    expect(refused.result?.isError).toBe(true);
+    expect(refused.result?.content?.[0]?.text).toBe(
+      "Your daily limit for tool calls is reached. It resets at 00:00 UTC.",
+    );
+    // The refused call left the deployment's row as the allowed one settled it.
+    const total = await env.DB.prepare("SELECT calls FROM api_usage_total WHERE day = ?")
+      .bind(today())
+      .first<{ calls: number }>();
+    expect(total?.calls).toBe(1);
+  });
+
+  it("stops one user at a fifth of the deployment's rows, so that others can still call", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await env.DB.prepare(
+      "INSERT INTO api_usage (user_id, day, calls, rows_read) VALUES (?, ?, 1, ?)",
+    )
+      .bind(userId, today(), USER_DAILY_ROWS)
+      .run();
+    const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    const text = (await rpcBody(response)).result?.content?.[0]?.text ?? "";
+    expect(text).toBe("Your daily budget of database rows is used up. It resets at 00:00 UTC.");
+    expect(USER_DAILY_ROWS * 5).toBe(DEPLOYMENT_DAILY_ROWS);
   });
 
   it("counts tool calls and starts again on a new day", async () => {
@@ -1110,16 +1212,12 @@ describe("daily limit", () => {
 
   it("stops every user once the deployment's calls read their daily rows, and writes nothing", async () => {
     const { token, userId } = await tokenFor("owner@example.com");
-    // Ten other users read the deployment's budget, one row short of it.
-    const share = DEPLOYMENT_DAILY_ROWS / 10;
-    for (let i = 1; i <= 10; i++) {
-      const { user } = await signIn(`share${i}@org.example`);
-      await env.DB.prepare(
-        "INSERT INTO api_usage (user_id, day, calls, rows_read) VALUES (?, ?, 1, ?)",
-      )
-        .bind(user.id, today(), i === 10 ? share - 1 : share)
-        .run();
-    }
+    // Other users' calls read the deployment's budget, one row short of it.
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO api_usage_total (day, calls, rows_read) VALUES (?, ?, ?)",
+    )
+      .bind(today(), 10, DEPLOYMENT_DAILY_ROWS - 1)
+      .run();
     const first = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
     expect((await rpcBody(first)).result?.isError).toBeUndefined();
     const second = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
@@ -1128,6 +1226,221 @@ describe("daily limit", () => {
       .bind(userId)
       .first<{ calls: number }>();
     expect(row?.calls).toBe(1);
+    // The refused call left the deployment's row alone too: ten seeded calls and the one allowed.
+    const total = await env.DB.prepare("SELECT calls FROM api_usage_total WHERE day = ?")
+      .bind(today())
+      .first<{ calls: number }>();
+    expect(total?.calls).toBe(11);
+  });
+
+  it("reserves the rows of a call before it reads, so that a call that dies stays charged", async () => {
+    const { token, userId } = await tokenFor("owner@example.com");
+    await seedRule(userId, "reserve");
+    let seen = -1;
+    const watching = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("FROM rules r")) {
+              // The tool's first read: the reservation must already stand.
+              return {
+                bind: () => ({
+                  all: async () => {
+                    const row = await target
+                      .prepare("SELECT rows_read AS n FROM api_usage WHERE user_id = ?")
+                      .bind(userId)
+                      .first<{ n: number }>();
+                    seen = row?.n ?? 0;
+                    throw new Error("the invocation ends here");
+                  },
+                }),
+              };
+            }
+            return target.prepare(sql);
+          };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    await postWith(
+      { DB: watching },
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "list_rules", arguments: {} },
+      },
+      { ...bearer(token), "mcp-protocol-version": "2025-11-25" },
+    );
+    expect(seen).toBeGreaterThanOrEqual(RESERVED_ROWS);
+  });
+
+  it("counts a reservation at once: a second check before any read sees it", async () => {
+    const first = await signIn("first@org.example");
+    const second = await signIn("second@org.example");
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO api_usage_total (day, calls, rows_read) VALUES (?, ?, ?)",
+    )
+      .bind(today(), 1, DEPLOYMENT_DAILY_ROWS - 1)
+      .run();
+    // Two calls that check before either has read: only the first may pass.
+    expect((await reserveToolCall(env.DB, first.user.id)).outcome).toBe("ok");
+    expect((await reserveToolCall(env.DB, second.user.id)).outcome).toBe("deployment");
+  });
+
+  it("names the deployment's budget, not the user's limit, when the budget stops a call", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO api_usage_total (day, calls, rows_read) VALUES (?, ?, ?)",
+    )
+      .bind(today(), 1, DEPLOYMENT_DAILY_ROWS)
+      .run();
+    const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    const text = (await rpcBody(response)).result?.content?.[0]?.text ?? "";
+    expect(text).toContain("deployment");
+    expect(text).toContain("00:00 UTC");
+  });
+
+  it("stops all users at the deployment's daily calls, which bounds the writes", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO api_usage_total (day, calls, rows_read) VALUES (?, ?, ?)",
+    )
+      .bind(today(), DEPLOYMENT_DAILY_CALLS, 0)
+      .run();
+    const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
+    expect((await rpcBody(response)).result?.content?.[0]?.text).toContain("deployment");
+  });
+
+  it("writes four rows per call: the user's and the deployment's row, reserved and settled", async () => {
+    const { token } = await tokenFor("owner@example.com");
+    await call(token, "list_accounts");
+    let written = 0;
+    const counting = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "batch") {
+          return async (statements: D1PreparedStatement[]) => {
+            const results = await target.batch(statements);
+            for (const result of results) written += result.meta.rows_written;
+            return results;
+          };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    await postWith(
+      { DB: counting },
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "list_accounts", arguments: {} },
+      },
+      { ...bearer(token), "mcp-protocol-version": "2025-11-25" },
+    );
+    expect(written).toBe(4);
+  });
+
+  it("settles a call on the day it reserved, also after midnight", async () => {
+    const { user } = await signIn("midnight@org.example");
+    const before = Date.parse("2036-03-01T23:59:59.900Z");
+    const after = Date.parse("2036-03-02T00:00:00.100Z");
+    // Call A reserves before midnight, call B after it, then A settles.
+    const reservation = await reserveToolCall(env.DB, user.id, before);
+    expect(reservation).toEqual({ outcome: "ok", day: "2036-03-01" });
+    expect(await reserveToolCall(env.DB, user.id, after)).toEqual({
+      outcome: "ok",
+      day: "2036-03-02",
+    });
+    await settleToolCall(env.DB, user.id, "2036-03-01", 7);
+    const row = await env.DB.prepare("SELECT day, rows_read AS n FROM api_usage WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ day: string; n: number }>();
+    // The late settlement of day 1 must not touch the user's reservation of day 2.
+    expect(row).toEqual({ day: "2036-03-02", n: RESERVED_ROWS });
+    const totals = await env.DB.prepare(
+      "SELECT day, rows_read AS n FROM api_usage_total WHERE day IN ('2036-03-01', '2036-03-02') ORDER BY day",
+    ).all<{ day: string; n: number }>();
+    expect(totals.results).toEqual([
+      { day: "2036-03-01", n: 7 },
+      { day: "2036-03-02", n: RESERVED_ROWS },
+    ]);
+  });
+
+  it("never moves a user's row back to an earlier day", async () => {
+    const { user } = await signIn("late@org.example");
+    const before = Date.parse("2036-04-01T23:59:59.950Z");
+    const after = Date.parse("2036-04-02T00:00:00.050Z");
+    // Call B after midnight reaches D1 first; call A from before midnight arrives late.
+    expect((await reserveToolCall(env.DB, user.id, after)).outcome).toBe("ok");
+    expect((await reserveToolCall(env.DB, user.id, before)).outcome).toBe("day");
+    const row = await env.DB.prepare("SELECT day, calls FROM api_usage WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ day: string; calls: number }>();
+    expect(row).toEqual({ day: "2036-04-02", calls: 1 });
+  });
+
+  it("reads a handful of rows to reserve or refuse, however many users called today", async () => {
+    const { user } = await signIn("reader@org.example");
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+       INSERT INTO users (id, org_id, email, role)
+       SELECT 'many-' || i, 'default', 'many' || i || '@org.example', 'member' FROM n`,
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO api_usage (user_id, day, calls, rows_read)
+       SELECT id, ?, 1, 10 FROM users WHERE id GLOB 'many-*'`,
+    )
+      .bind(today())
+      .run();
+    let rowsRead = 0;
+    const counting = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "batch") {
+          return async (statements: D1PreparedStatement[]) => {
+            const results = await target.batch(statements);
+            for (const result of results) rowsRead += result.meta.rows_read;
+            return results;
+          };
+        }
+        if (key === "prepare") {
+          return (sql: string) => {
+            const statement = target.prepare(sql);
+            return new Proxy(statement, {
+              get(inner, method) {
+                if (method !== "bind") return Reflect.get(inner, method);
+                return (...values: unknown[]) => {
+                  const bound = inner.bind(...values);
+                  return new Proxy(bound, {
+                    get(b, m) {
+                      if (m === "first") {
+                        return async () => {
+                          const result = await b.all();
+                          rowsRead += result.meta.rows_read;
+                          return result.results[0] ?? null;
+                        };
+                      }
+                      return Reflect.get(b, m);
+                    },
+                  });
+                };
+              },
+            });
+          };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    expect((await reserveToolCall(counting, user.id)).outcome).toBe("ok");
+    expect(rowsRead).toBeLessThan(15);
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO api_usage_total (day, calls, rows_read) VALUES (?, ?, ?)",
+    )
+      .bind(today(), 1, DEPLOYMENT_DAILY_ROWS)
+      .run();
+    rowsRead = 0;
+    expect((await reserveToolCall(counting, user.id)).outcome).toBe("deployment");
+    expect(rowsRead).toBeLessThan(15);
   });
 
   it("records the rows a call read, more for a costly call than for a cheap one", async () => {
@@ -1158,11 +1471,10 @@ describe("daily limit", () => {
 
   it("counts rows of earlier days not toward the deployment's budget", async () => {
     const { token } = await tokenFor("owner@example.com");
-    const { user } = await signIn("yesterday@org.example");
     await env.DB.prepare(
-      "INSERT INTO api_usage (user_id, day, calls, rows_read) VALUES (?, '2020-01-01', 1, ?)",
+      "INSERT OR REPLACE INTO api_usage_total (day, calls, rows_read) VALUES (?, ?, ?)",
     )
-      .bind(user.id, DEPLOYMENT_DAILY_ROWS)
+      .bind("2020-01-01", DEPLOYMENT_DAILY_CALLS, DEPLOYMENT_DAILY_ROWS)
       .run();
     const response = await modern(token, "tools/call", { name: "list_rules", arguments: {} });
     expect((await rpcBody(response)).result?.isError).toBeUndefined();

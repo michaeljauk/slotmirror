@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as z from "zod/mini";
-import { authenticateToken, mayCallTool, recordToolCall } from "./api-tokens";
+import { authenticateToken, reserveToolCall, settleToolCall } from "./api-tokens";
 import type { AppEnv } from "./app-env";
 import { errorLogFields } from "./audit";
 import { APP_NAME } from "./brand";
@@ -31,8 +31,8 @@ const VERSION_META = "io.modelcontextprotocol/protocolVersion";
 const SERVER_INFO_META = "io.modelcontextprotocol/serverInfo";
 
 const MAX_BODY_BYTES = 64 * 1024;
-/** Rows that the token check and the limit check read, about, charged to every call. */
-const CHECK_ROWS = 5;
+/** Rows that the token check and the reservation read, about, charged to every call. */
+const CHECK_ROWS = 8;
 const CACHE_TTL_MS = 3_600_000;
 
 const PARSE_ERROR = -32700;
@@ -113,16 +113,40 @@ function mcpOrigins(c: Context<AppEnv>): string[] {
   }
 }
 
+/** The body as text if it ends within `MAX_BODY_BYTES`, or null. Reads no more than that. */
+async function readCapped(request: Request): Promise<string | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 // A failure of D1 or of the code reaches the client as JSON-RPC, never as the app's HTML page.
 mcp.onError(async (error, c) => {
   console.error("MCP request failed", ...errorLogFields(error));
-  // Parse the body only within the route's own size limit: D1 at its daily limit fails every
-  // request before `bodyLimit` runs, and a large body must not cost CPU then.
+  // Read the body only within the route's own size limit: D1 at its daily limit fails every
+  // request before `bodyLimit` runs, and a large or endless body must not cost CPU then.
   let id: RequestId;
   try {
-    const declared = Number(c.req.header("content-length") ?? 0);
-    const text = declared <= MAX_BODY_BYTES ? await c.req.text() : "";
-    id = text !== "" && text.length <= MAX_BODY_BYTES ? readableId(JSON.parse(text)) : undefined;
+    const text = c.req.raw.bodyUsed ? await c.req.text() : await readCapped(c.req.raw);
+    id = text && text.length <= MAX_BODY_BYTES ? readableId(JSON.parse(text)) : undefined;
   } catch {
     id = undefined;
   }
@@ -187,7 +211,8 @@ mcp.post(
       if (requested !== MODERN_VERSION) {
         return rpcError(c, 400, message.id, UNSUPPORTED_VERSION, t.errors.unsupportedVersion, {
           supported: VERSIONS,
-          requested,
+          // The schema types `requested` as a string; echo nothing else.
+          ...(typeof requested === "string" ? { requested } : {}),
         });
       }
       if (!modernHeadersMatch(c, header, message)) {
@@ -338,7 +363,16 @@ async function callTool(
   }
   const user = c.get("user");
   if (!user) throw new Error("the MCP route requires a user");
-  if (!(await mayCallTool(c.env.DB, user.id))) return toolError(t.errors.dailyLimit);
+  const reserved = await reserveToolCall(c.env.DB, user.id);
+  if (reserved.outcome !== "ok") {
+    const refusal = {
+      user: t.errors.dailyLimit,
+      userRows: t.errors.userRowLimit,
+      deployment: t.errors.deploymentLimit,
+      day: t.errors.dayChanged,
+    }[reserved.outcome];
+    return toolError(refusal);
+  }
   const counted = countingRows(c.env.DB);
   try {
     const data = await tool.run({ ...c.env, DB: counted.db }, user);
@@ -351,7 +385,8 @@ async function callTool(
     return toolError(t.errors.toolFailed);
   } finally {
     // A failed count must not cost the user an answer that is ready.
-    await recordToolCall(c.env.DB, user.id, counted.rows() + CHECK_ROWS).catch((error: unknown) => {
+    const rows = counted.rows() + CHECK_ROWS;
+    await settleToolCall(c.env.DB, user.id, reserved.day, rows).catch((error: unknown) => {
       console.error("MCP usage count failed", ...errorLogFields(error));
     });
   }

@@ -369,7 +369,12 @@ export const de: Messages = {
       unexpectedArguments: "Dieses Tool nimmt keine Argumente an.",
       headerMismatch: "Die MCP-Header fehlen oder passen nicht zum Body.",
       unsupportedVersion: "Diese Protokollversion wird nicht unterstützt.",
-      dailyLimit: "Das Tageslimit für Tool-Aufrufe ist erreicht. Es beginnt um 00:00 UTC neu.",
+      dailyLimit: "Dein Tageslimit für Tool-Aufrufe ist erreicht. Es beginnt um 00:00 UTC neu.",
+      userRowLimit:
+        "Dein Tagesbudget an Datenbankzeilen ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
+      dayChanged: "Der UTC-Tag hat während dieses Aufrufs gewechselt. Ruf das Tool erneut auf.",
+      deploymentLimit:
+        "Das Tagesbudget dieser Instanz für Agent-Aufrufe ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
       toolFailed: "Das Tool ist fehlgeschlagen. Bitte später erneut versuchen.",
       internal: "Der Server ist fehlgeschlagen. Bitte später erneut versuchen.",
     },
@@ -411,7 +416,7 @@ export const de: Messages = {
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
       "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
-      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe am Tag deines letzten Aufrufs.",
+      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe und der Datenbankzeilen, die sie gelesen haben, am Tag deines letzten Aufrufs.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:

@@ -25,3 +25,11 @@ CREATE TABLE api_usage (
   calls INTEGER NOT NULL DEFAULT 0,
   rows_read INTEGER NOT NULL DEFAULT 0 -- D1 rows the user's calls read that day
 );
+
+-- The deployment's calls and rows per UTC day, one row a day. The budget check reads this row
+-- instead of summing the users' rows. Rows of past days stay; there is one per day.
+CREATE TABLE api_usage_total (
+  day TEXT PRIMARY KEY,
+  calls INTEGER NOT NULL DEFAULT 0,
+  rows_read INTEGER NOT NULL DEFAULT 0
+);

@@ -29,8 +29,9 @@ export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
- * Endpoints that providers and API clients call server to server. They authenticate with their own
- * secret (a client state, a channel token or a bearer token), never with the session cookie.
+ * Endpoints that providers call server to server. They authenticate with their own secret (a
+ * client state or a channel token), never with the session cookie. `/mcp` needs no entry: it is
+ * mounted before this guard runs and checks its own Origin.
  */
 const SERVER_TO_SERVER = [/^\/webhooks\//];
 

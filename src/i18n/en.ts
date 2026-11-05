@@ -366,7 +366,11 @@ export const en = {
       unexpectedArguments: "This tool takes no arguments.",
       headerMismatch: "The MCP headers are missing or do not match the request body.",
       unsupportedVersion: "This protocol version is not supported.",
-      dailyLimit: "The daily limit of tool calls is reached. It resets at 00:00 UTC.",
+      dailyLimit: "Your daily limit for tool calls is reached. It resets at 00:00 UTC.",
+      userRowLimit: "Your daily budget of database rows is used up. It resets at 00:00 UTC.",
+      dayChanged: "The UTC day changed during this call. Call the tool again.",
+      deploymentLimit:
+        "This deployment's daily budget for agent calls is used up. It resets at 00:00 UTC.",
       toolFailed: "The tool failed. Try again later.",
       internal: "The server failed. Try again later.",
     },
@@ -408,7 +412,7 @@ export const en = {
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
       "A session cookie and a language cookie in your browser.",
-      "If you create an API token: a hash of it, its last four characters, its name and when it was last used. For agents: the number of tool calls on the day of your last call.",
+      "If you create an API token: a hash of it, its last four characters, its name and when it was last used. For agents: the number of tool calls and the database rows they read, on the day of your last call.",
     ],
     notStoredTitle: "What is not stored",
     notStored:

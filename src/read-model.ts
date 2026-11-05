@@ -1,4 +1,5 @@
 import * as z from "zod/mini";
+import { SILENT_RULE_MS } from "./alerts";
 import { recentRuleRuns, statusOf, type RecentRun, type SyncRunDetail } from "./audit";
 import { parseRuleOptions } from "./config";
 import { detailLevelResolver } from "./detail-policy";
@@ -156,10 +157,11 @@ const ruleStatusView = z.strictObject({
   enabled: z.boolean(),
   /**
    * "paused": the rule is off. "reconnect": an account of the rule needs reconnecting, so the
-   * rule does not run. "unknown": no run within the audit rows that one call reads. Neither
-   * "reconnect" nor "unknown" is ever reported as healthy.
+   * rule does not run. "stale": the last outcome was fine but is older than the window of the run
+   * alerts, so the rule stopped without an error. "unknown": no run within the audit rows that one
+   * call reads. None of these is ever reported as healthy.
    */
-  state: z.enum(["ok", "partial", "error", "paused", "reconnect", "unknown"]),
+  state: z.enum(["ok", "partial", "error", "paused", "reconnect", "stale", "unknown"]),
   at: z.nullable(z.string()),
   code: z.optional(z.string()),
   failed: z.optional(z.number()),
@@ -200,6 +202,7 @@ function ruleStatus(
   rule: { id: string; enabled: boolean; stalled: boolean },
   latest: RecentRun | undefined,
   lastRun: RecentRun | undefined,
+  now: number,
 ): RuleStatusView {
   // An aborted run ended at a platform limit and wrote no result: it counts as a failure.
   const aborted = latest?.kind === "sync_run_aborted";
@@ -212,13 +215,18 @@ function ruleStatus(
         : latest.kind === "sync_run_aborted"
           ? "error"
           : statusOf({ ...latest, kind: latest.kind }).state;
+  // A sync that stops without an error writes nothing: no failure, no abort. Only age shows it.
+  const stale =
+    (state === "ok" || state === "partial") &&
+    latest !== undefined &&
+    now - Date.parse(latest.createdAt) > SILENT_RULE_MS;
   const changes = lastRun ? changesOf(lastRun.detail) : undefined;
   const remaining = latest?.detail.remaining ?? 0;
   const failed = latest?.detail.failed ?? 0;
   return {
     ruleId: rule.id,
     enabled: rule.enabled,
-    state,
+    state: stale ? "stale" : state,
     at: latest?.createdAt ?? null,
     ...(aborted ? { code: "aborted" } : latest?.detail.code ? { code: latest.detail.code } : {}),
     ...(failed > 0 ? { failed } : {}),
@@ -228,6 +236,7 @@ function ruleStatus(
     blocksExact:
       rule.enabled &&
       !rule.stalled &&
+      !stale &&
       latest !== undefined &&
       latest === lastRun &&
       latest.kind === "sync_run" &&
@@ -245,6 +254,7 @@ function runRowLimit(rules: number): number {
 export async function readSyncStatus(
   db: D1Database,
   userId: string,
+  now = Date.now(),
 ): Promise<z.infer<typeof statusAnswer>> {
   // A rule does not run while its source or target account needs reconnecting: the sync skips it,
   // and writes no audit row that would show it.
@@ -275,6 +285,7 @@ export async function readSyncStatus(
         { id: rule.id, enabled: rule.enabled === 1, stalled: rule.stalled === 1 },
         latest.get(rule.id),
         lastRun.get(rule.id),
+        now,
       ),
     ),
   };

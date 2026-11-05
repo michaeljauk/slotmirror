@@ -178,7 +178,7 @@
             },
             "state": {
               "type": "string",
-              "enum": ["ok", "partial", "error", "paused", "reconnect", "unknown"]
+              "enum": ["ok", "partial", "error", "paused", "reconnect", "stale", "unknown"]
             },
             "at": {
               "anyOf": [

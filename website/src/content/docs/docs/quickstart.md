@@ -47,7 +47,7 @@ bytes, so do not change the number 32.
 
 ## 2. Deploy with the button
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/slotmirror/slotmirror)
 
 The button creates the Worker, the D1 database and the Durable Object in your account. In its form:
 
@@ -130,7 +130,7 @@ When the block appears, the setup works.
 You need Node 22 and pnpm 10.
 
 ```sh
-git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
+git clone https://github.com/slotmirror/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU

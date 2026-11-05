@@ -32,7 +32,7 @@ yourself.
 1. In a clone of your repository, add the slotmirror repository as a remote:
 
    ```sh
-   git remote add upstream https://github.com/michaeljauk/slotmirror
+   git remote add upstream https://github.com/slotmirror/slotmirror
    git fetch upstream
    ```
 

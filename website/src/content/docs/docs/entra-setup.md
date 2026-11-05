@@ -1,5 +1,5 @@
 ---
-title: Microsoft Entra app
+title: Microsoft Entra app for calendar sync
 description: Create the Entra app registration that lets slotmirror read and write Microsoft 365 calendars.
 ---
 

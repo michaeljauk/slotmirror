@@ -1,5 +1,5 @@
 ---
-title: Limits
+title: "Limits: Cloudflare free plan and rate limits"
 description: What slotmirror does not do yet, and how it stays inside the Cloudflare free plan and the provider rate limits.
 ---
 

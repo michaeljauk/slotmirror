@@ -1,5 +1,5 @@
 ---
-title: Push notifications
+title: Push notifications from Microsoft and Google
 description: How slotmirror learns about calendar changes, and what runs when a notification is missed.
 ---
 

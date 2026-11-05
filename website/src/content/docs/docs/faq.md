@@ -1,6 +1,6 @@
 ---
-title: FAQ
-description: Common questions about slotmirror.
+title: Calendar sync FAQ
+description: Answers about cost, privacy, recurring meetings, sync delay, iCloud and the Google warning about an unverified app.
 ---
 
 ## Does it cost anything?

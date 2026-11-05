@@ -1,6 +1,6 @@
 ---
-title: Quickstart
-description: Deploy slotmirror to Cloudflare, connect your calendars, and choose where events go.
+title: "Quickstart: deploy to Cloudflare Workers"
+description: Deploy slotmirror to your Cloudflare account on the Workers Free plan, connect your Microsoft 365 and Google calendars, and choose where events go.
 ---
 
 ## Check first: can I approve the app myself?

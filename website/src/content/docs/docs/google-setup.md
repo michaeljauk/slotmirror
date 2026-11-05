@@ -1,5 +1,5 @@
 ---
-title: Google OAuth client
+title: Google OAuth client for calendar sync
 description: Create the Google OAuth client that lets slotmirror read and write Google calendars.
 ---
 

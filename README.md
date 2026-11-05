@@ -29,7 +29,8 @@ plan.
 It is for people with more than one calendar: consultants with client tenants, founders with two
 companies, anyone with a work and a private calendar. You host it yourself, so your calendar
 tokens stay with you and not with a sync service. If someone else runs a deployment, that
-operator holds the tokens. The deployment then shows who runs it before you connect an account.
+operator holds the tokens. If the operator sets a notice, the deployment shows it before you
+connect an account.
 
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.

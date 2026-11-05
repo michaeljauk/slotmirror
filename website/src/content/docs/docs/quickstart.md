@@ -173,8 +173,8 @@ version later, see [Updating your deployment](../updating/).
 2. Open **Rules**. Put your calendars in the group **Block each other**: each then
    sees the others only as "Busy", marked private.
 3. For more detail in one direction, expand the card of the source account and choose **Not**,
-   **As busy**, **With title** or **Everything** per target. **Looks like this there** shows an
-   example event as the target will show it.
+   **As busy**, **With title** or **Everything** per target. The line **There:** shows an example
+   event as the target will show it.
 4. Choose **Save**. The changes apply immediately.
 
 ![A source card with several calendars of one account](../../../../../docs/images/source-calendars.png)

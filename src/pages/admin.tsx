@@ -2,6 +2,7 @@ import type { Role } from "../access";
 import type { TestAlertOutcome } from "../alerts";
 import { parseDetail, type ActivityRow } from "../audit";
 import type { DetailCaps } from "../detail-policy";
+import type { McpForMembers } from "../permissions";
 import { useI18n } from "../i18n";
 import type { CompareRunDetail } from "../sync/compare";
 import type { CurrentUser } from "../users";
@@ -42,6 +43,8 @@ export function AdminPage(props: {
   caps: DetailCaps;
   /** Domains and Entra tenants whose accounts count as work calendars. */
   org: { domains: string[]; tenantCount: number };
+  /** The org's MCP setting; null while the deployment has MCP off. */
+  mcpForMembers: McpForMembers | null;
 }) {
   const { t, formatTimestamp } = useI18n();
   const orgList = [
@@ -226,6 +229,35 @@ export function AdminPage(props: {
         </div>
         <p class="fineprint caps-how">{t.admin.compareHorizon}</p>
       </section>
+
+      {props.mcpForMembers ? (
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <h2>{t.admin.mcpTitle}</h2>
+              <p class="lead">{t.admin.mcpLead}</p>
+            </div>
+            <form method="post" action="/admin/mcp-policy" class="inline-form">
+              <span class="choices" role="radiogroup" aria-label={t.admin.mcpTitle}>
+                {(["off", "all"] as const).map((value) => (
+                  <label class="choice-radio">
+                    <input
+                      type="radio"
+                      name="mcpForMembers"
+                      value={value}
+                      checked={props.mcpForMembers === value}
+                    />
+                    <span class="choice">{t.admin.mcpChoices[value]}</span>
+                  </label>
+                ))}
+              </span>
+              <button type="submit" class="button">
+                {t.admin.mcpSave}
+              </button>
+            </form>
+          </div>
+        </section>
+      ) : null}
 
       <section class="section">
         <div class="section-head">

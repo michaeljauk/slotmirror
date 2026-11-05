@@ -377,6 +377,8 @@ export const de: Messages = {
         "Das Tagesbudget dieser Instanz für Agent-Aufrufe ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
       toolFailed: "Das Tool ist fehlgeschlagen. Bitte später erneut versuchen.",
       internal: "Der Server ist fehlgeschlagen. Bitte später erneut versuchen.",
+      membersOff:
+        "Ein Admin dieser Instanz hat MCP für Mitglieder ausgeschaltet. Der Token bleibt und funktioniert wieder, sobald ein Admin es wieder einschaltet.",
     },
   },
   tokens: {
@@ -408,6 +410,8 @@ export const de: Messages = {
     connected: "Verbunden",
     refreshed: "Zuletzt erneuert",
     disconnect: "Trennen",
+    membersOff:
+      "Ein Admin hat MCP für Mitglieder dieser Instanz ausgeschaltet. Du kannst keine Tokens anlegen und keine Apps verbinden, und deine Tokens und Apps funktionieren erst wieder, wenn ein Admin es einschaltet. Widerrufen kannst du sie weiterhin.",
   },
   consent: {
     title: "App verbinden",
@@ -434,6 +438,8 @@ export const de: Messages = {
       `Die App hat eine Anfrage gesendet, die diese Instanz nicht annehmen kann (${code}). Aktualisiere die App oder starte die Verbindung neu.`,
     tooManyApps: (max: number) =>
       `Du hast ${max} verbundene Apps. Trenne zuerst eine unter API-Tokens.`,
+    mcpOff:
+      "Ein Admin hat MCP für Mitglieder dieser Instanz ausgeschaltet. Deshalb kannst du keine App verbinden.",
   },
   privacy: {
     title: "Datenschutz",
@@ -531,6 +537,15 @@ export const de: Messages = {
       near: "Nächste 7 Tage",
       leftover: "Kalender ohne Regel",
     },
+    mcpTitle: "MCP für Mitglieder",
+    mcpLead:
+      "Ob Mitglieder, nicht nur Admins, API-Tokens anlegen, Apps verbinden und den MCP-Endpunkt nutzen dürfen. Ausgeschaltet bleiben die Tokens und Apps von Mitgliedern bestehen und funktionieren nicht mehr.",
+    mcpChoices: {
+      off: "Nur Admins",
+      all: "Alle Mitglieder",
+    },
+    mcpSave: "Speichern",
+    mcpInvalid: "Wähle „Nur Admins“ oder „Alle Mitglieder“.",
   },
   activity: {
     title: "Aktivität",
@@ -574,6 +589,7 @@ export const de: Messages = {
       api_token_revoked: "API-Token widerrufen",
       mcp_app_connected: "App verbunden",
       mcp_app_disconnected: "App getrennt",
+      mcp_policy_changed: "MCP für Mitglieder geändert",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} neu, ${update} geändert, ${remove} entfernt`,

@@ -11,6 +11,7 @@ import { mcpEnabled } from "../config";
 import { disconnectApp, listConnectedApps } from "../mcp-oauth";
 import { i18nFromContext } from "../i18n";
 import { TokensPage } from "../pages/tokens";
+import { can } from "../permissions";
 import { render } from "../render";
 import type { SignedInUser } from "../users";
 
@@ -49,6 +50,7 @@ async function renderPage(
       tokens={await listApiTokens(c.env.DB, user.id)}
       apps={await listConnectedApps(c.env.DB, user.id)}
       endpoint={endpoint(c)}
+      canCreate={can(user, "tokens:create")}
       {...extra}
     />,
     status,

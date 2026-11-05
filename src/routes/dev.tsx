@@ -7,14 +7,14 @@ import { fakePagePath, measureFetchBudget } from "../providers/fake-calendar";
 
 /**
  * Load tests with simulated calendars, on a local server or on a separate test deployment. Only
- * with DEV_FAKE_CALENDARS=1 and for admins. Without the variable every route answers 404, so a
- * normal deployment never exposes them.
+ * with DEV_FAKE_CALENDARS=1 and for users with "dev:tools" (see `ROUTE_NEEDS`). Without the
+ * variable every route answers 404, so a normal deployment never exposes them.
  */
 export const dev = new Hono<AppEnv>();
 
 dev.use("*", async (c, next) => {
   const user = c.get("user");
-  if (c.env.DEV_FAKE_CALENDARS !== "1" || user?.role !== "admin") return c.notFound();
+  if (c.env.DEV_FAKE_CALENDARS !== "1" || !user) return c.notFound();
   await next();
 });
 

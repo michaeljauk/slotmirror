@@ -373,6 +373,8 @@ export const en = {
         "This deployment's daily budget for agent calls is used up. It resets at 00:00 UTC.",
       toolFailed: "The tool failed. Try again later.",
       internal: "The server failed. Try again later.",
+      membersOff:
+        "An admin of this deployment turned MCP off for members. The token stays and works again once an admin turns it back on.",
     },
   },
   tokens: {
@@ -404,6 +406,8 @@ export const en = {
     connected: "Connected",
     refreshed: "Last refresh",
     disconnect: "Disconnect",
+    membersOff:
+      "An admin turned MCP off for members of this deployment. You cannot create tokens or connect apps, and your tokens and apps do not work until an admin turns it back on. You can still revoke them.",
   },
   consent: {
     title: "Connect an app",
@@ -429,6 +433,7 @@ export const en = {
       `The app sent a request this deployment cannot take (${code}). Update the app or start the connection again.`,
     tooManyApps: (max: number) =>
       `You have ${max} connected apps. Disconnect one under API tokens first.`,
+    mcpOff: "An admin turned MCP off for members of this deployment, so you cannot connect an app.",
   },
   privacy: {
     title: "Privacy",
@@ -525,6 +530,15 @@ export const en = {
       near: "Next 7 days",
       leftover: "Calendar without a rule",
     },
+    mcpTitle: "MCP for members",
+    mcpLead:
+      "Whether members, not only admins, may create API tokens, connect apps and use the MCP endpoint. Turned off, the tokens and apps of members stay and stop working.",
+    mcpChoices: {
+      off: "Admins only",
+      all: "All members",
+    },
+    mcpSave: "Save",
+    mcpInvalid: "Choose admins only or all members.",
   },
   activity: {
     title: "Activity",
@@ -568,6 +582,7 @@ export const en = {
       api_token_revoked: "API token revoked",
       mcp_app_connected: "App connected",
       mcp_app_disconnected: "App disconnected",
+      mcp_policy_changed: "MCP for members changed",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} new, ${update} changed, ${remove} removed`,

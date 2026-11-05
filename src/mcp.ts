@@ -17,6 +17,7 @@ import {
 import { i18nFor, type Messages } from "./i18n";
 import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
+import { can, permitted } from "./permissions";
 import type { CurrentUser } from "./users";
 import { buildVersionLabel } from "./version";
 
@@ -68,13 +69,29 @@ const SERVER_INFO = () => ({ name: APP_NAME, version: buildVersionLabel() ?? "de
  * fails if the file and the shapes differ.
  */
 const TOOLS = [
-  { name: "list_accounts", run: (env: Env, user: CurrentUser) => readAccounts(env.DB, user.id) },
-  { name: "list_rules", run: (env: Env, user: CurrentUser) => readRules(env, user.id) },
+  {
+    name: "list_accounts",
+    action: "mcp:read",
+    run: (env: Env, user: CurrentUser) => readAccounts(env.DB, user.id),
+  },
+  {
+    name: "list_rules",
+    action: "mcp:read",
+    run: (env: Env, user: CurrentUser) => readRules(env, user.id),
+  },
   {
     name: "get_sync_status",
+    action: "mcp:read",
     run: (env: Env, user: CurrentUser) => readSyncStatus(env.DB, user.id),
   },
 ] as const;
+
+/** The tools the request's user may see and call. A tool the user may not call does not exist. */
+function toolsOf(c: Context<AppEnv>) {
+  const user = c.get("user");
+  if (!user) throw new Error("the MCP route requires a user");
+  return permitted(user, TOOLS);
+}
 
 function messages(c: Context<AppEnv>): Messages["mcp"] {
   return i18nFor(/^\s*de\b/i.test(c.req.header("accept-language") ?? "") ? "de" : "en").t.mcp;
@@ -189,6 +206,12 @@ mcp.use("*", async (c, next) => {
     );
     return rpcError(c, 401, undefined, SERVER_ERROR, t.errors.unauthorized);
   }
+  // The token stays, as after a change of the access policy; the org's setting may come back.
+  // No `insufficient_scope` challenge: a client would start a new authorization, which the
+  // consent page refuses as well.
+  if (!can(user, "mcp:read")) {
+    return rpcError(c, 403, undefined, SERVER_ERROR, t.errors.membersOff);
+  }
   c.set("user", user);
   await next();
 });
@@ -284,7 +307,7 @@ function modernHeadersMatch(
 
 function toolList(c: Context<AppEnv>) {
   const t = messages(c);
-  return TOOLS.map((tool) => ({
+  return toolsOf(c).map((tool) => ({
     name: tool.name,
     title: t.titles[tool.name],
     description: t.tools[tool.name],
@@ -365,7 +388,7 @@ async function callTool(
   respond: (result: object) => Response,
 ) {
   const t = messages(c);
-  const tool = TOOLS.find((candidate) => candidate.name === message.params?.name);
+  const tool = toolsOf(c).find((candidate) => candidate.name === message.params?.name);
   if (!tool) return rpcError(c, 200, message.id, INVALID_PARAMS, t.errors.unknownTool);
   // Since 2025-11-25, input errors are tool errors: the model reads them and can correct the call.
   const toolError = (text: string) => respond({ content: [{ type: "text", text }], isError: true });

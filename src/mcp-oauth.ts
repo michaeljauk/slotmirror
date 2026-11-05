@@ -1,5 +1,6 @@
 import { recordAudit } from "./audit";
 import { base64url, signPayload, verifyPayload } from "./session";
+import { can } from "./permissions";
 import { loadUser, type SignedInUser } from "./users";
 
 /**
@@ -760,8 +761,9 @@ export async function exchangeCode(
   ) {
     return fail("invalid_grant");
   }
+  // The org may have turned MCP off for members since the consent.
   const user = await loadUser(env, row.userId, row.sessionVersion);
-  if (!user) return fail("invalid_grant");
+  if (!user || !can(user, "apps:connect")) return fail("invalid_grant");
 
   const grantId = crypto.randomUUID();
   const refreshExpires = now + REFRESH_DAYS * DAY_MS;
@@ -934,8 +936,10 @@ export async function refreshGrant(
     await env.DB.prepare("DELETE FROM oauth_grants WHERE id = ?").bind(grant.id).run();
     return fail("invalid_grant");
   }
-  // While the policy does not admit the user, the grant stops but stays, as a personal token does.
-  if (!(await loadUser(env, grant.userId, grant.sessionVersion))) return fail("invalid_grant");
+  // While the policy or the org's MCP setting does not admit the user, the grant stops but stays,
+  // as a personal token does.
+  const user = await loadUser(env, grant.userId, grant.sessionVersion);
+  if (!user || !can(user, "apps:connect")) return fail("invalid_grant");
   const refreshExpires = Math.min(now + REFRESH_DAYS * DAY_MS, Date.parse(grant.expiresAt));
   const refreshToken = await signRefreshToken(env, grant.id, grant.generation + 1, refreshExpires);
   const rotated = await env.DB.prepare(

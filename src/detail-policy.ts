@@ -70,6 +70,28 @@ export function effectiveDetailLevel(
   return { level, capped: level !== requested };
 }
 
+/**
+ * `detailLevelFor` with the variables read once, for a caller that resolves many rules in one
+ * invocation. Parsing the policy lists for each rule costs CPU that the Free plan does not have.
+ */
+export function detailLevelResolver(
+  env: Env,
+): (
+  requested: DetailLevel,
+  source: AccountIdentity,
+  target: AccountIdentity,
+) => { level: DetailLevel; capped: boolean } {
+  const policy = policyFromEnv(env);
+  const caps = detailCapsFromEnv(env);
+  return (requested, source, target) =>
+    effectiveDetailLevel(
+      requested,
+      caps,
+      { org: isOrgAccount(policy, source) },
+      { org: isOrgAccount(policy, target) },
+    );
+}
+
 /** The effective detail level of a rule between two accounts, from the deployment's variables. */
 export function detailLevelFor(
   env: Env,

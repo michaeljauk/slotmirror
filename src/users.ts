@@ -202,6 +202,18 @@ export async function resetSignInBinding(
   )
     .bind(user.id, user.orgId)
     .run();
+  // The new session version ends these tokens already. This frees their slots.
+  const tokens = await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?")
+    .bind(user.id)
+    .run();
+  if (tokens.meta.changes) {
+    await recordAudit(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      kind: "api_token_revoked",
+      detail: { count: tokens.meta.changes, by },
+    });
+  }
   await recordAudit(env.DB, {
     orgId: user.orgId,
     userId: user.id,
@@ -304,7 +316,7 @@ export async function loadUser(
   env: Env,
   userId: string,
   sessionVersion = 0,
-): Promise<CurrentUser | null> {
+): Promise<SignedInUser | null> {
   const row = await env.DB.prepare(
     `SELECT u.id, u.org_id AS orgId, u.email, u.tenant_id AS tenantId, o.policy
      FROM users u JOIN orgs o ON o.id = u.org_id
@@ -313,7 +325,8 @@ export async function loadUser(
     .bind(userId, sessionVersion)
     .first<{ id: string; orgId: string; email: string; tenantId: string | null; policy: string }>();
   if (!row) return null;
-  return admittedUser(env, row);
+  const user = admittedUser(env, row);
+  return user && { ...user, sessionVersion };
 }
 
 /** The user if the org policy still admits them, otherwise null. See `orgPolicy`. */

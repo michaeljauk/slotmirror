@@ -107,6 +107,11 @@ export function parseRuleOptions(json: string): RuleOptions {
   return ruleOptionsSchema.parse(JSON.parse(json));
 }
 
+/** The MCP endpoint and the token page exist only with MCP_ENABLED=1. */
+export function mcpEnabled(env: { MCP_ENABLED?: string } | undefined): boolean {
+  return env?.MCP_ENABLED === "1";
+}
+
 export type Provider = "microsoft" | "google";
 
 /** Product names stay untranslated. */

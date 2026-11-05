@@ -25,21 +25,23 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 
 ## Layout
 
-| Path                            | Content                                                                           |
-| ------------------------------- | --------------------------------------------------------------------------------- |
-| `src/index.tsx`                 | Hono app: middleware, pages, webhooks, cron handler                               |
-| `src/routes/`                   | Route groups (OAuth in `auth.tsx`)                                                |
-| `src/account-sync.ts`           | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
-| `src/offboarding.ts`            | Removing accounts and users: rule holds, jobs, retirement                         |
-| `src/cleanup.ts`                | Tombstones of offboarding jobs: end state and the blocks left per calendar        |
-| `src/providers/`                | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
-| `src/access.ts`, `src/users.ts` | Orgs, users, roles, access policy                                                 |
-| `src/i18n/`                     | Message catalogs. `en.ts` defines the shape; every locale must match it           |
-| `src/pages/`                    | Server-rendered Hono JSX pages                                                    |
-| `migrations/`                   | D1 migrations (registry: orgs, users, accounts, calendars, rules, runs)           |
-| `test/`                         | Vitest tests with `@cloudflare/vitest-plugin`                                     |
-| `suite/`                        | Scenario suite: frozen list in `v1/`, own oracle, drivers. Not in the Worker      |
-| `design/`                       | Logo and design assets                                                            |
+| Path                              | Content                                                                           |
+| --------------------------------- | --------------------------------------------------------------------------------- |
+| `src/index.tsx`                   | Hono app: middleware, pages, webhooks, cron handler                               |
+| `src/routes/`                     | Route groups (OAuth in `auth.tsx`)                                                |
+| `src/mcp.ts`, `src/read-model.ts` | Read-only MCP endpoint: protocol, and the fields that tools may show              |
+| `src/api-tokens.ts`               | Personal API tokens: hashes, expiry, the daily limit of tool calls                |
+| `src/account-sync.ts`             | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
+| `src/offboarding.ts`              | Removing accounts and users: rule holds, jobs, retirement                         |
+| `src/cleanup.ts`                  | Tombstones of offboarding jobs: end state and the blocks left per calendar        |
+| `src/providers/`                  | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
+| `src/access.ts`, `src/users.ts`   | Orgs, users, roles, access policy                                                 |
+| `src/i18n/`                       | Message catalogs. `en.ts` defines the shape; every locale must match it           |
+| `src/pages/`                      | Server-rendered Hono JSX pages                                                    |
+| `migrations/`                     | D1 migrations (registry: orgs, users, accounts, calendars, rules, runs)           |
+| `test/`                           | Vitest tests with `@cloudflare/vitest-plugin`                                     |
+| `suite/`                          | Scenario suite: frozen list in `v1/`, own oracle, drivers. Not in the Worker      |
+| `design/`                         | Logo and design assets                                                            |
 
 ## Rules
 
@@ -52,6 +54,12 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **Migrations are additive.** Add tables and columns. Do not drop or rename anything. Do not add
   `NOT NULL` without a default. The previous Worker must run on the new schema, because migrations
   run before the code and do not run backward. See `website/src/content/docs/docs/updating.md`.
+- **The MCP endpoint is read-only and D1-only.** It takes the user from the bearer token, never from a
+  cookie or an argument. Name each field in `src/read-model.ts`; never pass on a row, `rules.options`
+  or an audit `detail`. Every query has an upper bound: D1 refuses all queries of a deployment at its
+  daily limit, also those of the sync. Tool calls are charged with the rows they read
+  (`src/d1-rows.ts`). Tool handlers hold no SQL: each query is a function in `src/read-model.ts`,
+  `src/api-tokens.ts` or `src/audit.ts`, so that a later hosting adapter can replace D1.
 - **Recurring events are read per occurrence** (Graph `calendarView`, Google `singleEvents=true`).
   Never sync series masters.
 - **Provider calls go through `client()` in `AccountSync`.** It runs them one at a time, because

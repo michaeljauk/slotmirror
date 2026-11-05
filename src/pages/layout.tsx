@@ -3,8 +3,9 @@ import { APP_NAME } from "../brand";
 import { LOCALE_NAMES, LOCALES, useI18n, useLanguageHref, type Locale } from "../i18n";
 import type { CurrentUser } from "../users";
 import { buildVersionLabel } from "../version";
+import { useFeatures } from "./features";
 
-export type NavItem = "accounts" | "rules" | "activity" | "admin";
+export type NavItem = "accounts" | "rules" | "activity" | "tokens" | "admin";
 
 /** A stroke icon for the navigation. The label next to it carries the meaning. */
 function NavIcon(props: { children: Child }) {
@@ -34,6 +35,8 @@ const NAV: readonly {
   id: NavItem;
   href: string;
   adminOnly?: boolean;
+  /** Only while the deployment has the API tokens on. */
+  tokensOnly?: boolean;
   icon: () => Child;
 }[] = [
   {
@@ -61,6 +64,17 @@ const NAV: readonly {
     icon: () => (
       <NavIcon>
         <path d="M3 12h4l3-8 4 16 3-8h4" />
+      </NavIcon>
+    ),
+  },
+  {
+    id: "tokens",
+    href: "/tokens",
+    tokensOnly: true,
+    icon: () => (
+      <NavIcon>
+        <circle cx="8" cy="15" r="4.5" />
+        <path d="M11.5 11.5L20 3M16 7l3 3" />
       </NavIcon>
     ),
   },
@@ -147,6 +161,7 @@ export function Layout(props: {
 }) {
   const { user } = props;
   const { locale, t } = useI18n();
+  const features = useFeatures();
   const version = buildVersionLabel();
   const footer = (
     <footer class="footer">
@@ -187,7 +202,11 @@ export function Layout(props: {
             {brand}
             {/* On a phone the same links form a row under the logo: one tap to each page. */}
             <nav class="nav" aria-label={t.nav.main}>
-              {NAV.filter((item) => !item.adminOnly || user.role === "admin").map((item) => (
+              {NAV.filter(
+                (item) =>
+                  (!item.adminOnly || user.role === "admin") &&
+                  (!item.tokensOnly || features.tokens),
+              ).map((item) => (
                 <a href={item.href} aria-current={props.active === item.id ? "page" : undefined}>
                   {item.icon()}
                   <span>{t.nav[item.id]}</span>

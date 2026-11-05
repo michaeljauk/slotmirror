@@ -35,6 +35,8 @@ const KNOWN_RELEVANT = new Set([
  * the list of unknown codes. `alert_sent` comes with the run alerts; older databases have none.
  */
 const KNOWN_IGNORED = new Set([
+  "api_token_created",
+  "api_token_revoked",
   "alert_test",
   "sign_in",
   "sign_in_refused",

@@ -226,6 +226,13 @@ pnpm wrangler d1 execute DB --remote --command "UPDATE users SET refused_subject
   WHERE email = 'user@example.com'"
 ```
 
+## MCP server
+
+slotmirror has an optional, read-only MCP server at `/mcp`. Agents can read accounts, rules, and the
+state of the last sync run. It reads no calendars and shows no event content. Set `MCP_ENABLED=1`,
+then create a token under **API tokens**. Tokens last at most 90 days. See the
+[MCP documentation](https://slotmirror.com/docs/mcp/).
+
 ## Push notifications
 
 With `PUBLIC_URL` set, slotmirror asks Microsoft and Google to notify it when a calendar that a

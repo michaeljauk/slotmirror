@@ -57,6 +57,7 @@ export default defineConfig({
             { label: "Microsoft Entra app", slug: "docs/entra-setup" },
             { label: "Google OAuth client", slug: "docs/google-setup" },
             { label: "Push notifications", slug: "docs/push-notifications" },
+            { label: "MCP server", slug: "docs/mcp" },
             { label: "Updating your deployment", slug: "docs/updating" },
           ],
         },

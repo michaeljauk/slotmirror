@@ -5,6 +5,7 @@ export const de: Messages = {
     accounts: "Konten",
     rules: "Regeln",
     activity: "Aktivität",
+    tokens: "API-Tokens",
     admin: "Verwaltung",
     main: "Hauptnavigation",
     accountMenu: "Kontomenü",
@@ -340,6 +341,66 @@ export const de: Messages = {
       "Regeln zwischen anderen Kalendern als den Hauptkalendern. Der Editor oben ändert sie nicht.",
     statusFailed: (time: string, code: string) => `Sync fehlgeschlagen ${time} · ${code}`,
   },
+  mcp: {
+    instructions:
+      "Lesende Sicht auf die slotmirror-Instanz des Nutzers. Eine Regel spiegelt eine Richtung, von einem Quellkalender in einen Zielkalender. Blockzahlen stammen aus dem letzten Sync-Lauf, nicht aus dem Kalender.",
+    titles: {
+      list_accounts: "Verbundene Konten",
+      list_rules: "Sync-Regeln",
+      get_sync_status: "Sync-Status",
+    },
+    tools: {
+      list_accounts:
+        "Listet die verbundenen Kalenderkonten und zeigt, ob eines neu verbunden werden muss.",
+      list_rules:
+        "Listet die Sync-Regeln. Jede Regel ist eine Richtung von einem Quellkalender in einen Zielkalender, mit Detailstufe und aktiven Filtern.",
+      get_sync_status:
+        "Zeigt den letzten Sync-Lauf jeder Regel: Status, Änderungen und Blöcke im Ziel. `blocks` ist das Ergebnis dieses Laufs, keine Live-Zählung. Eine Regel mit Status `unknown` hat keinen Lauf im neueren Protokoll.",
+    },
+    errors: {
+      unauthorized: "Ein gültiger API-Token als Bearer-Token ist nötig.",
+      forbiddenOrigin: "Dieser Origin darf diesen Endpunkt nicht aufrufen.",
+      notReady: "Die Einrichtung dieser Instanz ist nicht abgeschlossen.",
+      tooLarge: "Die Anfrage ist zu groß.",
+      parse: "Die Anfrage ist kein gültiges JSON.",
+      invalidRequest: "Die Anfrage ist keine einzelne JSON-RPC-Nachricht.",
+      unknownMethod: "Methode nicht gefunden.",
+      unknownTool: "Unbekanntes Tool.",
+      unexpectedArguments: "Dieses Tool nimmt keine Argumente an.",
+      headerMismatch: "Die MCP-Header fehlen oder passen nicht zum Body.",
+      unsupportedVersion: "Diese Protokollversion wird nicht unterstützt.",
+      dailyLimit: "Dein Tageslimit für Tool-Aufrufe ist erreicht. Es beginnt um 00:00 UTC neu.",
+      userRowLimit:
+        "Dein Tagesbudget an Datenbankzeilen ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
+      dayChanged: "Der UTC-Tag hat während dieses Aufrufs gewechselt. Ruf das Tool erneut auf.",
+      deploymentLimit:
+        "Das Tagesbudget dieser Instanz für Agent-Aufrufe ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
+      toolFailed: "Das Tool ist fehlgeschlagen. Bitte später erneut versuchen.",
+      internal: "Der Server ist fehlgeschlagen. Bitte später erneut versuchen.",
+    },
+  },
+  tokens: {
+    title: "API-Tokens",
+    lead: "Mit einem Token kann ein KI-Agent oder Skript deine Konten, Regeln und den Sync-Status lesen. Er kann nichts ändern und sieht keine Termininhalte.",
+    name: "Name",
+    lifetime: "Gültig für",
+    days: (count) => `${count} Tage`,
+    create: "Token erstellen",
+    createdTitle: "Kopiere deinen Token jetzt",
+    createdHint: "Er wird nur einmal angezeigt. slotmirror speichert nur einen Hash.",
+    claudeCode: "In Claude Code hinzufügen:",
+    listTitle: "Deine Tokens",
+    readOnly: (endpoint) => `Nur lesend. Endpunkt: ${endpoint}`,
+    empty: "Noch keine Tokens.",
+    ends: "Endet auf",
+    expires: "Läuft ab",
+    expired: "Abgelaufen",
+    lastUsed: "Zuletzt genutzt",
+    never: "Nie",
+    revoke: "Widerrufen",
+    invalid: "Gib einen Namen ein und wähle eine Laufzeit.",
+    limitReached: "Du hast die Höchstzahl aktiver Tokens. Widerrufe zuerst einen.",
+  },
   privacy: {
     title: "Datenschutz",
     operator: (name, contact) =>
@@ -355,6 +416,7 @@ export const de: Messages = {
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
       "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
+      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe und der Datenbankzeilen, die sie gelesen haben, am Tag deines letzten Aufrufs.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:
@@ -383,6 +445,9 @@ export const de: Messages = {
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
     deleteUser: "Löschen",
+    revokeTokens: (count) => (count === 1 ? "1 API-Token beenden" : `${count} API-Tokens beenden`),
+    revokeTokensHint:
+      "Beendet die API-Tokens der Person sofort. Das Entfernen im Identity Provider tut das nicht.",
     resetSignIn: "Anmeldung zurücksetzen",
     resetSignInHint:
       "Löst die Bindung an das Microsoft- oder Google-Konto und beendet die Sitzungen. 24 Stunden lang bindet eine Anmeldung unter einer bestätigten Adresse die Person an ein neues Konto; das bisherige Konto bleibt gesperrt. Danach ist ein neuer Reset nötig.",
@@ -470,6 +535,8 @@ export const de: Messages = {
       alert_test: "Test-Alarm angefordert",
       compare_run: "Vergleich abgeschlossen",
       compare_failed: "Vergleich fehlgeschlagen",
+      api_token_created: "API-Token erstellt",
+      api_token_revoked: "API-Token widerrufen",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} neu, ${update} geändert, ${remove} entfernt`,

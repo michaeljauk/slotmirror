@@ -12,7 +12,7 @@
   "dependencies": {
     "@astrojs/markdown-remark": "7.3.5",
     "@astrojs/starlight": "0.42.8",
-    "astro": "7.4.2",
+    "astro": "7.4.4",
     "posthog-js": "1.439.2",
     "sharp": "0.35.5"
   },

@@ -7,6 +7,13 @@ import { errorLogFields } from "./audit";
 import { APP_NAME } from "./brand";
 import { mcpEnabled, setupStatus } from "./config";
 import { countingRows } from "./d1-rows";
+import {
+  authenticateAccessToken,
+  isAccessToken,
+  OAUTH_SCOPE,
+  oauthIssuer,
+  resourceMetadataUrl,
+} from "./mcp-oauth";
 import { i18nFor, type Messages } from "./i18n";
 import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
@@ -166,10 +173,20 @@ mcp.use("*", async (c, next) => {
     return rpcError(c, 503, undefined, SERVER_ERROR, t.errors.notReady);
   }
   const authorization = c.req.header("authorization");
-  const user = await authenticateToken(c.env, authorization);
+  const issuer = oauthIssuer(c.env, c.req.url);
+  const bearer = /^bearer +(\S+)$/i.exec(authorization ?? "")?.[1];
+  const user =
+    bearer && isAccessToken(bearer)
+      ? await authenticateAccessToken(c.env, bearer, issuer)
+      : await authenticateToken(c.env, authorization);
   if (!user) {
     // RFC 6750: a request without credentials gets no error code, a refused token gets one.
-    c.header("WWW-Authenticate", authorization ? 'Bearer error="invalid_token"' : "Bearer");
+    // The metadata URL lets a client find the authorization server (RFC 9728 5.1).
+    const metadata = `resource_metadata="${resourceMetadataUrl(issuer)}", scope="${OAUTH_SCOPE}"`;
+    c.header(
+      "WWW-Authenticate",
+      authorization ? `Bearer error="invalid_token", ${metadata}` : `Bearer ${metadata}`,
+    );
     return rpcError(c, 401, undefined, SERVER_ERROR, t.errors.unauthorized);
   }
   c.set("user", user);

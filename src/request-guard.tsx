@@ -22,7 +22,16 @@ export const CONTENT_SECURITY_POLICY = [
 /** Headers for every response of the Worker. Static files come from the asset binding. */
 export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
-  c.header("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  const formAction = c.get("formAction");
+  c.header(
+    "Content-Security-Policy",
+    formAction
+      ? CONTENT_SECURITY_POLICY.replace(
+          "form-action 'self'",
+          () => `form-action 'self' ${formAction}`,
+        )
+      : CONTENT_SECURITY_POLICY,
+  );
   c.header("X-Frame-Options", "DENY");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "same-origin");

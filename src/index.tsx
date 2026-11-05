@@ -49,6 +49,7 @@ import { mcp } from "./mcp";
 import { auth } from "./routes/auth";
 import { dev } from "./routes/dev";
 import { rules } from "./routes/rules";
+import { oauthApi, oauthPages } from "./routes/oauth";
 import { tokens } from "./routes/tokens";
 import { ACCOUNT_COLOR_KEYS } from "./colors";
 import {
@@ -137,6 +138,8 @@ app.post("/webhooks/google", async (c) => {
 
 // Before the language and session middleware: the bearer token is the only credential here.
 app.route("/mcp", mcp);
+// OAuth metadata, registration, token and revocation: server to server, without cookies.
+app.route("/", oauthApi);
 
 // Language: ?lang= (stored in a cookie), then the cookie, then Accept-Language.
 app.use(
@@ -188,6 +191,7 @@ app.use("*", async (c, next) => {
 app.route("/auth", auth);
 app.route("/rules", rules);
 app.route("/tokens", tokens);
+app.route("/oauth", oauthPages);
 app.route("/dev", dev);
 
 app.get("/", async (c) => {
@@ -518,13 +522,15 @@ app.get("/admin", async (c) => {
     `SELECT u.id, u.email, u.role, u.last_sign_in_at AS lastSignInAt,
             COUNT(a.id) AS accounts,
             COALESCE(SUM(a.needs_reconnect), 0) AS needsReconnect,
-            (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id) AS apiTokens
+            (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id)
+              + (SELECT COUNT(*) FROM oauth_grants g WHERE g.user_id = u.id
+                   AND g.refresh_expires_at > ?2 AND g.expires_at > ?2) AS apiTokens
      FROM users u LEFT JOIN accounts a ON a.user_id = u.id
-     WHERE u.org_id = ?
+     WHERE u.org_id = ?1
      GROUP BY u.id
      ORDER BY u.email`,
   )
-    .bind(user.orgId)
+    .bind(user.orgId, new Date().toISOString())
     .all<AdminUserRow>();
   const activity = await orgActivity(c.env.DB, user.orgId);
   const compares = await latestCompares(c.env.DB, user.orgId);

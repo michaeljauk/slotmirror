@@ -7,25 +7,41 @@ slotmirror has an optional, read-only MCP server. An agent such as Claude Code c
 "Is my sync running, and if not, why?". It cannot change anything. It reads no calendars and sees no
 event content.
 
-The server is off by default. While it is off, `/mcp` and `/tokens` answer 404.
+The server is off by default. While it is off, `/mcp`, `/tokens` and the OAuth endpoints answer 404.
 
 ## Turn it on
 
 1. Set the variable `MCP_ENABLED` to `1`.
 2. Apply the migrations, as for every [update](/docs/updating/).
-3. Open **API tokens** in the app and create a token. It is shown once.
 
 ## Connect a client
 
-The endpoint is `https://<your deployment>/mcp`. Each deployment has its own. Clients send the token
-in the `Authorization` header. In Claude Code:
+The endpoint is `https://<your deployment>/mcp`. Each deployment has its own. A client connects in
+one of two ways.
+
+### With your sign-in (OAuth)
+
+Add the endpoint in the client without a token. Clients that follow the MCP authorization spec,
+such as Claude Code, then open slotmirror in the browser. The client must use an HTTPS redirect, or
+HTTP on `127.0.0.1` or `localhost`; a client with its own URL scheme cannot connect yet. You sign in as
+usual and allow the app to read. The client gets its own tokens; you copy nothing.
+
+```sh
+claude mcp add --transport http slotmirror https://sync.example.com/mcp
+```
+
+In Claude Code, run `/mcp` once to sign in. Connected apps appear under **API tokens**, where you can
+disconnect them.
+
+### With a personal token
+
+For a script, or a client without OAuth: open **API tokens** in the app and create a token. It is
+shown once. Clients send it in the `Authorization` header:
 
 ```sh
 claude mcp add --transport http slotmirror https://sync.example.com/mcp \
   --header "Authorization: Bearer sm_pat_..."
 ```
-
-There is no OAuth sign-in yet. A client that takes only OAuth cannot connect.
 
 ## Tools
 
@@ -74,8 +90,31 @@ titles, tenant IDs or tokens.
 - "Reset sign-in" and deleting a user end their tokens. Signing out does not.
 - Removing someone in your identity provider does **not** end a token, unless the access policy
   changes too. To offboard someone, an admin uses "Reset sign-in" on the admin page: it ends their
-  sessions and tokens. "End API tokens" ends only the tokens, and a signed-in user can create new
+  sessions, tokens and connected apps. "End tokens and apps" ends only those, and a signed-in user can create new
   ones.
+
+## Connected apps
+
+- A client registers itself with the deployment (dynamic client registration). Anyone can
+  register a client, so the consent page says that the name is unchecked and shows where the answer
+  goes. A deployment takes 1,000 new clients a day, and 30 from one network address (an IPv6 /64 counts as
+  one). Someone with many addresses can use up the day's registrations; apps that are registered
+  already keep working, new ones wait until 00:00 UTC. Each registration writes about a dozen database rows, so
+  a full day of them takes about a tenth of D1's daily writes. The count keeps
+  a keyed hash of the address, not the address. A client that never connects is deleted with a later registration after 30 days, one that
+  connected once 180 days after its last connection.
+- If an app sends a request that slotmirror cannot take, the error shows on slotmirror's page. Only
+  your decision, allow or deny, goes back to the app.
+- The consent buttons wait a moment until the page is visible, so that a click meant for another
+  window does not allow an app.
+- An app reads with an access token that lasts one hour and renews it with a refresh token. Each
+  renewal replaces the refresh token. If an older refresh token comes back within its own 30 days,
+  the connection ends, because someone copied it. Only the token just before the current one has 30 seconds of grace,
+  for two renewals that raced.
+- A connection lasts at most 90 days, then you allow the app again. A user can connect 10 apps.
+- Disconnecting on the **API tokens** page, "Reset sign-in", "End tokens and apps" and deleting the user
+  end connections at once. The access policy stops them as it stops tokens.
+- Redirects must use HTTPS, or HTTP on `127.0.0.1` or `localhost` for apps on your computer.
 
 ## Limits
 

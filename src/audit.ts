@@ -37,7 +37,9 @@ export type AuditKind =
   | "compare_run"
   | "compare_failed"
   | "api_token_created"
-  | "api_token_revoked";
+  | "api_token_revoked"
+  | "mcp_app_connected"
+  | "mcp_app_disconnected";
 
 /** How the removal of an offboarding ended. */
 export type CleanupResult =

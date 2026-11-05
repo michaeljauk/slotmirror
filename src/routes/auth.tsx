@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { RESUME_COOKIE, resumeTarget } from "../mcp-oauth";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
 import { errorLogFields, recordAudit } from "../audit";
@@ -329,7 +330,12 @@ auth.get("/:provider/callback", async (c) => {
       sameSite: "Lax",
       maxAge: SESSION_TTL_SECONDS,
     });
-    return c.redirect("/");
+    // An app's authorization request waited for this sign-in. Only a signed path of that endpoint
+    // passes; anything else goes home.
+    const resume = getCookie(c, RESUME_COOKIE);
+    if (resume === undefined) return c.redirect("/");
+    deleteCookie(c, RESUME_COOKIE, { path: "/", secure: true });
+    return c.redirect((await resumeTarget(c.env, resume)) ?? "/");
   }
 
   // purpose === "connect": the account joins the signed-in user, whatever its own address is.

@@ -15,6 +15,8 @@ export function TokensPage(props: {
   tokens: ApiToken[];
   apps: ConnectedApp[];
   endpoint: string;
+  /** False while the org has MCP off for members: the list stays, the form goes. */
+  canCreate: boolean;
   created?: string;
   problem?: string;
 }) {
@@ -41,27 +43,33 @@ export function TokensPage(props: {
             </code>
           </div>
         ) : null}
-        <div class="card">
-          <form class="token-form" method="post" action="/tokens">
-            <label>
-              <span>{t.tokens.name}</span>
-              <input type="text" name="name" required maxlength={MAX_TOKEN_NAME_LENGTH} />
-            </label>
-            <label>
-              <span>{t.tokens.lifetime}</span>
-              <select name="days">
-                {TOKEN_DAYS.map((days) => (
-                  <option value={String(days)} selected={days === DEFAULT_TOKEN_DAYS}>
-                    {t.tokens.days(days)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="submit" class="button primary">
-              {t.tokens.create}
-            </button>
-          </form>
-        </div>
+        {props.canCreate ? (
+          <div class="card">
+            <form class="token-form" method="post" action="/tokens">
+              <label>
+                <span>{t.tokens.name}</span>
+                <input type="text" name="name" required maxlength={MAX_TOKEN_NAME_LENGTH} />
+              </label>
+              <label>
+                <span>{t.tokens.lifetime}</span>
+                <select name="days">
+                  {TOKEN_DAYS.map((days) => (
+                    <option value={String(days)} selected={days === DEFAULT_TOKEN_DAYS}>
+                      {t.tokens.days(days)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" class="button primary">
+                {t.tokens.create}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <p class="notice" role="status">
+            {t.tokens.membersOff}
+          </p>
+        )}
       </section>
 
       <section class="section">

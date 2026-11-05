@@ -39,6 +39,7 @@ const KNOWN_IGNORED = new Set([
   "api_token_revoked",
   "mcp_app_connected",
   "mcp_app_disconnected",
+  "mcp_policy_changed",
   "alert_test",
   "sign_in",
   "sign_in_refused",

@@ -14,9 +14,12 @@ import {
   latestCompares,
   latestRuleOutcomes,
   orgActivity,
+  recordAudit,
   userActivity,
 } from "./audit";
-import { setupStatus, signInProviders } from "./config";
+import { mcpEnabled, setupStatus, signInProviders } from "./config";
+import { can, mcpForMembersSchema } from "./permissions";
+import { routePermissions } from "./route-permissions";
 import { operatorNotice } from "./operator-notice";
 import { i18nFromContext, LOCALES } from "./i18n";
 import { ActivityPage, OrgActivityPage } from "./pages/activity";
@@ -164,6 +167,19 @@ app.use("*", async (c, next) => {
   c.set("user", await sessionUser(c));
   await next();
 });
+
+// Every route below asks `can` for its action in `ROUTE_NEEDS`; a route without an entry is 404.
+app.use(
+  "*",
+  routePermissions((c, message) => {
+    const { t } = i18nFromContext(c);
+    return render(
+      c,
+      <MessagePage user={c.get("user")} title={t.messages.notAllowed} message={message(t)} />,
+      403,
+    );
+  }),
+);
 
 app.route("/auth", auth);
 app.route("/rules", rules);
@@ -421,7 +437,6 @@ async function deletableUser(env: Env, admin: { id: string; orgId: string }, use
 app.get("/admin/users/:id/delete", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   const target = await deletableUser(c.env, user, c.req.param("id"));
   if (!target) return c.notFound();
   return render(
@@ -439,7 +454,6 @@ app.get("/admin/users/:id/delete", async (c) => {
 app.post("/admin/users/:id/delete", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   const target = await deletableUser(c.env, user, c.req.param("id"));
   if (!target) return c.notFound();
   await deleteUser(c.env, { id: target.id, orgId: user.orgId }, "admin");
@@ -449,7 +463,6 @@ app.post("/admin/users/:id/delete", async (c) => {
 app.post("/admin/users/:id/reset-sign-in", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   const target = await deletableUser(c.env, user, c.req.param("id"));
   if (!target) return c.notFound();
   await resetSignInBinding(c.env, { id: target.id, orgId: user.orgId }, "admin");
@@ -459,7 +472,6 @@ app.post("/admin/users/:id/reset-sign-in", async (c) => {
 app.post("/admin/users/:id/revoke-tokens", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   const target = await deletableUser(c.env, user, c.req.param("id"));
   if (!target) return c.notFound();
   await revokeUserTokens(c.env, { id: target.id, orgId: user.orgId }, "admin");
@@ -472,7 +484,7 @@ app.get("/cleanup", async (c) => {
   if (!user) return c.redirect("/");
   const [own, others] = await Promise.all([
     ownCleanups(c.env.DB, user.id),
-    user.role === "admin" ? cleanupsOfOthers(c.env.DB, user.orgId) : NO_CLEANUPS,
+    can(user, "org:audit") ? cleanupsOfOthers(c.env.DB, user.orgId) : NO_CLEANUPS,
   ]);
   return render(c, <CleanupPage user={user} own={own} others={others} />);
 });
@@ -486,14 +498,6 @@ app.get("/activity", async (c) => {
 app.get("/admin", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") {
-    const { t } = i18nFromContext(c);
-    return render(
-      c,
-      <MessagePage user={user} title={t.messages.notAllowed} message={t.admin.onlyAdmins} />,
-      403,
-    );
-  }
   // Metadata only: no calendar contents, no tokens.
   const { results } = await c.env.DB.prepare(
     `SELECT u.id, u.email, u.role, u.last_sign_in_at AS lastSignInAt,
@@ -532,6 +536,7 @@ app.get("/admin", async (c) => {
       alertsConfigured={alertsConfigured(c.env)}
       testAlert={TEST_ALERT_OUTCOMES.find((outcome) => outcome === c.req.query("alert")) ?? null}
       caps={detailCapsFromEnv(c.env)}
+      mcpForMembers={mcpEnabled(c.env) ? user.mcpForMembers : null}
       org={{
         domains: policyFromEnv(c.env).allowedDomains,
         tenantCount: policyFromEnv(c.env).allowedTenantIds.length,
@@ -543,7 +548,6 @@ app.get("/admin", async (c) => {
 app.get("/admin/activity", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   return render(c, <OrgActivityPage user={user} rows={await orgActivity(c.env.DB, user.orgId)} />);
 });
 
@@ -553,7 +557,6 @@ app.get("/admin/activity", async (c) => {
 app.post("/admin/compare", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   const { results } = await c.env.DB.prepare(
     `SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.org_id = ?`,
   )
@@ -580,9 +583,35 @@ app.post("/admin/compare", async (c) => {
 app.post("/admin/test-alert", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/");
-  if (user.role !== "admin") return c.notFound();
   const outcome = await sendTestAlert(c.env, { orgId: user.orgId, userId: user.id });
   return c.redirect(`/admin?alert=${outcome}`);
+});
+
+// Whether members may use MCP. Tokens and apps of members stay while it is off, and stop working.
+app.post("/admin/mcp-policy", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/");
+  if (!mcpEnabled(c.env)) return c.notFound();
+  const form = await c.req.parseBody();
+  const parsed = mcpForMembersSchema.safeParse(form.mcpForMembers);
+  if (!parsed.success) {
+    const { t } = i18nFromContext(c);
+    return render(
+      c,
+      <MessagePage user={user} title={t.messages.notAllowed} message={t.admin.mcpInvalid} />,
+      400,
+    );
+  }
+  await c.env.DB.prepare("UPDATE orgs SET mcp_for_members = ? WHERE id = ?")
+    .bind(parsed.data, user.orgId)
+    .run();
+  await recordAudit(c.env.DB, {
+    orgId: user.orgId,
+    userId: user.id,
+    kind: "mcp_policy_changed",
+    detail: { mcpForMembers: parsed.data },
+  });
+  return c.redirect("/admin");
 });
 
 // An unexpected error gets a page in the user's language, or a short text for the editor

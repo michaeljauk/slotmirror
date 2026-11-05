@@ -15,10 +15,10 @@
     "check": "pnpm typecheck && pnpm test"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.4.6",
+    "@cloudflare/vitest-plugin": "1.4.12",
     "typescript": "7.0.2",
     "vitest": "5.0.5",
-    "wrangler": "4.151.3"
+    "wrangler": "4.156.1"
   },
   "engines": {
     "node": ">=22"

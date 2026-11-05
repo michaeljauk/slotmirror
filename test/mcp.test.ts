@@ -191,13 +191,17 @@ describe("access to /mcp", () => {
   it("refuses a request without a token, and points to Bearer", async () => {
     const response = await post({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    expect(response.headers.get("www-authenticate")).toBe(
+      `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp", scope="mcp:read"`,
+    );
   });
 
   it("names an invalid token as such, as RFC 6750 asks", async () => {
     const response = await legacy(`sm_pat_${"b".repeat(43)}`, "tools/list");
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"');
+    expect(response.headers.get("www-authenticate")).toBe(
+      `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp", scope="mcp:read"`,
+    );
   });
 
   it("refuses a session cookie without a token", async () => {

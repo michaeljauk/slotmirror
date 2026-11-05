@@ -400,6 +400,40 @@ export const de: Messages = {
     revoke: "Widerrufen",
     invalid: "Gib einen Namen ein und wähle eine Laufzeit.",
     limitReached: "Du hast die Höchstzahl aktiver Tokens. Widerrufe zuerst einen.",
+    appsTitle: "Verbundene Apps",
+    appsLead:
+      "Apps, denen du mit deiner Anmeldung das Lesen erlaubt hast, etwa Claude. Sie bekommen keinen Token zum Kopieren.",
+    appsEmpty: "Keine verbundenen Apps.",
+    app: "App",
+    connected: "Verbunden",
+    refreshed: "Zuletzt erneuert",
+    disconnect: "Trennen",
+  },
+  consent: {
+    title: "App verbinden",
+    asks: (name: string) => `„${name}“ möchte deine slotmirror-Daten lesen.`,
+    can: [
+      "Deine verbundenen Konten und ob eines neu verbunden werden muss.",
+      "Deine Regeln, mit Detailstufe und aktiven Filtern.",
+      "Den Stand des letzten Syncs jeder Regel.",
+    ],
+    unchecked:
+      "Die App hat diesen Namen selbst gewählt; slotmirror hat ihn nicht geprüft. Erlaube nur, wenn du diese Verbindung selbst gestartet hast. Die App kann lesen, nie ändern, und sieht keine Termininhalte.",
+    returnsTo: (host: string) => `Deine Antwort geht zurück an ${host}.`,
+    allow: "Erlauben",
+    deny: "Ablehnen",
+    unnamed: "Eine App ohne Namen",
+    problemTitle: "Die App kann sich nicht verbinden",
+    unknownApp:
+      "Diese App ist bei dieser Instanz nicht registriert. Starte die Verbindung in der App neu.",
+    badRedirect:
+      "Die App wollte an eine Adresse zurück, die sie nicht registriert hat. Es wurde nichts gesendet.",
+    expired:
+      "Diese Anfrage ist abgelaufen oder gehört zu einer anderen Anmeldung. Starte die Verbindung in der App neu.",
+    badRequest: (code: string) =>
+      `Die App hat eine Anfrage gesendet, die diese Instanz nicht annehmen kann (${code}). Aktualisiere die App oder starte die Verbindung neu.`,
+    tooManyApps: (max: number) =>
+      `Du hast ${max} verbundene Apps. Trenne zuerst eine unter API-Tokens.`,
   },
   privacy: {
     title: "Datenschutz",
@@ -415,8 +449,8 @@ export const de: Messages = {
       "OAuth-Tokens je verbundenem Konto, verschlüsselt mit AES-256-GCM.",
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
-      "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
-      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe und der Datenbankzeilen, die sie gelesen haben, am Tag deines letzten Aufrufs.",
+      "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser. Während du dich anmeldest, um eine App zu verbinden: für 10 Minuten ein Cookie mit der Anfrage dieser App.",
+      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe und der Datenbankzeilen, die sie gelesen haben, am Tag deines letzten Aufrufs. Für jede verbundene App: wann du sie verbunden hast und ein Hash ihres Refresh-Tokens.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:
@@ -445,9 +479,10 @@ export const de: Messages = {
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
     deleteUser: "Löschen",
-    revokeTokens: (count) => (count === 1 ? "1 API-Token beenden" : `${count} API-Tokens beenden`),
+    revokeTokens: (count) =>
+      count === 1 ? "1 Token oder App beenden" : `${count} Tokens und Apps beenden`,
     revokeTokensHint:
-      "Beendet die API-Tokens der Person sofort. Das Entfernen im Identity Provider tut das nicht.",
+      "Beendet die API-Tokens und verbundenen Apps der Person sofort. Das Entfernen im Identity Provider tut das nicht.",
     resetSignIn: "Anmeldung zurücksetzen",
     resetSignInHint:
       "Löst die Bindung an das Microsoft- oder Google-Konto und beendet die Sitzungen. 24 Stunden lang bindet eine Anmeldung unter einer bestätigten Adresse die Person an ein neues Konto; das bisherige Konto bleibt gesperrt. Danach ist ein neuer Reset nötig.",
@@ -537,6 +572,8 @@ export const de: Messages = {
       compare_failed: "Vergleich fehlgeschlagen",
       api_token_created: "API-Token erstellt",
       api_token_revoked: "API-Token widerrufen",
+      mcp_app_connected: "App verbunden",
+      mcp_app_disconnected: "App getrennt",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} neu, ${update} geändert, ${remove} entfernt`,

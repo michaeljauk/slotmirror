@@ -396,6 +396,39 @@ export const en = {
     revoke: "Revoke",
     invalid: "Enter a name and choose a lifetime.",
     limitReached: "You have the maximum of active tokens. Revoke one first.",
+    appsTitle: "Connected apps",
+    appsLead:
+      "Apps that you allowed to read your data with your sign-in, such as Claude. They get no token to copy.",
+    appsEmpty: "No connected apps.",
+    app: "App",
+    connected: "Connected",
+    refreshed: "Last refresh",
+    disconnect: "Disconnect",
+  },
+  consent: {
+    title: "Connect an app",
+    asks: (name: string) => `“${name}” wants to read your slotmirror data.`,
+    can: [
+      "Your connected accounts and whether one needs reconnecting.",
+      "Your rules, with their detail level and which filters are on.",
+      "The state of the last sync of each rule.",
+    ],
+    unchecked:
+      "The app chose this name itself; slotmirror did not check it. Allow only if you started this connection. The app can read, never change, and sees no event content.",
+    returnsTo: (host: string) => `Your answer goes back to ${host}.`,
+    allow: "Allow",
+    deny: "Deny",
+    unnamed: "An unnamed app",
+    problemTitle: "The app cannot connect",
+    unknownApp:
+      "This app is not registered with this deployment. Start the connection in the app again.",
+    badRedirect: "The app asked to return to an address it did not register. Nothing was sent.",
+    expired:
+      "This request has expired or belongs to another sign-in. Start the connection in the app again.",
+    badRequest: (code: string) =>
+      `The app sent a request this deployment cannot take (${code}). Update the app or start the connection again.`,
+    tooManyApps: (max: number) =>
+      `You have ${max} connected apps. Disconnect one under API tokens first.`,
   },
   privacy: {
     title: "Privacy",
@@ -411,8 +444,8 @@ export const en = {
       "OAuth tokens for each connected account, encrypted with AES-256-GCM.",
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
-      "A session cookie and a language cookie in your browser.",
-      "If you create an API token: a hash of it, its last four characters, its name and when it was last used. For agents: the number of tool calls and the database rows they read, on the day of your last call.",
+      "A session cookie and a language cookie in your browser. While you sign in to connect an app: for 10 minutes, a cookie with that app's request.",
+      "If you create an API token: a hash of it, its last four characters, its name and when it was last used. For agents: the number of tool calls and the database rows they read, on the day of your last call. For each app you connect: when you connected it and a hash of its refresh token.",
     ],
     notStoredTitle: "What is not stored",
     notStored:
@@ -441,9 +474,10 @@ export const en = {
     never: "never",
     onlyAdmins: "Only admins can open this page.",
     deleteUser: "Delete",
-    revokeTokens: (count: number) => (count === 1 ? "End 1 API token" : `End ${count} API tokens`),
+    revokeTokens: (count: number) =>
+      count === 1 ? "End 1 token or app" : `End ${count} tokens and apps`,
     revokeTokensHint:
-      "Ends the user's API tokens at once. Removing someone in the identity provider does not do this.",
+      "Ends the user's API tokens and connected apps at once. Removing someone in the identity provider does not do this.",
     resetSignIn: "Reset sign-in",
     resetSignInHint:
       "Unbinds the user from their Microsoft or Google account and ends their sessions. For 24 hours, a sign-in under a verified address binds them to a new account; the previous account stays refused. After that, reset again.",
@@ -532,6 +566,8 @@ export const en = {
       compare_failed: "Comparison failed",
       api_token_created: "API token created",
       api_token_revoked: "API token revoked",
+      mcp_app_connected: "App connected",
+      mcp_app_disconnected: "App disconnected",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} new, ${update} changed, ${remove} removed`,

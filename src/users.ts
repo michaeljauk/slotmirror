@@ -202,16 +202,26 @@ export async function resetSignInBinding(
   )
     .bind(user.id, user.orgId)
     .run();
-  // The new session version ends these tokens already. This frees their slots.
-  const tokens = await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?")
-    .bind(user.id)
-    .run();
-  if (tokens.meta.changes) {
+  // The new session version ends these tokens and app grants already. This frees their slots.
+  const [tokens, grants] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM oauth_grants WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM oauth_codes WHERE user_id = ?").bind(user.id),
+  ]);
+  if (tokens?.meta.changes) {
     await recordAudit(env.DB, {
       orgId: user.orgId,
       userId: user.id,
       kind: "api_token_revoked",
       detail: { count: tokens.meta.changes, by },
+    });
+  }
+  if (grants?.meta.changes) {
+    await recordAudit(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      kind: "mcp_app_disconnected",
+      detail: { count: grants.meta.changes, by },
     });
   }
   await recordAudit(env.DB, {

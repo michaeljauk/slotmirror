@@ -31,6 +31,7 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `src/routes/`                     | Route groups (OAuth in `auth.tsx`)                                                |
 | `src/mcp.ts`, `src/read-model.ts` | Read-only MCP endpoint: protocol, and the fields that tools may show              |
 | `src/api-tokens.ts`               | Personal API tokens: hashes, expiry, the daily limit of tool calls                |
+| `src/mcp-oauth.ts`                | OAuth for MCP: metadata, client registration, codes, grants, signed access tokens |
 | `src/account-sync.ts`             | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
 | `src/offboarding.ts`              | Removing accounts and users: rule holds, jobs, retirement                         |
 | `src/cleanup.ts`                  | Tombstones of offboarding jobs: end state and the blocks left per calendar        |

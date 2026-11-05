@@ -8,6 +8,7 @@ import {
 } from "../api-tokens";
 import type { AppEnv } from "../app-env";
 import { mcpEnabled } from "../config";
+import { disconnectApp, listConnectedApps } from "../mcp-oauth";
 import { i18nFromContext } from "../i18n";
 import { TokensPage } from "../pages/tokens";
 import { render } from "../render";
@@ -46,6 +47,7 @@ async function renderPage(
     <TokensPage
       user={user}
       tokens={await listApiTokens(c.env.DB, user.id)}
+      apps={await listConnectedApps(c.env.DB, user.id)}
       endpoint={endpoint(c)}
       {...extra}
     />,
@@ -70,6 +72,11 @@ tokens.post("/", async (c) => {
   const created = await createApiToken(c.env, currentUser(c), { name, days });
   if (!created) return renderPage(c, { problem: t.tokens.limitReached }, 409);
   return renderPage(c, { created: created.token });
+});
+
+tokens.post("/apps/:id/revoke", async (c) => {
+  await disconnectApp(c.env, currentUser(c), c.req.param("id"));
+  return c.redirect("/tokens");
 });
 
 tokens.post("/:id/revoke", async (c) => {

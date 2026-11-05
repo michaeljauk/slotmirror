@@ -2976,3 +2976,25 @@ details.swatch > summary::-webkit-details-marker {
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+.consent .card {
+  max-width: 560px;
+  padding: 24px;
+}
+
+.consent-list {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--text);
+}
+
+.consent-list li {
+  margin: 4px 0;
+}
+
+.consent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}

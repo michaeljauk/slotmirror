@@ -5,6 +5,7 @@ import {
   type ApiToken,
 } from "../api-tokens";
 import { useI18n } from "../i18n";
+import type { ConnectedApp } from "../mcp-oauth";
 import type { CurrentUser } from "../users";
 import { Layout } from "./layout";
 
@@ -12,6 +13,7 @@ import { Layout } from "./layout";
 export function TokensPage(props: {
   user: CurrentUser;
   tokens: ApiToken[];
+  apps: ConnectedApp[];
   endpoint: string;
   created?: string;
   problem?: string;
@@ -102,6 +104,53 @@ export function TokensPage(props: {
                       <form method="post" action={`/tokens/${token.id}/revoke`} class="inline-form">
                         <button type="submit" class="link-button quiet">
                           {t.tokens.revoke}
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>{t.tokens.appsTitle}</h2>
+            <p class="lead">{t.tokens.appsLead}</p>
+          </div>
+        </div>
+        {props.apps.length === 0 ? (
+          <p class="muted">{t.tokens.appsEmpty}</p>
+        ) : (
+          <div class="card">
+            <table class="table stack">
+              <thead>
+                <tr>
+                  <th>{t.tokens.app}</th>
+                  <th>{t.tokens.connected}</th>
+                  <th>{t.tokens.refreshed}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {props.apps.map((app) => (
+                  <tr>
+                    <td data-label={t.tokens.app}>{app.name || t.consent.unnamed}</td>
+                    <td data-label={t.tokens.connected}>{formatTimestamp(app.createdAt)}</td>
+                    <td class="muted" data-label={t.tokens.refreshed}>
+                      {app.refreshedAt ? formatTimestamp(app.refreshedAt) : t.tokens.never}
+                    </td>
+                    <td>
+                      <form
+                        method="post"
+                        action={`/tokens/apps/${app.id}/revoke`}
+                        class="inline-form"
+                      >
+                        <button type="submit" class="link-button quiet">
+                          {t.tokens.disconnect}
                         </button>
                       </form>
                     </td>

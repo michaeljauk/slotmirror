@@ -2,6 +2,31 @@
 // overview at once; the bar at the bottom saves every change of the page in one request.
 // Without this script every button is a plain form submit, so the editor also works without it.
 
+// A form with data-hold, such as the consent to connect an app, keeps its buttons off until the
+// page has been visible and focused for a moment. A click meant for another window, or a double
+// click that opens this page under the pointer (double-clickjacking), then lands on nothing.
+{
+  const held = [...document.querySelectorAll("form[data-hold] button")];
+  if (held.length > 0) {
+    let timer;
+    const hold = () => {
+      clearTimeout(timer);
+      for (const button of held) button.disabled = true;
+    };
+    const release = () => {
+      hold();
+      if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+      timer = setTimeout(() => {
+        for (const button of held) button.disabled = false;
+      }, 800);
+    };
+    document.addEventListener("visibilitychange", release);
+    window.addEventListener("focus", release);
+    window.addEventListener("blur", hold);
+    release();
+  }
+}
+
 // A copy button copies the value of the field it names; without the script, the field is selectable.
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-copy]");

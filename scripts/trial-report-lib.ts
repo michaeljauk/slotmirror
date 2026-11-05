@@ -37,6 +37,8 @@ const KNOWN_RELEVANT = new Set([
 const KNOWN_IGNORED = new Set([
   "api_token_created",
   "api_token_revoked",
+  "mcp_app_connected",
+  "mcp_app_disconnected",
   "alert_test",
   "sign_in",
   "sign_in_refused",

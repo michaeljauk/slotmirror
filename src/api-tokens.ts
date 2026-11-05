@@ -1,4 +1,5 @@
 import { recordAudit } from "./audit";
+import { disconnectUserApps } from "./mcp-oauth";
 import { base64url } from "./session";
 import { loadUser, type SignedInUser } from "./users";
 
@@ -138,7 +139,9 @@ export async function revokeApiToken(
   return true;
 }
 
-/** End every token of a user. For an admin, who cannot see the user's tokens one by one. */
+/**
+ * End every token and connected app of a user. For an admin, who cannot see them one by one.
+ */
 export async function revokeUserTokens(
   env: Env,
   user: { id: string; orgId: string },
@@ -147,13 +150,23 @@ export async function revokeUserTokens(
   const deleted = await env.DB.prepare("DELETE FROM api_tokens WHERE user_id = ?")
     .bind(user.id)
     .run();
-  if (!deleted.meta.changes) return;
-  await recordAudit(env.DB, {
-    orgId: user.orgId,
-    userId: user.id,
-    kind: "api_token_revoked",
-    detail: { count: deleted.meta.changes, by },
-  });
+  if (deleted.meta.changes) {
+    await recordAudit(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      kind: "api_token_revoked",
+      detail: { count: deleted.meta.changes, by },
+    });
+  }
+  const apps = await disconnectUserApps(env.DB, user.id);
+  if (apps) {
+    await recordAudit(env.DB, {
+      orgId: user.orgId,
+      userId: user.id,
+      kind: "mcp_app_disconnected",
+      detail: { count: apps, by },
+    });
+  }
 }
 
 /**

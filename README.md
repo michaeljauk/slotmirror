@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
@@ -90,7 +90,7 @@ a Cloudflare account (the free plan is enough), an account at one provider (Micr
 Google) with the right to create an OAuth app, and a way to generate two random secrets. The order
 is: deploy, read the address of your Worker, create the OAuth app, set the secrets.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/slotmirror/slotmirror)
 
 Before you click, read the quickstart: the button asks for `SESSION_SECRET` and
 `TOKEN_ENCRYPTION_KEY`, and the quickstart shows how to generate them. Leave the provider fields

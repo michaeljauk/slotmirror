@@ -283,7 +283,8 @@ describe("personal tokens while MCP is off for members", () => {
     await setMcpForMembers("off");
     const refused = await mcpList(token);
     expect(refused.status).toBe(403);
-    expect(refused.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    // No step-up challenge: a client would only start an authorization that is refused too.
+    expect(refused.headers.get("www-authenticate")).toBeNull();
     const body = (await refused.json()) as { error: { message: string } };
     expect(body.error.message).toBe(en.mcp.errors.membersOff);
     expect(await tokenCount(user.id)).toBe(1);
@@ -373,6 +374,11 @@ describe("the MCP setting in the admin page", () => {
     expect(on.status).toBe(302);
     expect(await storedSetting()).toBe("all");
 
+    // Saving the same value again is no change.
+    expect((await postForm("/admin/mcp-policy", { mcpForMembers: "all" }, { cookie })).status).toBe(
+      302,
+    );
+
     const { results } = await env.DB.prepare(
       "SELECT detail FROM audit_events WHERE kind = 'mcp_policy_changed' ORDER BY id",
     ).all<{ detail: string }>();
@@ -386,6 +392,7 @@ describe("the MCP setting in the admin page", () => {
     const { cookie } = await signIn("admin@example.com");
     const response = await postForm("/admin/mcp-policy", { mcpForMembers: "some" }, { cookie });
     expect(response.status).toBe(400);
+    expect(await response.text()).toContain(en.admin.mcpInvalid);
     expect(await storedSetting()).toBe("all");
   });
 

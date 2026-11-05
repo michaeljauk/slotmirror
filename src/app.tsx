@@ -168,18 +168,19 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// Every route below asks `can` for its action in `ROUTE_NEEDS`; a route without an entry is 404.
-app.use(
-  "*",
-  routePermissions((c, message) => {
-    const { t } = i18nFromContext(c);
-    return render(
-      c,
-      <MessagePage user={c.get("user")} title={t.messages.notAllowed} message={message(t)} />,
-      403,
-    );
-  }),
-);
+/**
+ * Every route below asks `can` for its action in `ROUTE_NEEDS`; a route without an entry is 404.
+ * A test checks that only routes with their own check are registered above this line.
+ */
+export const permissionGate = routePermissions((c, message) => {
+  const { t } = i18nFromContext(c);
+  return render(
+    c,
+    <MessagePage user={c.get("user")} title={t.messages.notAllowed} message={message(t)} />,
+    403,
+  );
+});
+app.use("*", permissionGate);
 
 app.route("/auth", auth);
 app.route("/rules", rules);
@@ -598,13 +599,17 @@ app.post("/admin/mcp-policy", async (c) => {
     const { t } = i18nFromContext(c);
     return render(
       c,
-      <MessagePage user={user} title={t.messages.notAllowed} message={t.admin.mcpInvalid} />,
+      <MessagePage user={user} title={t.admin.mcpTitle} message={t.admin.mcpInvalid} />,
       400,
     );
   }
-  await c.env.DB.prepare("UPDATE orgs SET mcp_for_members = ? WHERE id = ?")
-    .bind(parsed.data, user.orgId)
+  // Only a real change reaches the log; saving the same value again writes nothing.
+  const updated = await c.env.DB.prepare(
+    "UPDATE orgs SET mcp_for_members = ? WHERE id = ? AND mcp_for_members IS NOT ?",
+  )
+    .bind(parsed.data, user.orgId, parsed.data)
     .run();
+  if (!updated.meta.changes) return c.redirect("/admin");
   await recordAudit(c.env.DB, {
     orgId: user.orgId,
     userId: user.id,

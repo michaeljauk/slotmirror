@@ -70,16 +70,22 @@ const ADMIN_ONLY: readonly Action[] = [
   "dev:tools",
 ];
 
+/** Actions that exist only while the deployment has MCP_ENABLED=1. Their routes are 404 without. */
+export const MCP_ACTIONS: ReadonlySet<Action> = new Set<Action>([...MEMBER_MCP, "mcp:write"]);
+
+// The three possible sets, built once: `can` runs several times per request.
+const ADMIN_GRANTS: ReadonlySet<Action> = new Set([...SELF_SERVICE, ...MEMBER_MCP, ...ADMIN_ONLY]);
+const MEMBER_GRANTS: ReadonlySet<Action> = new Set([...SELF_SERVICE, ...MEMBER_MCP]);
+const MEMBER_GRANTS_WITHOUT_MCP: ReadonlySet<Action> = new Set(SELF_SERVICE);
+
 /**
  * The actions of a user from slotmirror's own roles and org settings. Another source, such as
  * roles from the identity provider, may only remove actions from this set, never add one.
  * `mcp:write` belongs to nobody until a tool writes.
  */
 export function nativeGrants(principal: Principal): ReadonlySet<Action> {
-  if (principal.role === "admin") return new Set([...SELF_SERVICE, ...MEMBER_MCP, ...ADMIN_ONLY]);
-  return new Set(
-    principal.mcpForMembers === "all" ? [...SELF_SERVICE, ...MEMBER_MCP] : SELF_SERVICE,
-  );
+  if (principal.role === "admin") return ADMIN_GRANTS;
+  return principal.mcpForMembers === "all" ? MEMBER_GRANTS : MEMBER_GRANTS_WITHOUT_MCP;
 }
 
 export function can(principal: Principal, action: Action): boolean {

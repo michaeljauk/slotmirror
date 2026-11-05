@@ -207,11 +207,9 @@ mcp.use("*", async (c, next) => {
     return rpcError(c, 401, undefined, SERVER_ERROR, t.errors.unauthorized);
   }
   // The token stays, as after a change of the access policy; the org's setting may come back.
+  // No `insufficient_scope` challenge: a client would start a new authorization, which the
+  // consent page refuses as well.
   if (!can(user, "mcp:read")) {
-    c.header(
-      "WWW-Authenticate",
-      `Bearer error="insufficient_scope", resource_metadata="${resourceMetadataUrl(issuer)}"`,
-    );
     return rpcError(c, 403, undefined, SERVER_ERROR, t.errors.membersOff);
   }
   c.set("user", user);

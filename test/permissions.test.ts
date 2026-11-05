@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { app } from "../src/app";
+import { app, permissionGate } from "../src/app";
 import {
   ACTIONS,
   can,
@@ -94,6 +94,37 @@ describe("route needs", () => {
   it("names no route that the app does not have", () => {
     const stale = Object.keys(ROUTE_NEEDS).filter((route) => !registered.includes(route));
     expect(stale).toEqual([]);
+  });
+
+  it("registers every route after the permission gate, except those with their own check", () => {
+    const gate = app.routes.findIndex((route) => route.handler === permissionGate);
+    expect(gate).toBeGreaterThan(0);
+    const before = [
+      ...new Set(
+        app.routes
+          .slice(0, gate)
+          .filter((route) => route.method !== "ALL")
+          .map((route) => `${route.method} ${route.path}`),
+      ),
+    ].sort();
+    // Each of these checks its own credential: a webhook signature, a token, an OAuth client.
+    expect(before).toEqual(
+      [
+        "GET /.well-known/oauth-authorization-server",
+        "GET /.well-known/oauth-protected-resource",
+        "GET /.well-known/oauth-protected-resource/mcp",
+        "GET /healthz",
+        "GET /privacy",
+        "POST /mcp",
+        "POST /oauth/register",
+        "POST /oauth/revoke",
+        "POST /oauth/token",
+        "POST /webhooks/google",
+        "POST /webhooks/microsoft",
+      ].sort(),
+    );
+    const selfChecked = before.filter((route) => ROUTE_NEEDS[route] !== "public");
+    expect(selfChecked).toEqual(["POST /mcp", "POST /oauth/token"]);
   });
 
   it("names only actions of the catalog", () => {

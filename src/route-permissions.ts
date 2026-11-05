@@ -3,7 +3,7 @@ import { matchedRoutes } from "hono/route";
 import type { AppEnv } from "./app-env";
 import { mcpEnabled } from "./config";
 import type { Messages } from "./i18n";
-import { can, type Action } from "./permissions";
+import { can, MCP_ACTIONS, type Action } from "./permissions";
 
 /**
  * What a route needs:
@@ -90,9 +90,6 @@ export const ROUTE_NEEDS: Readonly<Record<string, RouteNeed>> = {
   "POST /dev/cycle": "dev:tools",
   "GET /dev/stats": "dev:tools",
 };
-
-/** Actions that exist only while the deployment has MCP on. Without it their routes are 404. */
-const MCP_ACTIONS: ReadonlySet<Action> = new Set(["tokens:create", "apps:connect", "mcp:read"]);
 
 /** Refusals that get a page instead of a 404, because a person follows a link to them. */
 const REFUSAL_PAGES: Readonly<Record<string, (t: Messages) => string>> = {

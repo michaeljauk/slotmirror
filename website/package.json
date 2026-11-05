@@ -14,7 +14,7 @@
     "@astrojs/sitemap": "3.7.4",
     "@astrojs/starlight": "0.42.8",
     "astro": "7.4.4",
-    "posthog-js": "1.439.2",
+    "posthog-js": "1.444.2",
     "sharp": "0.35.5"
   },
   "devDependencies": {

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Waitlist API for the hosted slotmirror version. Separate Worker with its own D1 database.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

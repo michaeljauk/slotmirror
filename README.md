@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -433,4 +433,11 @@ Built by [Michael Jauk](https://github.com/michaeljauk). If this saves you time,
 
 ## License
 
-[MIT](./LICENSE) © Michael Jauk
+slotmirror is licensed under the [GNU Affero General Public License v3.0](./LICENSE)
+(`AGPL-3.0-only`). See the [FAQ](https://slotmirror.com/docs/faq/) for what that means in plain words.
+
+Code up to and including commit `fde4b24` stays available under the MIT license. Its text and
+copyright line are in [LICENSE-MIT](./LICENSE-MIT). Later changes are under AGPL-3.0 only.
+
+Contributions need a signed [Contributor License Agreement](./CLA.md). The CLA bot posts the
+signing link on your pull request.

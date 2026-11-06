@@ -41,6 +41,14 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter website
       - run: pnpm --filter website build
         env:
+          # The operator for the imprint and the privacy notice, from the repository variables
+          # OPERATOR_*. The repository holds no operator data. See website/src/operator.ts.
+          PUBLIC_OPERATOR_NAME: ${{ vars.OPERATOR_NAME }}
+          PUBLIC_OPERATOR_ADDRESS: ${{ vars.OPERATOR_ADDRESS }}
+          PUBLIC_OPERATOR_EMAIL: ${{ vars.OPERATOR_EMAIL }}
+          PUBLIC_OPERATOR_DETAILS: ${{ vars.OPERATOR_DETAILS }}
+          # Without the operator variables the build fails, so no page without an imprint goes live.
+          REQUIRE_OPERATOR: "true"
           # Public project key of PostHog. Empty: the site loads no analytics.
           PUBLIC_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
           # Address of the waitlist Worker and the public Turnstile site key. Both empty: the

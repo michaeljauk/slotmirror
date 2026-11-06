@@ -1,0 +1,30 @@
+---
+import "../styles/legal.css";
+import MissingOperator from "../components/MissingOperator.astro";
+import OperatorBlock from "../components/OperatorBlock.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { Content } from "../legal/privacy.md";
+import { operator } from "../operator";
+---
+
+<SiteLayout
+  title="Privacy notice: slotmirror"
+  description="What slotmirror.com and its documentation process, why, and your rights."
+  noindex={!operator}
+>
+  <article class="legal">
+    <h1>Privacy notice</h1>
+    {
+      operator ? (
+        <>
+          <p class="updated">Last updated: 6 November 2026.</p>
+          <h2>Controller</h2>
+          <OperatorBlock operator={operator} />
+          <Content />
+        </>
+      ) : (
+        <MissingOperator />
+      )
+    }
+  </article>
+</SiteLayout>

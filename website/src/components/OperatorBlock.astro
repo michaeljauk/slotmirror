@@ -1,0 +1,39 @@
+---
+// The operator's name, address and contact, as the imprint and the privacy notice show them.
+import type { Operator } from "../operator";
+
+interface Props {
+  operator: Operator;
+  details?: boolean;
+}
+const { operator, details = false } = Astro.props;
+---
+
+<address class="operator">
+  <strong>{operator.name}</strong><br />
+  {
+    operator.address.map((line) => (
+      <>
+        {line}
+        <br />
+      </>
+    ))
+  }
+  Email: <a href={`mailto:${operator.email}`}>{operator.email}</a>
+  {
+    details &&
+      operator.details.map((line) => (
+        <>
+          <br />
+          {line}
+        </>
+      ))
+  }
+</address>
+
+<style>
+  .operator {
+    font-style: normal;
+    line-height: 1.7;
+  }
+</style>

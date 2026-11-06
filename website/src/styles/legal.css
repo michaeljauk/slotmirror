@@ -1,0 +1,57 @@
+/* The imprint and the privacy notice: one readable column in the site's type. */
+.legal {
+  width: min(640px, 100% - 40px);
+  margin-inline: auto;
+  padding: clamp(32px, 6vw, 72px) 0 clamp(24px, 4vw, 48px);
+}
+
+.legal h1 {
+  font-size: clamp(36px, 4.4vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  font-weight: 700;
+  margin: 0 0 28px;
+}
+
+.legal h2 {
+  font-size: clamp(22px, 2.2vw, 28px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 48px 0 12px;
+}
+
+.legal p,
+.legal li {
+  color: var(--text);
+}
+
+.legal ul {
+  padding-left: 1.2em;
+}
+
+.legal li + li {
+  margin-top: 8px;
+}
+
+.legal a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.legal code {
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--grid);
+}
+
+.legal .updated {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+@media (max-width: 640px) {
+  .legal {
+    width: calc(100% - 32px);
+  }
+}

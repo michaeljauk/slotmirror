@@ -72,7 +72,7 @@ export default defineConfig({
       },
       favicon: "/favicon.svg",
       head,
-      components: { Head: "./src/components/Head.astro" },
+      components: { Head: "./src/components/Head.astro", Footer: "./src/components/Footer.astro" },
       routeMiddleware: "./src/route-data.ts",
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/website/` },

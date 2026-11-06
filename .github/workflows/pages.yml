@@ -40,8 +40,16 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter website
-      # This build has no analytics key, so it loads no analytics.
+      # This build has no analytics key, so it loads no analytics. The operator variables are the
+      # same as in website-deploy.yml.
       - run: pnpm --filter website build
+        env:
+          PUBLIC_OPERATOR_NAME: ${{ vars.OPERATOR_NAME }}
+          PUBLIC_OPERATOR_ADDRESS: ${{ vars.OPERATOR_ADDRESS }}
+          PUBLIC_OPERATOR_EMAIL: ${{ vars.OPERATOR_EMAIL }}
+          PUBLIC_OPERATOR_DETAILS: ${{ vars.OPERATOR_DETAILS }}
+          # Without the operator variables the build fails, so no page without an imprint goes live.
+          REQUIRE_OPERATOR: "true"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: website/dist

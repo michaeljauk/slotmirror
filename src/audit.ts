@@ -311,10 +311,45 @@ export function errorLogFields(error: unknown): string[] {
   const fields = [error.name];
   const code = safeCode(error);
   if (code) fields.push(code);
-  const message = safeMessage(error);
+  const message = safeMessage(error) ?? schemaIssues(error);
   if (message) fields.push(message);
   fields.push(stackFrames(error));
   return fields;
+}
+
+const ISSUE_CODE = /^[a-z_]{1,40}$/;
+const PATH_KEY = /^[A-Za-z_$@][\w$@.-]{0,63}$/;
+const MAX_ISSUES = 5;
+
+/**
+ * A schema error as "schema <code>@<path> ...", for example "schema invalid_type@value.1.owner".
+ * A Zod error that crossed a Durable Object boundary keeps only its message, the JSON list of its
+ * issues, so the issues come from the error itself or from that message. Only the code and the
+ * path go into the log: never the expected or received values, and never Zod's text.
+ */
+function schemaIssues(error: Error): string | undefined {
+  let issues: unknown = (error as { issues?: unknown }).issues;
+  if (issues === undefined) {
+    if (!error.message.startsWith("[")) return undefined;
+    try {
+      issues = JSON.parse(error.message);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(issues) || issues.length === 0) return undefined;
+  const parts: string[] = [];
+  for (const issue of issues.slice(0, MAX_ISSUES)) {
+    const { code, path } = (issue ?? {}) as { code?: unknown; path?: unknown };
+    if (typeof code !== "string" || !ISSUE_CODE.test(code) || !Array.isArray(path)) {
+      return undefined;
+    }
+    const keys = path.map((key) =>
+      typeof key === "number" || (typeof key === "string" && PATH_KEY.test(key)) ? key : "?",
+    );
+    parts.push(`${code}@${keys.join(".")}`);
+  }
+  return `schema ${parts.join(" ")}`;
 }
 
 /** A short code for an error, safe to store: no response bodies, no event content. */

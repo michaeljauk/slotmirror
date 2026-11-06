@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { errorLogFields } from "../src/audit";
+import { errorCode, errorLogFields } from "../src/audit";
 import { GraphCalendar } from "../src/providers/graph-calendar";
+import { TokenError } from "../src/providers/oauth-token";
 
 /** Graph answers /me and /me/calendars; the second calendar has an owner of null. */
 function calendarsWithNullOwner(): void {
@@ -72,5 +73,15 @@ describe("schema errors in the log", () => {
     const fields = errorLogFields(new Error('[{"code":"SECRET VALUE","path":["a"]}]'));
     expect(JSON.stringify(fields)).not.toContain("SECRET");
     expect(fields.some((field) => field.startsWith("schema"))).toBe(false);
+  });
+});
+
+describe("token error codes in the log", () => {
+  it("keeps a code that is not a plain code out of errorCode", () => {
+    expect(errorCode(new TokenError("x for secret@example.com"))).toBe("token_unknown_error");
+  });
+
+  it("keeps a plain code", () => {
+    expect(errorCode(new TokenError("invalid_grant"))).toBe("token_invalid_grant");
   });
 });

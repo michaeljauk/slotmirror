@@ -1388,7 +1388,12 @@ export class AccountSync extends DurableObject<Env> {
     } catch (error) {
       // Logged here, where the error still has its class: over RPC the caller gets a plain Error,
       // and a token code or a schema error loses its reason there.
-      console.error("Listing calendars failed", errorCode(error), ...errorLogFields(error));
+      console.error(
+        "Listing calendars failed",
+        this.accountIdOrNull(),
+        errorCode(error),
+        ...errorLogFields(error),
+      );
       throw error;
     }
   }

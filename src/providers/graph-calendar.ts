@@ -58,7 +58,8 @@ const calendarsSchema = z.object({
       name: z.string(),
       canEdit: z.optional(z.boolean()),
       isDefaultCalendar: z.optional(z.boolean()),
-      owner: z.optional(z.object({ address: z.optional(z.nullable(z.string())) })),
+      // Graph sends "owner": null for some shared and group calendars.
+      owner: z.optional(z.nullable(z.object({ address: z.optional(z.nullable(z.string())) }))),
     }),
   ),
   "@odata.nextLink": z.optional(z.string()),

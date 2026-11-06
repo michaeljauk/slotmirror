@@ -4,15 +4,15 @@ import { errorCode, errorLogFields } from "../src/audit";
 import { GraphCalendar } from "../src/providers/graph-calendar";
 import { TokenError } from "../src/providers/oauth-token";
 
-/** Graph answers /me and /me/calendars; the second calendar has an owner of null. */
-function calendarsWithNullOwner(): void {
+/** Graph answers /me and /me/calendars; the second calendar has a canEdit that is not a boolean. */
+function calendarsWithBadField(): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = input instanceof Request ? input.url : String(input);
     const body = url.includes("/me/calendars")
       ? {
           value: [
             { id: "SECRET-ID-1", name: "SECRET-NAME", owner: { address: "secret@example.com" } },
-            { id: "SECRET-ID-2", name: "SECRET-SHARED", owner: null },
+            { id: "SECRET-ID-2", name: "SECRET-SHARED", canEdit: "SECRET-YES" },
           ],
         }
       : { mail: "secret@example.com", userPrincipalName: "secret@example.com" };
@@ -21,7 +21,7 @@ function calendarsWithNullOwner(): void {
 }
 
 async function schemaError(): Promise<Error> {
-  calendarsWithNullOwner();
+  calendarsWithBadField();
   const error = await new GraphCalendar("token").listCalendars().catch((caught: unknown) => caught);
   expect(error).toBeInstanceOf(Error);
   return error as Error;
@@ -34,13 +34,13 @@ afterEach(() => {
 describe("schema errors in the log", () => {
   it("names the issue code and path of a schema error", async () => {
     const fields = errorLogFields(await schemaError());
-    expect(fields).toContain("schema invalid_type@value.1.owner");
+    expect(fields).toContain("schema invalid_type@value.1.canEdit");
   });
 
   it("keeps the issue after the Durable Object boundary", async () => {
     // Over the boundary only a plain Error with the same message is left.
     const crossed = new Error((await schemaError()).message);
-    expect(errorLogFields(crossed)).toContain("schema invalid_type@value.1.owner");
+    expect(errorLogFields(crossed)).toContain("schema invalid_type@value.1.canEdit");
   });
 
   it("logs no value from the provider response", async () => {

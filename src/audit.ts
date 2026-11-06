@@ -363,7 +363,10 @@ function schemaIssues(error: Error): string | undefined {
 
 /** A short code for an error, safe to store: no response bodies, no event content. */
 export function errorCode(error: unknown): string {
-  if (error instanceof TokenError) return `token_${error.code}`;
+  if (error instanceof TokenError) {
+    // The code comes from the token endpoint; only a plain code goes into a log or the audit log.
+    return `token_${/^[a-z0-9_]{1,64}$/i.test(error.code) ? error.code : "unknown_error"}`;
+  }
   if (error instanceof GraphError) return withReason(`graph_${error.status}`, error.reason);
   if (error instanceof GoogleApiError) return withReason(`google_${error.status}`, error.reason);
   if (error instanceof Error) {

@@ -23,5 +23,7 @@
     "suite",
     "vitest.config.ts",
     "worker-configuration.d.ts"
-  ]
+  ],
+  // The Node runtime has its own typecheck with Node types: tsconfig.node.json.
+  "exclude": ["src/runtime/node"]
 }

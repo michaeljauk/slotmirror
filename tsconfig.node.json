@@ -1,0 +1,12 @@
+{
+  // Typecheck of the core for the Node runtime. Node types replace the workerd types, and
+  // src/runtime/node/cloudflare-globals.ts declares the Cloudflare names as the runtime subset.
+  // If the core uses a Cloudflare API outside src/runtime/types.ts, this check fails.
+  // src/index.tsx is the Cloudflare entry and stays with tsconfig.json.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["src/index.tsx"]
+}

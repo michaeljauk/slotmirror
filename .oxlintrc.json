@@ -1,0 +1,364 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["node:*"],
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "group": ["cloudflare:*"],
+                "message": "Only src/account-sync.ts imports cloudflare:workers. The Node runtime aliases it to a shim, see src/runtime/types.ts."
+              }
+            ],
+            "paths": [
+              {
+                "name": "assert",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "buffer",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "child_process",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "crypto",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "dns",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "events",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "fs",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "fs/promises",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "http",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "https",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "net",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "os",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "path",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "process",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "sqlite",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "stream",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "timers",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "tls",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "url",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "util",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "worker_threads",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "zlib",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              }
+            ]
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "property": "getHours",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getMinutes",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getSeconds",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getDate",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getDay",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getMonth",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getFullYear",
+            "message": "Local time differs per runtime. Use the UTC method or Intl with a timeZone."
+          },
+          {
+            "property": "getTimezoneOffset",
+            "message": "Local time differs per runtime. Use Intl with a timeZone."
+          },
+          {
+            "property": "setHours",
+            "message": "Local time differs per runtime. Use the UTC method."
+          },
+          {
+            "property": "setMinutes",
+            "message": "Local time differs per runtime. Use the UTC method."
+          },
+          {
+            "property": "setSeconds",
+            "message": "Local time differs per runtime. Use the UTC method."
+          },
+          {
+            "property": "setDate",
+            "message": "Local time differs per runtime. Use the UTC method."
+          },
+          {
+            "property": "setMonth",
+            "message": "Local time differs per runtime. Use the UTC method."
+          },
+          {
+            "property": "setFullYear",
+            "message": "Local time differs per runtime. Use the UTC method."
+          },
+          {
+            "property": "toLocaleString",
+            "message": "Local time differs per runtime. Use Intl.DateTimeFormat with a timeZone, or Intl.NumberFormat."
+          },
+          {
+            "property": "toLocaleDateString",
+            "message": "Local time differs per runtime. Use Intl.DateTimeFormat with a timeZone."
+          },
+          {
+            "property": "toLocaleTimeString",
+            "message": "Local time differs per runtime. Use Intl.DateTimeFormat with a timeZone."
+          },
+          {
+            "property": "getYear",
+            "message": "Local time differs per runtime. Use getUTCFullYear."
+          },
+          {
+            "property": "setYear",
+            "message": "Local time differs per runtime. Use setUTCFullYear."
+          },
+          {
+            "property": "toDateString",
+            "message": "Local time differs per runtime. Use Intl.DateTimeFormat with a timeZone."
+          },
+          {
+            "property": "toTimeString",
+            "message": "Local time differs per runtime. Use Intl.DateTimeFormat with a timeZone."
+          }
+        ],
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "process",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "Buffer",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "global",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "require",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "module",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "__dirname",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "__filename",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "setImmediate",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          },
+          {
+            "name": "clearImmediate",
+            "message": "workerd has no Node globals. Put Node code in src/runtime/node/."
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/account-sync.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["node:*"],
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              }
+            ],
+            "paths": [
+              {
+                "name": "assert",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "buffer",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "child_process",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "crypto",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "dns",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "events",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "fs",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "fs/promises",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "http",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "https",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "net",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "os",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "path",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "process",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "sqlite",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "stream",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "timers",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "tls",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "url",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "util",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "worker_threads",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "zlib",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/runtime/node/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["cloudflare:*"],
+                "message": "The Node runtime replaces cloudflare:* modules. It must not import them."
+              }
+            ]
+          }
+        ],
+        "no-restricted-globals": "off"
+      }
+    }
+  ]
+}

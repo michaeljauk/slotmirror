@@ -1,7 +1,13 @@
 ---
-import { Image } from "astro:assets";
-import editor from "../../../docs/images/editor.png";
-import "../styles/home.css";
+import Demo from "../components/Demo.astro";
+import DetailPicker from "../components/DetailPicker.astro";
+import Iso from "../components/Iso.astro";
+import Logo from "../components/Logo.astro";
+import SlotField from "../components/SlotField.astro";
+import { icons } from "../iso-scenes";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { detail, guides, hero, how, pillars } from "../home-content";
+import { cloudflare, github } from "../icons";
 import { previewAlt, previewHeight, previewWidth, repo } from "../site";
 
 // The search title is short enough for a result page (about 60 characters). Link previews keep
@@ -12,17 +18,19 @@ const description =
   "Sync Outlook and Google calendars as busy blocks. By default only Busy leaves a calendar. Self-hosted in your own Cloudflare account, on the free plan.";
 
 // Hero sentence, two variants. No latency has been measured yet, so the live variant names no
-// number. After the measurement, replace `null` with the measured values and the conditions, for example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }.
-// That one change turns on the second variant. Never fill in a figure that was not measured.
+// number. After the measurement, replace `null` with the measured values and the conditions, for
+// example { p50: "<value>", p95: "<value>", conditions: "<what was measured>" }. That one change
+// adds the second sentence. Never fill in a figure that was not measured.
 const latency: { p50: string; p95: string; conditions: string } | null = null;
 const heroSub = latency
-  ? `By default only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies in a median of ${latency.p50} (p95: ${latency.p95}; ${latency.conditions}). It runs in your own Cloudflare account on the free plan, with no server to run.`
-  : `By default only "Busy" leaves your calendar. A moved, cancelled or changed meeting updates its copies. It runs in your own Cloudflare account on the free plan, with no server to run. The default window is the next 90 days.`;
+  ? `${hero.sub} A moved meeting updates its copies in a median of ${latency.p50} (p95: ${latency.p95}; ${latency.conditions}).`
+  : hero.sub;
 
 // Links inside the site. The base comes from astro.config.mjs, the only place that sets it.
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const page = (path: string) => `${base}/${path}`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
+const pillar = (key: string) => pillars.find((item) => item.key === key)!;
 const preview = new URL(page("social-preview.png"), Astro.site);
 
 // The waitlist form shows only if both build variables are set. Without them nothing renders.
@@ -32,29 +40,6 @@ const waitlistUrl = (import.meta.env.PUBLIC_WAITLIST_URL as string | undefined)
 const turnstileKey = (import.meta.env.PUBLIC_TURNSTILE_SITE_KEY as string | undefined)?.trim();
 // An address without https:// would make a relative endpoint, so it counts as unset.
 const waitlist = Boolean(waitlistUrl?.startsWith("https://") && turnstileKey);
-
-const guides = [
-  {
-    slug: "sync-outlook-and-google-calendar",
-    title: "Sync Outlook and Google Calendar",
-    text: "Busy blocks or titles, in both directions.",
-  },
-  {
-    slug: "show-private-calendar-as-busy-at-work",
-    title: "Show your private calendar as busy at work",
-    text: "Block the time without showing what it is.",
-  },
-  {
-    slug: "sync-multiple-microsoft-365-tenants",
-    title: "Sync calendars across Microsoft 365 tenants",
-    text: "Two companies, or client tenants.",
-  },
-  {
-    slug: "block-team-or-club-calendar",
-    title: "Block time for a team or club schedule",
-    text: "A subscribed calendar becomes busy blocks.",
-  },
-];
 
 // release-please writes CHANGELOG.md at the repository root with the first release.
 const changelogs = import.meta.glob<string>("../../../CHANGELOG.md", {
@@ -96,23 +81,10 @@ const structuredData = {
 };
 // JSON inside a script tag must not contain "</script>", so every "<" becomes an escape.
 const structuredDataJson = JSON.stringify(structuredData).replace(/</g, "\\u003c");
-
-const microsoft = `<svg viewBox="0 0 21 21" aria-hidden="true"><rect width="10" height="10" fill="#f25022"/><rect x="11" width="10" height="10" fill="#7fba00"/><rect y="11" width="10" height="10" fill="#00a4ef"/><rect x="11" y="11" width="10" height="10" fill="#ffb900"/></svg>`;
-const google = `<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.3 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.8-6C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.7l7.8-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.3 0-11.7-4.1-13.6-9.8l-7.8 6C6.6 42.6 14.6 48 24 48z"/></svg>`;
-const github = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>`;
-const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 15.9c.16-.55.1-1.06-.17-1.43-.25-.35-.66-.55-1.16-.57l-9.47-.12a.19.19 0 0 1-.15-.08.2.2 0 0 1-.02-.17.26.26 0 0 1 .22-.17l9.56-.12c1.13-.05 2.36-.97 2.79-2.09l.55-1.42a.33.33 0 0 0 .01-.19 6.23 6.23 0 0 0-11.97-.65 2.8 2.8 0 0 0-4.42 2.93A3.98 3.98 0 0 0 0 15.8c0 .2.02.39.04.58a.19.19 0 0 0 .18.16h17.5a.24.24 0 0 0 .22-.17l.13-.47Zm3.03-6.1h-.27a.16.16 0 0 0-.15.12l-.37 1.29c-.16.55-.1 1.06.17 1.43.25.35.66.55 1.16.57l2.02.12a.18.18 0 0 1 .14.08.2.2 0 0 1 .02.17.26.26 0 0 1-.22.17l-2.1.12c-1.14.05-2.37.97-2.8 2.09l-.15.4a.11.11 0 0 0 .1.15h7.22a.19.19 0 0 0 .18-.14 5.17 5.17 0 0 0-4.95-6.57Z"/></svg>`;
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{searchTitle}</title>
-    <meta name="description" content={description} />
-    <link rel="canonical" href={canonical} />
-    <link rel="icon" href={page("favicon.svg")} type="image/svg+xml" />
-    <link rel="sitemap" href={page("sitemap-index.xml")} />
+<SiteLayout title={searchTitle} description={description} bodyClass="home">
+  <Fragment slot="head">
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="slotmirror" />
     <meta property="og:title" content={title} />
@@ -128,643 +100,190 @@ const cloudflare = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tr
     <meta name="twitter:image" content={preview} />
     <meta name="twitter:image:alt" content={previewAlt} />
     <script type="application/ld+json" is:inline set:html={structuredDataJson} />
-    <script is:inline>
-      // Theme: follows the system setting until the visitor picks one with the icon button.
-      // It shares the storage key and the data-theme attribute with Starlight, so the choice
-      // carries over to the docs. Inline in <head>, so that the first paint has the right theme.
-      (() => {
-        const root = document.documentElement;
-        const KEY = "starlight-theme";
-        const system = matchMedia("(prefers-color-scheme: dark)");
-        const icon = (body) =>
-          `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
-        const SUN = icon(
-          '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-        );
-        const MOON = icon('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>');
-        let stored = null;
-        try {
-          stored = localStorage.getItem(KEY);
-        } catch {}
-        if (stored !== "dark" && stored !== "light") stored = null;
-        function render() {
-          const dark = root.dataset.theme === "dark";
-          const label = dark ? "Switch to light mode" : "Switch to dark mode";
-          for (const button of document.querySelectorAll("[data-theme-toggle]")) {
-            // In dark mode the button offers the sun (go light), in light mode the moon.
-            button.innerHTML = dark ? SUN : MOON;
-            button.setAttribute("aria-label", label);
-            button.title = label;
-          }
-        }
-        function apply(theme) {
-          root.dataset.theme = theme;
-          render();
-        }
-        root.dataset.theme = stored ?? (system.matches ? "dark" : "light");
-        system.addEventListener("change", (event) => {
-          if (!stored) apply(event.matches ? "dark" : "light");
-        });
-        document.addEventListener("DOMContentLoaded", render);
-        document.addEventListener("click", (event) => {
-          if (!event.target.closest("[data-theme-toggle]")) return;
-          stored = root.dataset.theme === "dark" ? "light" : "dark";
-          try {
-            localStorage.setItem(KEY, stored);
-          } catch {}
-          apply(stored);
-        });
-      })();
-    </script>
-  </head>
-  <body>
-    <header class="top">
-      <div class="wrap">
-        <a class="brand" href={page("")}>
-          <svg viewBox="0 0 64 64" aria-hidden="true">
-            <defs>
-              <pattern
-                id="logo-hatch"
-                width="5"
-                height="5"
-                patternUnits="userSpaceOnUse"
-                patternTransform="rotate(45)"><rect width="2.4" height="5" fill="currentColor"
-                ></rect></pattern
-              >
-            </defs>
-            <g fill="none" stroke="currentColor" stroke-width="4">
-              <rect x="5" y="7" width="23" height="50" rx="6"></rect>
-              <rect x="36" y="7" width="23" height="50" rx="6"></rect>
-            </g>
-            <rect x="10.5" y="22" width="12" height="18" rx="3" fill="var(--accent)"></rect>
-            <rect x="41.5" y="22" width="12" height="18" rx="3" fill="url(#logo-hatch)"></rect>
-          </svg>
-          slotmirror
-        </a>
-        <nav class="links" aria-label="Main">
-          <a href={page("docs/introduction/")}>Docs</a>
-          <a href="#guides" class="hide-sm">Guides</a>
-          <a href={page("changelog/")} class="hide-sm">Changelog</a>
-          <a href={repo}>GitHub</a>
-          <button class="theme" data-theme-toggle type="button" aria-label="Switch theme"></button>
-        </nav>
+  </Fragment>
+
+  <div class="hero on-deep">
+    <SlotField id="hero-field" class="slot-field" />
+    <div class="hero-inner">
+      <div>
+        <span class="eyebrow">Open source · Self-hosted</span>
+        <h1>{hero.title}</h1>
+        <p class="sub">{heroSub}</p>
+        <div class="buttons">
+          <a class="button primary" href={page("docs/quickstart/")} data-track="quickstart_click"
+            ><Fragment set:html={cloudflare} />Start the quickstart</a
+          >
+          <a class="button outline" href={repo}><Fragment set:html={github} />View on GitHub</a>
+        </div>
+        <p class="free">{hero.free}</p>
       </div>
-    </header>
-
-    <main>
-      <div class="wrap hero">
-        <div>
-          <h1>Stop getting double-booked across your Microsoft and Google calendars.</h1>
-          <p class="sub">{heroSub}</p>
-          <div class="buttons">
-            <a class="button primary" href={page("docs/quickstart/")} data-track="quickstart_click"
-              ><Fragment set:html={cloudflare} />Start the quickstart</a
-            >
-            <a class="button" href={repo}><Fragment set:html={github} />View on GitHub</a>
-          </div>
-          <p class="prereq">
-            Before you start: you register your own Microsoft Entra app and Google OAuth client.
-            This is an early version, below 1.0. Settings and the database can still change
-            between releases.
-          </p>
-          <p class="note">Runs on the Cloudflare Workers free plan</p>
-        </div>
-
-        <div class="demo" role="region" aria-label="Interactive demo">
-          <div class="demo-head">
-            <span>Drag any meeting, or</span>
-            <button class="move" id="move" type="button">Move to 14:00</button>
-            <span class="status" id="status" aria-live="polite"
-              ><span class="dot"></span><span id="status-text">In sync</span></span
-            >
-          </div>
-          <div class="cals-wrap">
-            <div class="cals">
-              <div><div class="cal-name">&nbsp;</div><div class="hours" id="hours"></div></div>
-              <div style="--c:var(--work)">
-                <div class="cal-name"><i></i><Fragment set:html={microsoft} />Work</div>
-                <div class="cal" data-cal="work"></div>
-              </div>
-              <div style="--c:var(--client)">
-                <div class="cal-name"><i></i><Fragment set:html={microsoft} />Client</div>
-                <div class="cal" data-cal="client"></div>
-              </div>
-              <div style="--c:var(--private)">
-                <div class="cal-name"><i></i><Fragment set:html={google} />Private</div>
-                <div class="cal" data-cal="private"></div>
-              </div>
-            </div>
-            <svg class="arcs" id="arcs" aria-hidden="true"></svg>
-          </div>
-          <div class="legend-row" aria-hidden="true">
-            <span><i class="sw solid"></i>Original</span><span
-              ><i class="sw hatch"></i>Copy, in the colour of its source</span
-            >
-          </div>
-          <div class="matrix-mini">
-            <table id="matrix" aria-label="What the Work meeting shows in the other calendars">
-            </table>
-            <span>Click a cell to change what the Work meeting shows there.</span>
-          </div>
-          <p class="demo-caption">A simulation in your browser. No calendar is connected.</p>
-        </div>
+      <div class="hero-stage">
+        <span class="badge hatched b1" style="--c:var(--work)"
+          ><i></i>“Busy” by default</span
+        >
+        <span class="badge late b2"><i></i>Copies follow a moved meeting</span>
+        <div class="hero-card"><Demo /></div>
       </div>
+    </div>
+  </div>
 
-      <section>
-        <div class="wrap">
-          <h2>How it works</h2>
-          <p class="lead">
-            slotmirror runs in your own Cloudflare account. There is no slotmirror service between
-            your calendars and your deployment. See
-            <a href={page("guides/self-hosted-calendar-sync/")}>what self-hosting means</a>.
-          </p>
-          <div class="steps">
-            <div class="step" style="--c:var(--c-blue)">
-              <b>1</b>
-              <h3>Deploy</h3>
-              <p>
-                Deploy the Worker and its database to your Cloudflare account. The quickstart
-                covers both ways: the deploy button and wrangler.
-              </p>
+  <section class="show">
+    <div class="card card-vermilion wide on-deep">
+      <div class="card-text">
+        <h2 class="loud">{detail.title}</h2>
+        <p>{detail.lead}</p>
+        <p>{pillar("privacy").text}</p>
+      </div>
+      <div class="mock">
+        <div class="window"><DetailPicker /></div>
+        <span class="badge late" style="--c:var(--private)"><i></i>{pillar("privacy").title}</span>
+      </div>
+    </div>
+
+    <div class="card card-blue on-deep">
+      <div class="card-text">
+        <h2 class="loud">{pillar("moves").title}</h2>
+        <p>{pillar("moves").text}</p>
+      </div>
+      <div class="mock iso-mock" aria-hidden="true">
+        <span class="badge b-top" style="--c:var(--work)"><i></i>Moved to Thursday</span>
+        <span class="badge hatched late b-bottom" style="--c:var(--work)"
+          ><i></i>The copy moves too</span
+        >
+        <Iso boxes={icons.moves!} id="iso-moves" class="iso" scale={30} />
+      </div>
+    </div>
+
+    <div class="card card-green on-deep">
+      <div class="card-text">
+        <h2 class="loud">{pillar("more").title}</h2>
+        <p>{pillar("more").text}</p>
+      </div>
+      <div class="mock iso-mock" aria-hidden="true">
+        <span class="badge b-top" style="--c:var(--work)"><i></i>Work</span>
+        <span class="badge late b-side" style="--c:var(--client)"><i></i>Client</span>
+        <span class="badge b-bottom" style="--c:var(--private)"><i></i>Team fixtures</span>
+        <Iso boxes={icons.more!} id="iso-more" class="iso" scale={30} />
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="loud center rule">{how.title}</h2>
+    <p class="lead center">
+      {how.lead}{" "}
+      <a href={page(how.link.slug)}>{how.link.text}</a>
+    </p>
+    <ol class="steps">
+      {
+        how.steps.map((step, index) => (
+          <li>
+            <span class="num">{index + 1}</span>
+            <div>
+              <h3>{step.title}</h3>
+              <p>{step.text}</p>
             </div>
-            <div class="step" style="--c:var(--c-vermilion)">
-              <b>2</b>
-              <h3>Register the apps</h3>
-              <p>
-                Create a Microsoft Entra app and a Google OAuth client, and store them as secrets.
-                The <a href={page("docs/quickstart/")}>quickstart</a> walks you through it.
-              </p>
-            </div>
-            <div class="step" style="--c:var(--c-green)">
-              <b>3</b>
-              <h3>Connect and choose</h3>
-              <p>
-                Connect your Microsoft and Google accounts. They block each other as busy; add
-                titles or more where you want them.
-              </p>
-            </div>
-          </div>
-        </div>
+          </li>
+        ))
+      }
+    </ol>
+    <p class="small center">{how.note}</p>
+  </section>
+
+  <section id="guides">
+    <h2 class="loud center rule">Start from your situation</h2>
+    <ul class="guide-list">
+      {
+        guides.map((guide) => (
+          <li>
+            <a href={page(`guides/${guide.slug}/`)}>
+              <span class="g-title">{guide.title}</span>
+              <span class="g-text">{guide.text}</span>
+              <span class="g-arrow" aria-hidden="true">
+                →
+              </span>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  {
+    latest && (
+      <section id="changelog">
+        <h2 class="loud rule">Changelog</h2>
+        <p class="changes">
+          <span class="version">{latest[1]}</span>
+          <time datetime={latest[2]}>{latest[2]}</time>
+          <a href={page("changelog/")}>All releases</a>
+        </p>
       </section>
+    )
+  }
 
-      <section>
-        <div class="wrap">
-          <h2>One page for every direction</h2>
-          <p class="lead">
-            Each calendar gets a card: where its events go and how much shows there. The overview
-            shows all directions at once.
-          </p>
-          <figure class="shot">
-            <Image
-              src={editor}
-              widths={[640, 960, editor.width]}
-              sizes="(max-width: 1120px) 100vw, 1080px"
-              alt="The rules page of slotmirror, with one card per calendar and an overview of all directions"
+  {
+    waitlist && (
+      <section id="waitlist">
+        <h2 class="loud rule">Not available yet</h2>
+        <p class="lead">
+          A hosted slotmirror does not exist yet. Leave your address to hear when it opens.
+          Joining the list is not a purchase.
+        </p>
+        <form
+          class="waitlist"
+          id="waitlist-form"
+          method="post"
+          hidden
+          data-endpoint={`${waitlistUrl}/api/signup`}
+          data-site-key={turnstileKey}
+        >
+          <label for="waitlist-email">Email address</label>
+          <div class="waitlist-row">
+            <input
+              id="waitlist-email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              maxlength="254"
+              required
+              aria-describedby="waitlist-status"
             />
-            <figcaption>The rules page, with three demo accounts.</figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section>
-        <div class="wrap">
-          <h2>Features</h2>
-          <p class="lead">What the editor and the sync do today.</p>
-          <div class="features">
-            <div style="--c:var(--c-blue)">
-              <h3><i></i>Block group</h3>
-              <p>Calendars in the group see each other as busy, with exceptions.</p>
-            </div>
-            <div style="--c:var(--c-vermilion)">
-              <h3><i class="hatch"></i>Detail per direction</h3>
-              <p>Not, busy, title, or everything, with a preview of the copy.</p>
-            </div>
-            <div style="--c:var(--c-green)">
-              <h3><i></i>Extra calendars</h3>
-              <p>Subscriptions such as team fixtures can block your time too.</p>
-            </div>
-            <div style="--c:var(--c-purple)">
-              <h3><i></i>Push notifications</h3>
-              <p>A change starts the sync when the provider notifies you; a scheduled check catches the rest.</p>
-            </div>
-            <div style="--c:var(--c-orange)">
-              <h3><i></i>Organisation limits</h3>
-              <p>Admins cap the detail between work and private calendars.</p>
-            </div>
-            <div style="--c:var(--c-sky)">
-              <h3><i></i>Activity log</h3>
-              <p>Runs and changes with counts and codes, never event content.</p>
-            </div>
-            <div style="--c:var(--c-indigo)">
-              <h3><i></i>EU data location</h3>
-              <p>The database and the sync can stay in Cloudflare's EU jurisdiction.</p>
-            </div>
-            <div style="--c:var(--c-slate)">
-              <h3><i></i>Colours</h3>
-              <p>A colour per account in the app, and a colour for the blocks it writes.</p>
-            </div>
+            <button class="button primary" type="submit" id="waitlist-submit">
+              Join the waitlist
+            </button>
           </div>
-        </div>
+          <div id="waitlist-widget" class="waitlist-widget" />
+          <p id="waitlist-status" class="waitlist-status" role="status" aria-live="polite" />
+          <p class="note">
+            We use your address only for this list. We send one mail to confirm it. You can
+            unsubscribe from that mail. <a href={page("docs/privacy/")}>Privacy</a>
+          </p>
+        </form>
       </section>
+    )
+  }
 
-      <section>
-        <div class="wrap why">
-          <div>
-            <h2>Why moved meetings get lost</h2>
-            <p class="lead">
-              A recurring meeting moved for one week is an exception to its series. Sync tools that
-              rebuild copies on a schedule can miss it until the next full run.
-            </p>
-          </div>
-          <ul>
-            <li>slotmirror reads each occurrence of a series, so a moved one keeps its identity.</li>
-            <li>It changes only what differs: create, update or delete, never a rebuild.</li>
-            <li>Push notifications start the sync when the provider reports the move, not on a timer.</li>
-            <li>
-              Event contents are read during a sync and kept only in memory, never written to the
-              database.
-            </li>
-          </ul>
+  <section>
+    <div class="cta-card on-deep">
+      <SlotField id="cta-field" class="slot-field" cols={16} rows={9} />
+      <div class="eyes" data-eyes><Logo id="logo-big" /></div>
+      <div class="cta-text">
+        <h2 class="loud">Your calendars keep an eye on each other.</h2>
+        <p>{hero.free}</p>
+        <div class="buttons">
+          <a class="button primary" href={page("docs/quickstart/")}
+            ><Fragment set:html={cloudflare} />Start the quickstart</a
+          >
+          <a class="button outline" href={repo}><Fragment set:html={github} />View on GitHub</a>
         </div>
-      </section>
-
-      <section id="guides">
-        <div class="wrap">
-          <h2>Guides</h2>
-          <div class="guides">
-            {
-              guides.map((guide) => (
-                <a class="guide" href={page(`guides/${guide.slug}/`)}>
-                  {guide.title}
-                  <span>{guide.text}</span>
-                </a>
-              ))
-            }
-          </div>
-        </div>
-      </section>
-
-      {
-        latest && (
-          <section id="changelog">
-            <div class="wrap">
-              <h2>Changelog</h2>
-              <p class="changes">
-                <span class="version">{latest[1]}</span>
-                <time datetime={latest[2]}>{latest[2]}</time>
-                <a href={page("changelog/")}>All releases</a>
-              </p>
-            </div>
-          </section>
-        )
-      }
-
-      {
-        waitlist && (
-          <section id="waitlist">
-            <div class="wrap">
-              <h2>Hosted version (not available yet)</h2>
-              <p class="lead">
-                A hosted slotmirror does not exist yet. Leave your address to hear when it opens.
-                Joining the list is not a purchase.
-              </p>
-              <form
-                class="waitlist"
-                id="waitlist-form"
-                method="post"
-                hidden
-                data-endpoint={`${waitlistUrl}/api/signup`}
-                data-site-key={turnstileKey}
-              >
-                <label for="waitlist-email">Email address</label>
-                <div class="waitlist-row">
-                  <input
-                    id="waitlist-email"
-                    name="email"
-                    type="email"
-                    autocomplete="email"
-                    inputmode="email"
-                    maxlength="254"
-                    required
-                    aria-describedby="waitlist-status"
-                  />
-                  <button class="button primary" type="submit" id="waitlist-submit">
-                    Join the waitlist
-                  </button>
-                </div>
-                <div id="waitlist-widget" class="waitlist-widget" />
-                <p id="waitlist-status" class="waitlist-status" role="status" aria-live="polite" />
-                <p class="note">
-                  We use your address only for this list. We send one mail to confirm it. You can
-                  unsubscribe from that mail. <a href={page("docs/privacy/")}>Privacy</a>
-                </p>
-              </form>
-            </div>
-          </section>
-        )
-      }
-    </main>
-
-    <footer>
-      <div class="wrap">
-        <span>slotmirror</span>
-        <a href={repo}>GitHub</a>
-        <a href={page("docs/introduction/")}>Docs</a>
-        <a href={page("docs/privacy/")}>Privacy</a>
-        <span>This site sets no cookies.</span>
       </div>
-    </footer>
+    </div>
+  </section>
 
-    <script>
-      import "../scripts/analytics";
-    </script>
-
-    <script>
-      // The waitlist code loads only if this build renders the form.
-      if (document.querySelector("#waitlist-form")) void import("../scripts/waitlist");
-    </script>
-
-    <script>
-      // A toy version of the sync. One meeting per calendar; each can move, and its copies follow
-      // in the other calendars. Colour means "which calendar it came from".
-      const START = 8;
-      const END = 18;
-      const HEIGHT = 420;
-      const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const px = (hour: number) => ((hour - START) / (END - START)) * HEIGHT;
-      const LEVELS = ["off", "busy", "title", "full"] as const;
-      type Level = (typeof LEVELS)[number];
-      type Cal = "work" | "client" | "private";
-      type Target = "client" | "private";
-      type Slot = { start: number; length: number };
-      const CALS: Cal[] = ["work", "client", "private"];
-      const TARGETS: Target[] = ["client", "private"];
-      const SHORT: Record<Level, string> = { off: "Not", busy: "Busy", title: "Title", full: "All" };
-      const COLOUR: Record<Cal, string> = {
-        work: "var(--work)",
-        client: "var(--client)",
-        private: "var(--private)",
-      };
-      const NAME: Record<Cal, string> = { work: "Work", client: "Client", private: "Private" };
-      // What each calendar's meeting shows in the others. The matrix edits the Work row.
-      const show: Record<Cal, Partial<Record<Cal, Level>>> = {
-        work: { client: "busy", private: "full" },
-        client: { work: "busy", private: "off" },
-        private: { work: "busy", client: "busy" },
-      };
-      const cals = Object.fromEntries(
-        [...document.querySelectorAll<HTMLElement>(".cal")].map((el) => [el.dataset.cal, el]),
-      ) as Record<Cal, HTMLElement>;
-      const hours = document.getElementById("hours")!;
-      for (let h = START; h <= END; h += 2) {
-        const label = document.createElement("span");
-        label.style.top = `${px(h)}px`;
-        label.textContent = `${h}:00`;
-        hours.append(label);
-      }
-      const time = (h: number) => `${Math.floor(h)}:${h % 1 ? "30" : "00"}`;
-      const span = (slot: Slot) => `${time(slot.start)}–${time(slot.start + slot.length)}`;
-      const slots = new Map<HTMLElement, Slot>();
-      // Overlapping events sit side by side, like in a calendar app: lane i of n.
-      function lanes(cal: Cal, override?: [HTMLElement, Slot]) {
-        const items = [...cals[cal].querySelectorAll<HTMLElement>(".ev:not(.hidden)")]
-          .map((el) => ({ el, slot: el === override?.[0] ? override[1] : slots.get(el) }))
-          .filter((item): item is { el: HTMLElement; slot: Slot } => item.slot !== undefined)
-          .sort((a, b) => a.slot.start - b.slot.start);
-        const result = new Map<HTMLElement, { i: number; n: number }>();
-        let cluster: HTMLElement[] = [];
-        let ends: number[] = [];
-        let clusterEnd = -Infinity;
-        const close = () => {
-          for (const el of cluster) result.get(el)!.n = ends.length;
-          cluster = [];
-          ends = [];
-        };
-        for (const { el, slot } of items) {
-          if (slot.start >= clusterEnd) close();
-          const free = ends.findIndex((end) => end <= slot.start);
-          const i = free < 0 ? ends.length : free;
-          ends[i] = slot.start + slot.length;
-          result.set(el, { i, n: 0 });
-          cluster.push(el);
-          clusterEnd = Math.max(clusterEnd, slot.start + slot.length);
-        }
-        close();
-        return result;
-      }
-      function layout(cal: Cal) {
-        for (const [el, { i, n }] of lanes(cal)) {
-          el.style.left = `calc(4px + (100% - 8px) * ${i / n})`;
-          el.style.right = `calc(4px + (100% - 8px) * ${(n - i - 1) / n})`;
-          el.style.marginLeft = i ? "2px" : "0";
-        }
-      }
-      function place(el: HTMLElement, slot: Slot) {
-        slots.set(el, { ...slot });
-        el.style.top = `${px(slot.start)}px`;
-        el.style.height = `${px(START + slot.length) - 2}px`;
-      }
-      const copyHint = (source: Cal) => `<span class="sr">Copy from ${NAME[source]}: </span>`;
-      type Meeting = Slot & {
-        cal: Cal;
-        title: string;
-        where?: string;
-        el: HTMLElement;
-        copies: Partial<Record<Cal, HTMLElement>>;
-        timer?: ReturnType<typeof setTimeout>;
-        arcs?: SVGGElement;
-      };
-      function addEvent(cal: Cal, source: Cal, kind: string) {
-        const el = document.createElement("div");
-        el.className = `ev ${kind}`;
-        el.style.setProperty("--c", COLOUR[source]);
-        cals[cal].append(el);
-        return el;
-      }
-      const seeds: (Slot & Pick<Meeting, "cal" | "title" | "where">)[] = [
-        { cal: "work", title: "Client call", where: "Teams", start: 10, length: 1 },
-        { cal: "client", title: "Workshop", start: 13, length: 1 },
-        { cal: "private", title: "Dentist", start: 16.5, length: 1 },
-      ];
-      const meetings: Meeting[] = seeds.map((seed) => {
-        const el = addEvent(seed.cal, seed.cal, "real movable");
-        el.tabIndex = 0;
-        el.setAttribute("role", "button");
-        const copies: Meeting["copies"] = {};
-        for (const cal of CALS) if (cal !== seed.cal) copies[cal] = addEvent(cal, seed.cal, "copy");
-        return { ...seed, el, copies };
-      });
-      const clientCall = meetings[0]!;
-      function drawReal(m: Meeting) {
-        place(m.el, m);
-        m.el.innerHTML = `${m.title}<small>${span(m)}</small>`;
-        m.el.setAttribute("aria-label", `${m.title}, ${span(m)}. Move it with the arrow keys.`);
-        layout(m.cal);
-      }
-      function drawCopy(m: Meeting, cal: Cal) {
-        const el = m.copies[cal]!;
-        const level = show[m.cal][cal]!;
-        el.classList.toggle("hidden", level === "off");
-        place(el, m);
-        const label = level === "busy" ? "Busy" : m.title;
-        const extra = level === "full" && m.where ? ` · ${m.where}` : "";
-        el.innerHTML = `${copyHint(m.cal)}${label}<small>${span(m)}${extra}</small>`;
-        layout(cal);
-      }
-      const copyCals = (m: Meeting) => CALS.filter((cal) => cal !== m.cal);
-      // Arcs with a travelling dot, from the moved original to the slot where each copy will land,
-      // while the sync runs. The copy then slides into place under the dot.
-      const arcs = document.getElementById("arcs")!;
-      const wrap = document.querySelector(".cals-wrap")!;
-      const SVG = "http://www.w3.org/2000/svg";
-      // Where an event sits in the wrapper once its column has its final layout.
-      function box(cal: Cal, el: HTMLElement, slot: Slot) {
-        const outer = wrap.getBoundingClientRect();
-        const column = cals[cal].getBoundingClientRect();
-        const width = cals[cal].clientWidth - 8;
-        const { i, n } = lanes(cal, [el, slot]).get(el)!;
-        const left = column.left - outer.left + cals[cal].clientLeft + 4 + (width * i) / n;
-        const top = column.top - outer.top + cals[cal].clientTop + px(slot.start);
-        return { left, right: left + width / n, middle: top + (px(START + slot.length) - 2) / 2 };
-      }
-      function drawArcs(m: Meeting) {
-        m.arcs?.remove();
-        const group = document.createElementNS(SVG, "g");
-        arcs.append(group);
-        m.arcs = group;
-        const colour = getComputedStyle(m.el).backgroundColor;
-        const from = box(m.cal, m.el, m);
-        for (const cal of copyCals(m)) {
-          if (show[m.cal][cal] === "off") continue;
-          const to = box(cal, m.copies[cal]!, m);
-          const right = to.left > from.left;
-          const x1 = right ? from.right - 4 : from.left + 4;
-          const x2 = right ? to.left + 8 : to.right - 8;
-          const { middle: y } = from;
-          // Bow upwards, or downwards near the top of the day, so that the arcs to the near and the
-          // far calendar do not lie on one line.
-          const bow = Math.min(64, Math.abs(x2 - x1) * 0.35) * (y > 70 ? -1 : 1);
-          const third = (x2 - x1) / 3;
-          const path = document.createElementNS(SVG, "path");
-          path.setAttribute(
-            "d",
-            `M ${x1} ${y} C ${x1 + third} ${y + bow}, ${x2 - third} ${y + bow}, ${x2} ${y}`,
-          );
-          path.setAttribute("stroke", colour);
-          group.append(path);
-          const length = path.getTotalLength();
-          path.style.strokeDasharray = `${length}`;
-          path.animate([{ strokeDashoffset: length }, { strokeDashoffset: 0 }], {
-            duration: 700,
-            easing: "ease-out",
-            fill: "forwards",
-          });
-          const dot = document.createElementNS(SVG, "circle");
-          dot.setAttribute("r", "3.5");
-          dot.setAttribute("fill", colour);
-          group.append(dot);
-          const steps = 24;
-          const frames = Array.from({ length: steps + 1 }, (_, i) => {
-            const point = path.getPointAtLength((length * i) / steps);
-            return { transform: `translate(${point.x}px, ${point.y}px)` };
-          });
-          dot.animate(frames, { duration: 700, easing: "ease-out", fill: "forwards" });
-        }
-      }
-      const status = document.getElementById("status")!;
-      const statusText = document.getElementById("status-text")!;
-      // Each meeting syncs on its own, so moving a second one does not cancel the first.
-      function drawStatus() {
-        const busy = meetings.some((m) => m.timer !== undefined);
-        status.classList.toggle("busy", busy);
-        statusText.textContent = busy ? "Syncing…" : "In sync";
-      }
-      function sync(m: Meeting) {
-        if (reduced) {
-          for (const cal of copyCals(m)) drawCopy(m, cal);
-          return;
-        }
-        clearTimeout(m.timer);
-        m.el.classList.add("waiting");
-        drawArcs(m);
-        m.timer = setTimeout(() => {
-          m.timer = undefined;
-          for (const cal of copyCals(m)) {
-            drawCopy(m, cal);
-            const el = m.copies[cal]!;
-            el.classList.remove("arrived");
-            void el.offsetWidth;
-            el.classList.add("arrived");
-          }
-          m.el.classList.remove("waiting");
-          drawStatus();
-          const group = m.arcs;
-          setTimeout(() => group?.remove(), 500);
-        }, 800);
-        drawStatus();
-      }
-      function moveTo(m: Meeting, start: number) {
-        const next = Math.min(END - m.length, Math.max(START, start));
-        if (next === m.start) return false;
-        m.start = next;
-        drawReal(m);
-        if (m === clientCall) move.textContent = next === 14 ? "Move to 10:00" : "Move to 14:00";
-        return true;
-      }
-      const move = document.getElementById("move")!;
-      move.addEventListener("click", () => {
-        if (moveTo(clientCall, clientCall.start === 14 ? 10 : 14)) sync(clientCall);
-      });
-      // Drag an original in half-hour steps, or move it with the arrow keys.
-      for (const m of meetings) {
-        let drag: { y: number; start: number } | null = null;
-        m.el.addEventListener("pointerdown", (event) => {
-          if (event.button !== 0) return;
-          drag = { y: event.clientY, start: m.start };
-          m.el.classList.add("dragging");
-          m.el.setPointerCapture(event.pointerId);
-        });
-        m.el.addEventListener("pointermove", (event) => {
-          if (!drag) return;
-          const delta = ((event.clientY - drag.y) / HEIGHT) * (END - START);
-          moveTo(m, Math.round((drag.start + delta) * 2) / 2);
-        });
-        const drop = () => {
-          if (!drag) return;
-          const moved = drag.start !== m.start;
-          drag = null;
-          m.el.classList.remove("dragging");
-          if (moved) sync(m);
-        };
-        m.el.addEventListener("pointerup", drop);
-        m.el.addEventListener("pointercancel", drop);
-        m.el.addEventListener("keydown", (event) => {
-          const step = { ArrowUp: -0.5, ArrowDown: 0.5 }[event.key];
-          if (!step) return;
-          event.preventDefault();
-          if (moveTo(m, m.start + step)) sync(m);
-        });
-      }
-      // Mini matrix: what the Work meeting shows in each other calendar.
-      const matrix = document.getElementById("matrix")!;
-      function drawMatrix() {
-        matrix.innerHTML = `<tr><th style="--c:var(--work)"><i></i>Work →</th><th style="--c:var(--client)"><i></i>Client</th><th style="--c:var(--private)"><i></i>Private</th></tr>
-          <tr><th></th>${TARGETS.map((cal) => `<td><button type="button" class="lv-${show.work[cal]}" data-cal="${cal}" aria-label="${NAME[cal]}: ${SHORT[show.work[cal]!]}. Change">${SHORT[show.work[cal]!]}</button></td>`).join("")}</tr>`;
-      }
-      matrix.addEventListener("click", (event) => {
-        const cell = (event.target as HTMLElement).closest<HTMLElement>("button[data-cal]");
-        if (!cell) return;
-        const cal = cell.dataset.cal as Target;
-        show.work[cal] = LEVELS[(LEVELS.indexOf(show.work[cal]!) + 1) % LEVELS.length]!;
-        drawMatrix();
-        drawCopy(clientCall, cal);
-        matrix.querySelector<HTMLElement>(`button[data-cal="${cal}"]`)?.focus();
-      });
-      drawMatrix();
-      for (const m of meetings) {
-        drawReal(m);
-        for (const cal of copyCals(m)) drawCopy(m, cal);
-      }
-    </script>
-  </body>
-</html>
+  <script>
+    // The waitlist code loads only if this build renders the form.
+    if (document.querySelector("#waitlist-form")) void import("../scripts/waitlist");
+  </script>
+</SiteLayout>

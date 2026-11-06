@@ -1,0 +1,105 @@
+---
+// The frame of every website page outside the docs: head basics, header, footer, analytics.
+// Pages add their own meta tags through the "head" slot.
+import "@fontsource-variable/instrument-sans";
+import "../styles/home.css";
+import Logo from "../components/Logo.astro";
+import ThemeScript from "../components/ThemeScript.astro";
+import { hero } from "../home-content";
+import { repo } from "../site";
+
+interface Props {
+  title: string;
+  description: string;
+  noindex?: boolean;
+  bodyClass?: string;
+}
+const { title, description, noindex = false, bodyClass } = Astro.props;
+
+// Links inside the site. The base comes from astro.config.mjs, the only place that sets it.
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const page = (path: string) => `${base}/${path}`;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href={page("favicon.svg")} type="image/svg+xml" />
+    <link rel="sitemap" href={page("sitemap-index.xml")} />
+    <slot name="head" />
+    <ThemeScript />
+  </head>
+  <body class={bodyClass}>
+    <header class="top">
+      <a class="brand" href={page("")}><Logo id="logo-top" />slotmirror</a>
+      <a class="early" href={page("changelog/")}>{hero.early}</a>
+      <nav aria-label="Main">
+        <a href={page("docs/introduction/")}>Docs</a>
+        <a href={page("#guides")} class="hide-sm">Guides</a>
+        <a href={page("changelog/")} class="hide-sm">Changelog</a>
+        <a href={repo}>GitHub</a>
+        <button class="theme" data-theme-toggle type="button" aria-label="Switch theme"></button>
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer>
+      <a class="brand" href={page("")}><Logo id="logo-foot" />slotmirror</a>
+      <nav aria-label="Footer">
+        <a href={repo}>GitHub</a>
+        <a href={page("docs/introduction/")}>Docs</a>
+        <a href={page("docs/privacy/")}>Privacy</a>
+      </nav>
+      <span>This site sets no cookies.</span>
+    </footer>
+
+    <script>
+      import "../scripts/analytics";
+    </script>
+
+    <script>
+      // The logo as a pair of eyes: they look toward the cursor, up or down like a meeting in a
+      // day. The copy (hatched) follows the original a moment later and winks now and then.
+      const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const logos = [...document.querySelectorAll<SVGSVGElement>(".brand svg, [data-eyes] svg")];
+      if (!reduced && logos.length > 0) {
+        let frame = 0;
+        addEventListener("pointermove", (event) => {
+          cancelAnimationFrame(frame);
+          frame = requestAnimationFrame(() => {
+            const reach = Math.max(innerHeight, 400) / 2;
+            // Read every position first, then write, so the browser lays out once per frame.
+            const boxes = logos.map((logo) => logo.getBoundingClientRect());
+            logos.forEach((logo, index) => {
+              const box = boxes[index]!;
+              const dy = event.clientY - (box.top + box.height / 2);
+              const dx = event.clientX - (box.left + box.width / 2);
+              const look = Math.max(-1, Math.min(1, dy / reach)) * 13;
+              const side = Math.sign(dx) * Math.min(Math.abs(dx) / reach, 1) * 2;
+              logo.style.setProperty("--look", `${look.toFixed(1)}px`);
+              logo.style.setProperty("--side", `${side.toFixed(1)}px`);
+            });
+          });
+        });
+        const wink = () => {
+          for (const logo of logos) {
+            logo.classList.add("wink");
+            setTimeout(() => logo.classList.remove("wink"), 220);
+          }
+          setTimeout(wink, 4500 + Math.random() * 4000);
+        };
+        setTimeout(wink, 1600);
+      }
+    </script>
+  </body>
+</html>

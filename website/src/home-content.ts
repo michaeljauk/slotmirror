@@ -1,0 +1,76 @@
+// Copy for the home page. Every claim here must hold for the current release: no measured
+// latency, no feature that is not shipped.
+
+export const hero = {
+  title: "Stop getting double-booked across your Microsoft and Google calendars.",
+  sub: "A meeting in one calendar blocks the same time in your other calendars. Only “Busy” crosses over, unless you choose to show more.",
+  free: "Free and open source. Runs in your own Cloudflare account, on the free plan.",
+  early: "Early version",
+};
+
+export const how = {
+  title: "Three steps, then it runs",
+  lead: "There is no slotmirror service in between. Your calendars talk only to your own deployment.",
+  link: { text: "What self-hosting means", slug: "guides/self-hosted-calendar-sync/" },
+  steps: [
+    {
+      title: "Deploy",
+      text: "Put slotmirror into your own Cloudflare account, with the deploy button or with wrangler.",
+    },
+    {
+      title: "Register two apps",
+      text: "A Microsoft app and a Google app let your deployment read and write your calendars. The quickstart shows each step.",
+    },
+    {
+      title: "Connect",
+      text: "Sign in with your accounts and put their calendars into the group “Block each other”. From then on they block each other as busy.",
+    },
+  ],
+  note: "slotmirror is below 1.0. Settings and the database can still change between releases.",
+};
+
+export const detail = {
+  title: "You decide how much shows where",
+  lead: "Each direction has its own level. The dentist can be “Busy” at work, while the client call shows its title in your private calendar.",
+};
+
+export const pillars = [
+  {
+    key: "moves",
+    title: "Moved meetings move everywhere",
+    text: "One meeting of a series moved to Thursday is easy to miss. slotmirror reads each occurrence on its own, so the copy moves too. With push notifications on, a sync starts as soon as your provider reports a change.",
+  },
+  {
+    key: "privacy",
+    title: "Event content stays out of storage",
+    text: "slotmirror reads events during a sync and keeps their titles, descriptions, locations and attendees only in memory, never in its database. The database and the sync can stay in Cloudflare's EU jurisdiction.",
+  },
+  {
+    key: "more",
+    title: "More than two calendars",
+    text: "Put calendars into a block group, add subscribed calendars such as team fixtures, and let admins cap what crosses between work and private.",
+  },
+];
+
+export const guides = [
+  {
+    slug: "sync-outlook-and-google-calendar",
+    title: "Sync Outlook and Google Calendar",
+    text: "Busy blocks or titles, in both directions.",
+  },
+  {
+    slug: "show-private-calendar-as-busy-at-work",
+    title: "Show your private calendar as busy at work",
+    text: "Block the time without showing what it is.",
+  },
+  {
+    slug: "sync-multiple-microsoft-365-tenants",
+    title: "Sync calendars across Microsoft 365 tenants",
+    text: "Two companies, or client tenants.",
+  },
+  {
+    slug: "block-team-or-club-calendar",
+    title: "Block time for a team or club schedule",
+    text: "A subscribed calendar becomes busy blocks.",
+  },
+];

@@ -1,5 +1,6 @@
-/* Brand blue from the logo's event block. */
+/* Brand blue from the logo's event block, and the site's typeface, so docs and home page match. */
 :root {
+  --sl-font: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --sl-color-accent-low: #142a5c;
   --sl-color-accent: #2b59c3;
   --sl-color-accent-high: #c9d6f5;

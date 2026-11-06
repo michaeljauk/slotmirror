@@ -1,71 +1,63 @@
-/* The home page. Docs pages use Starlight's styles; this file applies to the home page only. */
+/* The website outside the docs, starting with the home page. Docs pages use Starlight's styles. */
 :root {
-  --bg: #f7f7f5;
+  --bg: #f4f5f8;
   --surface: #ffffff;
-  --text: #1c1c1a;
-  --muted: #6e6d68;
-  --faint: #6a6963;
-  --line: #e6e5e0;
-  --line-strong: #d6d5cf;
+  --text: #0f1626;
+  --muted: #4f5868;
+  --faint: #5d6575;
+  --line: #e1e4eb;
+  --line-strong: #c9cdd8;
+  --grid: #eef0f4;
   --accent: #2b59c3;
   --accent-hover: #2149a8;
   --accent-ink: #ffffff;
-  --l0: #f3f2ef;
-  --l1: #d3def6;
-  --l2: #a9bfed;
-  --l3: #4565b8;
-  --grid: #efeee9;
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  --bg: #161614;
-  --surface: #1f1f1d;
-  --text: #ecebe6;
-  --muted: #a8a79f;
-  --faint: #9d9c94;
-  --line: #2e2e2b;
-  --line-strong: #3b3b37;
-  --accent: #7a9cf0;
-  --accent-hover: #93aff4;
-  --accent-ink: #161614;
-  --l0: #262624;
-  --l1: #2b3a5e;
-  --l2: #3c5490;
-  --l3: #4565b8;
-  --grid: #2a2a27;
-  color-scheme: dark;
-}
-
-/*
- * Account palette, the same as in the app: Okabe-Ito hues, darkened so that white text on each
- * solid colour passes WCAG AA. The dark theme uses lighter tints with dark text.
- */
-:root {
   --c-blue: #0b62a8;
   --c-vermilion: #b5420a;
-  --c-green: #00775a;
-  --c-purple: #9a3f7a;
-  --c-orange: #9a5b00;
-  --c-sky: #246f99;
-  --c-indigo: #4b47b8;
-  --c-slate: #3f4654;
+  --c-green: #00704f;
   --work: var(--c-blue);
   --client: var(--c-vermilion);
   --private: var(--c-green);
   --on-c: #ffffff;
+  /* The status dot of the demo: in sync, syncing. */
+  --ok: #2f8a57;
+  --pending: #b07612;
+  /* The deep brand navy, and the hero gradient from it to cyan. */
+  --deep: #0b1a45;
+  --grad: linear-gradient(118deg, #0b1a45 0%, #17337f 38%, #2b59c3 68%, #1aa0d8 100%);
+  --on-deep: #ffffff;
+  --on-deep-muted: #dbe6ff;
+  --on-deep-accent: #9fd8ff;
+  /* The top face of an isometric slab, and the floating badges. */
+  --iso-slab: #e4e9f3;
+  --badge-bg: #ffffff;
+  --badge-text: #0f1626;
+  color-scheme: light;
 }
 
 :root[data-theme="dark"] {
+  --bg: #0e1220;
+  --surface: #161b2c;
+  --text: #e9ecf4;
+  --muted: #a9b1c4;
+  --faint: #9aa2b6;
+  --line: #252b3e;
+  --line-strong: #353c52;
+  --grid: #1d2335;
+  --accent: #86a6f2;
+  --accent-hover: #a0b9f5;
+  --accent-ink: #0e1220;
   --c-blue: #5b9bd8;
   --c-vermilion: #e07a45;
   --c-green: #3fb38c;
-  --c-purple: #c97aae;
-  --c-orange: #d39a3e;
-  --c-sky: #5aa6d0;
-  --c-indigo: #8b87e6;
-  --c-slate: #9aa3b5;
-  --on-c: #12130f;
+  --on-c: #0e1220;
+  --ok: #4cc285;
+  --pending: #e0a640;
+  --deep: #070f2b;
+  --grad: linear-gradient(118deg, #060c24 0%, #102660 40%, #1e4aa8 70%, #1585b5 100%);
+  --iso-slab: #232a40;
+  --badge-bg: #1b2236;
+  --badge-text: #e9ecf4;
+  color-scheme: dark;
 }
 
 * {
@@ -77,11 +69,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font:
-    16px/1.6 ui-sans-serif,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
+    17px/1.6 "Instrument Sans Variable",
+    ui-sans-serif,
+    system-ui,
     sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -93,6 +83,7 @@ a {
 
 a:hover {
   text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 button {
@@ -105,31 +96,45 @@ button {
   outline-offset: 2px;
 }
 
-.wrap {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 0 20px;
+/* On deep backgrounds the accent ring is too dark, so focus there is white. Inside the white
+   demo and picker windows it stays the accent. */
+.on-deep :focus-visible,
+.home .top :focus-visible {
+  outline-color: #fff;
 }
 
-header.top {
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+.on-deep .window :focus-visible,
+.on-deep .hero-card :focus-visible {
+  outline-color: var(--accent);
 }
 
-header.top .wrap {
+.top,
+section,
+footer {
+  width: min(1200px, 100% - 40px);
+  margin-inline: auto;
+}
+
+section {
+  padding: clamp(72px, 9vw, 120px) 0 0;
+}
+
+/* Header */
+.top {
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 60px;
+  gap: 14px;
+  height: 76px;
 }
 
 .brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 10px;
   color: var(--text);
-  font-weight: 600;
-  font-size: 17px;
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: -0.02em;
 }
 
 .brand:hover {
@@ -137,42 +142,57 @@ header.top .wrap {
 }
 
 .brand svg {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
 }
 
-nav.links {
+.early {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.early:hover {
+  text-decoration: none;
+  color: var(--text);
+}
+
+.top nav {
   margin-left: auto;
   display: flex;
-  gap: 4px;
   align-items: center;
+  gap: 4px;
 }
 
-nav.links a {
+.top nav a {
   color: var(--muted);
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 14.5px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
 }
 
-nav.links a:hover {
+.top nav a:hover {
   color: var(--text);
-  background: var(--grid);
   text-decoration: none;
+  background: var(--grid);
 }
 
 .theme {
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  background: transparent;
   color: var(--muted);
   display: inline-grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
-  flex: none;
+  margin-left: 6px;
 }
 
 .theme svg {
@@ -180,605 +200,543 @@ nav.links a:hover {
   height: 18px;
 }
 
-.theme:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
-}
-
-/* Without the theme script the button has no icon, so it is hidden until the script runs. */
 .theme:empty {
   visibility: hidden;
 }
 
-.hero {
-  display: grid;
-  grid-template-columns: 0.9fr 1.1fr;
-  gap: 40px;
-  align-items: center;
-  padding: 56px 0 48px;
+/* On the home page the header sits on the hero gradient. */
+.home .top {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
 }
 
-.hero h1 {
-  font-size: 40px;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  font-weight: 650;
-  margin: 0 0 14px;
+.home .top .brand,
+.home .top nav a,
+.home .top .early,
+.home .top .theme {
+  color: var(--on-deep);
 }
 
-.hero p.sub {
-  font-size: 17.5px;
-  color: var(--muted);
-  margin: 0 0 24px;
+.home .top .early,
+.home .top .theme {
+  border-color: rgb(255 255 255 / 40%);
 }
 
+.home .top nav a:hover {
+  background: none;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+}
+
+/* The logo as a pair of eyes: the solid eye is the original, the hatched eye its copy. The script
+   in SiteLayout sets --look and --side; the copy follows with a lag and winks now and then. */
+svg .eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: translate(var(--side, 0px), var(--look, 0px)) scaleY(var(--lid, 1));
+}
+
+svg .eye-original {
+  transition: transform 0.12s ease-out;
+}
+
+svg .eye-copy {
+  transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+svg.wink .eye-copy {
+  --lid: 0.12;
+  transition: transform 0.09s ease-in;
+}
+
+/* Buttons */
 .buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
 }
 
 .button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 9px;
+  gap: 9px;
+  min-height: 52px;
+  padding: 0 24px;
+  border-radius: 999px;
   border: 1px solid var(--line-strong);
   background: var(--surface);
-  color: var(--text);
-  font-weight: 600;
-  font-size: 15px;
+  color: var(--text) !important;
+  font-weight: 650;
+  font-size: 16.5px;
 }
 
 .button svg {
-  width: 18px;
-  height: 18px;
-  flex: none;
+  width: 19px;
+  height: 19px;
 }
 
 .button:hover {
-  text-decoration: none;
-  border-color: var(--faint);
+  text-decoration: none !important;
+  border-color: var(--muted);
 }
 
 .button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--accent-ink);
+  color: var(--accent-ink) !important;
 }
 
 .button.primary:hover {
   background: var(--accent-hover);
 }
 
-.prereq {
-  color: var(--muted);
+/* On deep backgrounds: a white primary and an outlined secondary button. */
+.on-deep .button.primary {
+  background: #fff;
+  border-color: #fff;
+  color: var(--deep) !important;
+}
+
+.on-deep .button.primary:hover {
+  background: #e6eeff;
+}
+
+.on-deep .button.outline {
+  background: transparent;
+  border-color: rgb(255 255 255 / 55%);
+  color: var(--on-deep) !important;
+}
+
+.on-deep .button.outline:hover {
+  border-color: #fff;
+}
+
+/* Type: an eyebrow label and a loud uppercase heading with a short rule under it. */
+.eyebrow {
+  display: block;
   font-size: 14px;
-  margin: 16px 0 0;
-}
-
-.note {
-  color: var(--faint);
-  font-size: 13.5px;
-  margin-top: 14px;
-}
-
-/* Demo */
-.demo {
-  min-width: 0;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 16px;
-  box-shadow: 0 10px 30px rgb(28 28 26 / 7%);
-}
-
-.demo-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
   margin-bottom: 12px;
-  font-size: 14px;
-  color: var(--muted);
 }
 
-/* As wide as "Syncing…", so that the header does not wrap differently while the demo syncs. */
-.demo-head .status {
-  margin-left: auto;
+.on-deep .eyebrow {
+  color: var(--on-deep-accent);
+}
+
+.loud {
+  font-size: clamp(30px, 3.8vw, 52px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 750;
+  text-transform: uppercase;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.rule::after {
+  content: "";
+  display: block;
+  width: 72px;
+  height: 3px;
+  border-radius: 2px;
+  margin-top: 18px;
+  background: var(--accent);
+}
+
+.center {
+  text-align: center;
+}
+
+.center.rule::after {
+  margin-inline: auto;
+}
+
+/* Badges that float over a mockup. */
+.badge {
+  position: absolute;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 5.6em;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: 0 14px 34px -10px rgb(0 0 0 / 35%);
+  animation: bob 5s ease-in-out infinite;
 }
 
-.demo-head .dot {
-  width: 8px;
-  height: 8px;
+.badge i {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: #2f8a57;
+  background: var(--c, var(--ok));
 }
 
-.demo-head .status.busy .dot {
-  background: #c98a1b;
-}
-
-.move {
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: 8px;
-  padding: 5px 11px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 13.5px;
-}
-
-.move:hover {
-  border-color: var(--faint);
-}
-
-.cals {
-  display: grid;
-  grid-template-columns: 34px repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.hours {
-  position: relative;
-  height: 420px;
-}
-
-.hours span {
-  position: absolute;
-  right: 2px;
-  font-size: 11px;
-  color: var(--faint);
-  transform: translateY(-50%);
-}
-
-.cal {
-  position: relative;
-  height: 420px;
-  border-radius: 8px;
-  background: repeating-linear-gradient(
-    to bottom,
-    var(--grid) 0,
-    var(--grid) 1px,
-    transparent 1px,
-    transparent 42px
-  );
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-
-.cal-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cal-name svg {
-  width: 12px;
-  height: 12px;
-  flex: none;
-}
-
-.cal-name i {
-  width: 9px;
-  height: 9px;
+.badge.hatched i {
   border-radius: 3px;
-  background: var(--c);
-  flex: none;
+  background: repeating-linear-gradient(135deg, var(--c) 0 2px, transparent 2px 4px);
+  border: 1px solid var(--c);
 }
 
-.ev {
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  border-radius: 6px;
-  padding: 3px 6px;
-  font-size: 11.5px;
-  line-height: 1.3;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  user-select: none;
-  transition-property: top, left, right;
-  transition-duration: 0.5s;
-  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+.badge.late {
+  animation-delay: -2.5s;
 }
 
-.ev small {
-  display: block;
-  opacity: 0.85;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Original: solid in its calendar's colour. */
-.ev.real {
-  background: var(--c);
-  color: var(--on-c);
-}
-
-.ev.real.movable {
-  cursor: grab;
-  touch-action: none;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
-}
-
-.ev.real.dragging {
-  cursor: grabbing;
-  transition: none;
-  box-shadow: 0 8px 20px rgb(0 0 0 / 22%);
-}
-
-.ev.real.waiting {
-  outline: 2px solid var(--c);
-  outline-offset: 2px;
-}
-
-/* Copy: hatched in the colour of the calendar it came from, like the mirror in the logo. */
-.ev.copy {
-  color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--c) 60%, var(--surface));
-  background: repeating-linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--c) 26%, var(--surface)) 0 5px,
-    color-mix(in srgb, var(--c) 10%, var(--surface)) 5px 10px
-  );
-}
-
-.ev.copy.hidden {
-  display: none;
-}
-
-.ev.copy.arrived {
-  animation: arrive 0.6s ease;
-}
-
-@keyframes arrive {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 45%, transparent);
-  }
+@keyframes bob {
+  0%,
   100% {
-    box-shadow: 0 0 0 8px transparent;
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
   }
 }
 
-.sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
-.cals-wrap {
-  position: relative;
-}
-
-.arcs {
+/* The field of calendar slots behind deep areas. */
+.slot-field {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
-  overflow: visible;
+  mask-image: linear-gradient(to right, transparent 35%, #000 90%);
 }
 
-.arcs path {
-  fill: none;
-  stroke-width: 2.2;
-  stroke-linecap: round;
+/* Hero: the gradient with the slot field, the copy on the left, the live demo on the right. */
+.hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--grad);
+  color: var(--on-deep);
+  padding: 140px 0 clamp(72px, 9vw, 128px);
 }
 
-.legend-row {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-  font-size: 12.5px;
-  color: var(--muted);
+/* The slot field fades out to the left and to the top, so nothing sits behind the text or nav. */
+.hero .slot-field {
+  mask-image:
+    linear-gradient(to right, transparent 35%, #000 90%),
+    linear-gradient(to bottom, transparent 90px, #000 220px);
+  mask-composite: intersect;
 }
 
-.legend-row span {
-  display: inline-flex;
+.hero-inner {
+  position: relative;
+  width: min(1200px, 100% - 40px);
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 6fr) minmax(0, 7fr);
+  gap: clamp(32px, 5vw, 72px);
   align-items: center;
-  gap: 6px;
 }
 
-.legend-row .sw {
-  width: 18px;
-  height: 12px;
-  border-radius: 3px;
+.hero h1 {
+  font-size: clamp(34px, 3.7vw, 50px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 750;
+  text-transform: uppercase;
+  margin: 0 0 24px;
+  text-wrap: balance;
 }
 
-.legend-row .sw.solid {
-  background: var(--work);
+.hero .sub {
+  color: var(--on-deep-muted);
+  font-size: clamp(18px, 1.5vw, 21px);
+  margin: 0 0 32px;
+  max-width: 40ch;
 }
 
-.legend-row .sw.hatch {
-  border: 1px solid color-mix(in srgb, var(--work) 60%, var(--surface));
-  background: repeating-linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--work) 26%, var(--surface)) 0 4px,
-    color-mix(in srgb, var(--work) 10%, var(--surface)) 4px 8px
-  );
+.hero .free {
+  color: var(--on-deep-muted);
+  font-size: 15px;
+  margin: 20px 0 0;
 }
 
-.matrix-mini {
-  margin-top: 14px;
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  flex-wrap: wrap;
-  font-size: 13px;
-  color: var(--muted);
+.hero-stage {
+  position: relative;
 }
 
-.matrix-mini table {
-  border-spacing: 3px;
-}
-
-.matrix-mini th {
-  font-weight: 600;
-  font-size: 11.5px;
-  color: var(--muted);
-  padding: 0 4px;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.matrix-mini th i {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--c);
-  margin-right: 4px;
-}
-
-.matrix-mini td {
-  padding: 0;
-}
-
-.matrix-mini td button {
-  width: 56px;
-  height: 26px;
-  border: 0;
-  border-radius: 6px;
-  text-align: center;
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
+.hero-card {
+  position: relative;
+  z-index: 2;
+  background: var(--surface);
   color: var(--text);
+  border-radius: 20px;
+  padding: clamp(14px, 2vw, 22px);
+  box-shadow: 0 40px 80px -30px rgb(3 8 30 / 70%);
 }
 
-.lv-off {
-  background: var(--l0);
-  color: var(--faint) !important;
+.hero-stage .b1 {
+  top: -22px;
+  right: 8%;
 }
 
-.lv-busy {
-  background: var(--l1);
+.hero-stage .b2 {
+  bottom: -40px;
+  left: -18px;
 }
 
-.lv-title {
-  background: var(--l2);
+/* Showcase cards: deep colour, text on one side, a floating mockup on the other. */
+section.show {
+  width: min(1240px, 100% - 40px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
 }
 
-.lv-full {
-  background: var(--l3);
-  color: #fff !important;
+.card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 28px;
+  color: var(--on-deep);
+  padding: clamp(28px, 4vw, 48px);
+  display: grid;
+  gap: 32px;
+  align-content: start;
 }
 
-.demo-caption {
-  margin: 10px 0 0;
-  font-size: 12.5px;
-  color: var(--faint);
+.card.wide {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  align-items: center;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ev {
-    transition: none;
-  }
-  .ev.copy.arrived {
-    animation: none;
-  }
+.card.wide .card-text {
+  order: 2;
 }
 
-section {
-  padding: 56px 0;
-  border-top: 1px solid var(--line);
+.card-blue {
+  background: linear-gradient(135deg, #17337f, #2b59c3 60%, #1677b8);
 }
 
-section h2 {
-  font-size: 26px;
-  letter-spacing: -0.01em;
-  margin: 0 0 8px;
-  font-weight: 650;
+.card-vermilion {
+  background: linear-gradient(150deg, #5a1f05, #8f360a 55%, #a8460f);
 }
 
-section p.lead {
+.card-green {
+  background: linear-gradient(150deg, #053d2b, #00704f 60%, #1f9a6f);
+  --iso-slab: #ffffff;
+}
+
+.card .loud {
+  font-size: clamp(26px, 2.6vw, 38px);
+}
+
+.card-text p {
+  color: rgb(255 255 255 / 94%);
+  margin: 16px 0 0;
+}
+
+.mock {
+  position: relative;
+}
+
+.window {
+  position: relative;
+  z-index: 2;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 18px;
+  padding: clamp(12px, 2vw, 22px);
+  box-shadow: 0 40px 70px -30px rgb(0 0 0 / 60%);
+}
+
+.card-vermilion .badge {
+  bottom: -18px;
+  right: 6%;
+}
+
+.iso-mock {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+}
+
+.iso {
+  width: min(320px, 90%);
+  height: auto;
+  filter: drop-shadow(0 30px 30px rgb(0 0 0 / 35%));
+}
+
+.iso-mock .b-top {
+  top: 6%;
+  left: 4%;
+}
+
+.iso-mock .b-side {
+  top: 40%;
+  right: 0;
+}
+
+.iso-mock .b-bottom {
+  bottom: 4%;
+  left: 10%;
+}
+
+.card-blue .iso-mock .b-bottom {
+  left: auto;
+  right: 4%;
+}
+
+/* How it works */
+.lead {
+  max-width: 60ch;
+  margin: 22px auto 0;
   color: var(--muted);
-  margin: 0 0 26px;
-  max-width: 62ch;
+  font-size: 18px;
 }
 
 .steps {
+  list-style: none;
+  padding: 0;
+  margin: 48px auto 0;
+  max-width: 820px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  gap: 14px;
 }
 
-.step {
+.steps li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 22px;
+  align-items: start;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 18px;
+  border-radius: 20px;
+  padding: 24px 28px;
 }
 
-.step b {
+.num {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--c);
-  color: var(--on-c);
-  font-size: 13px;
-  margin-bottom: 10px;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 750;
+  font-size: 21px;
 }
 
-.step h3 {
-  margin: 0 0 6px;
-  font-size: 16px;
+.steps h3 {
+  font-size: 21px;
+  margin: 2px 0 6px;
 }
 
-.step p {
-  margin: 0;
+.steps p {
   color: var(--muted);
-  font-size: 14.5px;
-}
-
-.shot {
   margin: 0;
 }
 
-/* The app is light only, so the screenshot gets a frame that also works on the dark page. */
-.shot img {
-  display: block;
-  width: 100%;
-  height: auto;
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgb(28 28 26 / 8%);
-}
-
-.shot figcaption {
-  margin-top: 10px;
-  font-size: 13.5px;
-  color: var(--faint);
-}
-
-/* On a phone the whole page would shrink to unreadable text: show the editor at reading size. */
-@media (max-width: 640px) {
-  .shot {
-    overflow: hidden;
-    border: 1px solid var(--line-strong);
-    border-radius: 12px;
-  }
-
-  .shot img {
-    width: 240%;
-    max-width: none;
-    margin-left: -40%;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .shot figcaption {
-    margin: 0;
-    padding: 8px 12px;
-  }
-}
-
-.features {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 20px 24px;
-}
-
-.features h3 {
-  margin: 0 0 4px;
-  font-size: 15.5px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.features h3 i {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: var(--c);
-  flex: none;
-}
-
-.features h3 i.hatch {
-  border: 1px solid var(--c);
-  background: repeating-linear-gradient(135deg, var(--c) 0 2px, transparent 2px 4px);
-}
-
-.features p {
-  margin: 0;
+.small {
   color: var(--muted);
-  font-size: 14px;
-}
-
-.why {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 32px;
-}
-
-.why ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--muted);
-}
-
-.why li {
-  margin: 6px 0;
-}
-
-.guides {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.guide {
-  display: block;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px;
-  color: var(--text);
-  font-weight: 600;
   font-size: 15px;
+  margin: 24px 0 0;
 }
 
-.guide span {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-weight: 400;
-  font-size: 13.5px;
+/* Guides: a ruled list. */
+.guide-list {
+  list-style: none;
+  margin: 40px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line-strong);
 }
 
-.guide:hover {
+.guide-list li {
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.guide-list a {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 5fr) auto;
+  gap: 8px 32px;
+  align-items: baseline;
+  padding: 22px 4px;
+  color: var(--text);
+}
+
+.guide-list a:hover {
   text-decoration: none;
-  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
 }
 
+.g-title {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.g-text {
+  color: var(--muted);
+}
+
+.g-arrow {
+  color: var(--accent);
+  font-size: 20px;
+  transition: transform 0.2s ease;
+}
+
+.guide-list a:hover .g-arrow {
+  transform: translateX(4px);
+}
+
+/* Closing call to action, with the big eyes. */
+.cta-card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: clamp(28px, 5vw, 72px);
+  align-items: center;
+  border-radius: 28px;
+  padding: clamp(32px, 6vw, 80px);
+  background: var(--deep);
+  color: var(--on-deep);
+}
+
+.cta-card .slot-field {
+  mask-image: linear-gradient(to right, transparent 60%, #000 100%);
+}
+
+.eyes {
+  position: relative;
+  color: #fff;
+  --accent: #ffffff;
+}
+
+.eyes svg {
+  display: block;
+  width: clamp(140px, 18vw, 240px);
+  height: auto;
+  filter: drop-shadow(0 24px 40px rgb(3 8 30 / 45%));
+}
+
+.cta-text {
+  position: relative;
+}
+
+.cta-text p {
+  color: #eef3ff;
+  font-size: 18px;
+  margin: 16px 0 28px;
+}
+
+/* The latest release, shown once release-please wrote CHANGELOG.md. */
 .changes {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
   font-size: 15px;
-  margin: 0;
+  margin: 24px 0 0;
 }
 
 .changes time,
@@ -786,65 +744,17 @@ section p.lead {
   color: var(--faint);
 }
 
-footer {
-  border-top: 1px solid var(--line);
-  padding: 28px 0 40px;
-  color: var(--faint);
-  font-size: 14px;
-}
-
-footer .wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-}
-
-footer a {
-  color: var(--muted);
-}
-
-@media (max-width: 900px) {
-  .hero {
-    grid-template-columns: 1fr;
-    padding: 36px 0;
-  }
-  .hero h1 {
-    font-size: 32px;
-  }
-  .features,
-  .guides {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .steps,
-  .why {
-    grid-template-columns: 1fr;
-  }
-  nav.links a.hide-sm {
-    display: none;
-  }
-}
-
-@media (max-width: 480px) {
-  .wrap {
-    padding: 0 16px;
-  }
-  .features,
-  .guides {
-    grid-template-columns: 1fr;
-  }
-  .cals {
-    grid-template-columns: 26px repeat(3, minmax(0, 1fr));
-    gap: 4px;
-  }
-  .demo {
-    padding: 12px;
-  }
-  .matrix-mini td button {
-    width: 44px;
-  }
-}
-
 /* The waitlist form. It shows only if the build has a waitlist address and a Turnstile key. */
+#waitlist .lead {
+  margin: 22px 0 28px;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 14px;
+}
+
 .waitlist {
   max-width: 520px;
 }
@@ -870,8 +780,9 @@ footer a {
 .waitlist input[type="email"] {
   flex: 1 1 240px;
   min-width: 0;
-  padding: 10px 12px;
-  border-radius: 9px;
+  min-height: 52px;
+  padding: 0 20px;
+  border-radius: 999px;
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--text);
@@ -907,4 +818,126 @@ footer a {
 
 .waitlist-status.error {
   color: var(--c-vermilion);
+}
+
+/* Footer */
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 28px;
+  padding: clamp(56px, 7vw, 96px) 0 56px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+footer nav a {
+  color: var(--muted) !important;
+}
+
+footer > span {
+  margin-left: auto;
+}
+
+@media (max-width: 960px) {
+  .hero-inner,
+  section.show,
+  .card.wide {
+    grid-template-columns: 1fr;
+  }
+  .card.wide .card-text {
+    order: 0;
+  }
+  .top nav a.hide-sm {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .cta-card {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+}
+
+@media (max-width: 640px) {
+  .top,
+  section,
+  section.show,
+  footer,
+  .hero-inner {
+    width: calc(100% - 32px);
+  }
+  .top {
+    height: 64px;
+  }
+  .top nav a {
+    padding: 8px;
+  }
+  .early {
+    display: none;
+  }
+  .hero {
+    padding-top: 100px;
+  }
+  .hero-stage .b2 {
+    left: 6px;
+  }
+  .card {
+    border-radius: 22px;
+  }
+  .badge {
+    font-size: 13px;
+    padding: 8px 12px;
+  }
+  .guide-list a {
+    grid-template-columns: 1fr auto;
+  }
+  .g-text {
+    grid-column: 1;
+    font-size: 15px;
+  }
+  .g-arrow {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  footer > span {
+    margin-left: 0;
+  }
+}
+
+/* Very narrow phones: a tighter header, so nothing scrolls sideways. */
+@media (max-width: 360px) {
+  .top {
+    gap: 6px;
+  }
+  .brand {
+    font-size: 18px;
+  }
+  .brand svg {
+    width: 28px;
+    height: 28px;
+  }
+  .top nav a {
+    padding: 6px;
+  }
+  .theme {
+    margin-left: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge {
+    animation: none;
+  }
+  svg .eye,
+  .g-arrow {
+    transition: none;
+  }
 }

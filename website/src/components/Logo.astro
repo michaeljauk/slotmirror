@@ -1,0 +1,24 @@
+---
+// The slotmirror mark: the original on the left, its hatched copy on the right.
+// `id` names the hatch pattern. Each logo on a page needs its own, so that builds stay
+// reproducible and no two patterns share an id.
+interface Props {
+  id: string;
+  class?: string;
+}
+const { id, class: className } = Astro.props;
+---
+
+<svg class={className} viewBox="0 0 64 64" aria-hidden="true">
+  <defs>
+    <pattern id={id} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"
+      ><rect width="2.4" height="5" fill="currentColor"></rect></pattern
+    >
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="4">
+    <rect x="5" y="7" width="23" height="50" rx="6"></rect>
+    <rect x="36" y="7" width="23" height="50" rx="6"></rect>
+  </g>
+  <rect class="eye eye-original" x="10.5" y="22" width="12" height="18" rx="3" fill="var(--accent)"></rect>
+  <rect class="eye eye-copy" x="41.5" y="22" width="12" height="18" rx="3" fill={`url(#${id})`}></rect>
+</svg>

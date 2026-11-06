@@ -1,0 +1,401 @@
+---
+// The hero demo: a toy version of the sync. One meeting per calendar; drag one, and its copies
+// follow in the other calendars. Until the visitor touches it, a pointer plays the moves itself. The detail levels have their own section (DetailPicker).
+import "../styles/demo.css";
+import { google, microsoft } from "../icons";
+---
+
+<div class="demo" role="region" aria-label="Interactive demo">
+  <div class="demo-head">
+    <span class="hint">Drag a meeting. Its copies follow.</span>
+    <span class="status" id="status" aria-live="polite"
+      ><span class="dot"></span><span id="status-text">In sync</span></span
+    >
+  </div>
+  <div class="cals-wrap">
+    <div class="cals">
+      <div><div class="cal-name">&nbsp;</div><div class="hours" id="hours"></div></div>
+      <div style="--c:var(--work)">
+        <div class="cal-name"><i></i><Fragment set:html={microsoft} />Work</div>
+        <div class="cal" data-cal="work"></div>
+      </div>
+      <div style="--c:var(--client)">
+        <div class="cal-name"><i></i><Fragment set:html={microsoft} />Client</div>
+        <div class="cal" data-cal="client"></div>
+      </div>
+      <div style="--c:var(--private)">
+        <div class="cal-name"><i></i><Fragment set:html={google} />Private</div>
+        <div class="cal" data-cal="private"></div>
+      </div>
+    </div>
+    <svg class="arcs" id="arcs" aria-hidden="true"></svg>
+    <div class="demo-pointer" id="demo-pointer" aria-hidden="true">
+      <svg viewBox="0 0 24 24"
+        ><path
+          d="M5 3.5v15.2l4.1-3.9 2.6 6 2.7-1.2-2.6-5.9h5.7z"
+          fill="#fff"
+          stroke="#0f1626"
+          stroke-width="1.6"
+          stroke-linejoin="round"></path></svg
+      >
+    </div>
+  </div>
+  <div class="legend-row">
+    <button class="demo-stop" id="demo-stop" type="button" hidden>Stop the demo</button>
+    <span aria-hidden="true"><i class="sw solid"></i>Original</span>
+    <span aria-hidden="true"><i class="sw hatch"></i>Copy</span>
+    <span class="caption">A simulation. No calendar is connected.</span>
+  </div>
+</div>
+
+<script>
+  const START = 8;
+  const END = 18;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  type Cal = "work" | "client" | "private";
+  type Level = "off" | "busy" | "full";
+  type Slot = { start: number; length: number };
+  const CALS: Cal[] = ["work", "client", "private"];
+  const COLOUR: Record<Cal, string> = {
+    work: "var(--work)",
+    client: "var(--client)",
+    private: "var(--private)",
+  };
+  const NAME: Record<Cal, string> = { work: "Work", client: "Client", private: "Private" };
+  // What each calendar's meeting shows in the others.
+  const show: Record<Cal, Partial<Record<Cal, Level>>> = {
+    work: { client: "busy", private: "full" },
+    client: { work: "busy", private: "off" },
+    private: { work: "busy", client: "busy" },
+  };
+  const cals = Object.fromEntries(
+    [...document.querySelectorAll<HTMLElement>(".demo .cal")].map((el) => [el.dataset.cal, el]),
+  ) as Record<Cal, HTMLElement>;
+  // The column height comes from CSS, so the demo can be taller on wide screens.
+  const height = () => cals.work.clientHeight;
+  const px = (hour: number) => ((hour - START) / (END - START)) * height();
+  const hours = document.getElementById("hours")!;
+  const hourLabels: [HTMLElement, number][] = [];
+  for (let h = START; h <= END; h += 2) {
+    const label = document.createElement("span");
+    label.textContent = `${h}:00`;
+    hours.append(label);
+    hourLabels.push([label, h]);
+  }
+  const time = (h: number) => `${Math.floor(h)}:${h % 1 ? "30" : "00"}`;
+  // In narrow columns (phones) an event shows only its start time, so nothing is cut off.
+  const narrow = () => cals.work.clientWidth < 130;
+  const span = (slot: Slot) =>
+    narrow() ? time(slot.start) : `${time(slot.start)}–${time(slot.start + slot.length)}`;
+  const slots = new Map<HTMLElement, Slot>();
+  // Overlapping events sit side by side, like in a calendar app: lane i of n.
+  function lanes(cal: Cal, override?: [HTMLElement, Slot]) {
+    const items = [...cals[cal].querySelectorAll<HTMLElement>(".ev:not(.hidden)")]
+      .map((el) => ({ el, slot: el === override?.[0] ? override[1] : slots.get(el) }))
+      .filter((item): item is { el: HTMLElement; slot: Slot } => item.slot !== undefined)
+      .sort((a, b) => a.slot.start - b.slot.start);
+    const result = new Map<HTMLElement, { i: number; n: number }>();
+    let cluster: HTMLElement[] = [];
+    let ends: number[] = [];
+    let clusterEnd = -Infinity;
+    const close = () => {
+      for (const el of cluster) result.get(el)!.n = ends.length;
+      cluster = [];
+      ends = [];
+    };
+    for (const { el, slot } of items) {
+      if (slot.start >= clusterEnd) close();
+      const free = ends.findIndex((end) => end <= slot.start);
+      const i = free < 0 ? ends.length : free;
+      ends[i] = slot.start + slot.length;
+      result.set(el, { i, n: 0 });
+      cluster.push(el);
+      clusterEnd = Math.max(clusterEnd, slot.start + slot.length);
+    }
+    close();
+    return result;
+  }
+  function layout(cal: Cal) {
+    for (const [el, { i, n }] of lanes(cal)) {
+      el.style.left = `calc(4px + (100% - 8px) * ${i / n})`;
+      el.style.right = `calc(4px + (100% - 8px) * ${(n - i - 1) / n})`;
+      el.style.marginLeft = i ? "2px" : "0";
+    }
+  }
+  // Events sit at top 0 and move with transform, so the browser animates on the compositor.
+  function place(el: HTMLElement, slot: Slot) {
+    slots.set(el, { ...slot });
+    el.style.transform = `translateY(${px(slot.start)}px)`;
+    el.style.height = `${px(START + slot.length) - 2}px`;
+  }
+  const copyHint = (source: Cal) => `<span class="sr">Copy from ${NAME[source]}: </span>`;
+  type Meeting = Slot & {
+    cal: Cal;
+    title: string;
+    where?: string;
+    el: HTMLElement;
+    copies: Partial<Record<Cal, HTMLElement>>;
+    timer?: ReturnType<typeof setTimeout>;
+    arcs?: SVGGElement;
+  };
+  function addEvent(cal: Cal, source: Cal, kind: string) {
+    const el = document.createElement("div");
+    el.className = `ev ${kind}`;
+    el.style.setProperty("--c", COLOUR[source]);
+    cals[cal].append(el);
+    return el;
+  }
+  const seeds: (Slot & Pick<Meeting, "cal" | "title" | "where">)[] = [
+    { cal: "work", title: "Client call", where: "Teams", start: 10, length: 1 },
+    { cal: "client", title: "Workshop", start: 13, length: 1 },
+    { cal: "private", title: "Dentist", start: 16, length: 1 },
+  ];
+  const meetings: Meeting[] = seeds.map((seed) => {
+    const el = addEvent(seed.cal, seed.cal, "real movable");
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    const copies: Meeting["copies"] = {};
+    for (const cal of CALS) if (cal !== seed.cal) copies[cal] = addEvent(cal, seed.cal, "copy");
+    return { ...seed, el, copies };
+  });
+  function drawReal(m: Meeting) {
+    place(m.el, m);
+    m.el.innerHTML = `${m.title}<small>${span(m)}</small>`;
+    m.el.setAttribute("aria-label", `${m.title}, ${span(m)}. Move it with the arrow keys.`);
+    layout(m.cal);
+  }
+  function drawCopy(m: Meeting, cal: Cal) {
+    const el = m.copies[cal]!;
+    const level = show[m.cal][cal]!;
+    el.classList.toggle("hidden", level === "off");
+    place(el, m);
+    const label = level === "busy" ? "Busy" : m.title;
+    const extra = level === "full" && m.where && !narrow() ? ` · ${m.where}` : "";
+    el.innerHTML = `${copyHint(m.cal)}${label}<small>${span(m)}${extra}</small>`;
+    layout(cal);
+  }
+  const copyCals = (m: Meeting) => CALS.filter((cal) => cal !== m.cal);
+  // Arcs with a travelling dot, from the moved original to the slot where each copy will land,
+  // while the sync runs. The copy then slides into place under the dot.
+  const arcs = document.getElementById("arcs")!;
+  const wrap = document.querySelector(".demo .cals-wrap")!;
+  const SVG = "http://www.w3.org/2000/svg";
+  function box(cal: Cal, el: HTMLElement, slot: Slot) {
+    const outer = wrap.getBoundingClientRect();
+    const column = cals[cal].getBoundingClientRect();
+    const width = cals[cal].clientWidth - 8;
+    const { i, n } = lanes(cal, [el, slot]).get(el)!;
+    const left = column.left - outer.left + cals[cal].clientLeft + 4 + (width * i) / n;
+    const top = column.top - outer.top + cals[cal].clientTop + px(slot.start);
+    return { left, right: left + width / n, middle: top + (px(START + slot.length) - 2) / 2 };
+  }
+  function drawArcs(m: Meeting) {
+    m.arcs?.remove();
+    const group = document.createElementNS(SVG, "g");
+    arcs.append(group);
+    m.arcs = group;
+    const colour = getComputedStyle(m.el).backgroundColor;
+    const from = box(m.cal, m.el, m);
+    for (const cal of copyCals(m)) {
+      if (show[m.cal][cal] === "off") continue;
+      const to = box(cal, m.copies[cal]!, m);
+      const right = to.left > from.left;
+      const x1 = right ? from.right - 4 : from.left + 4;
+      const x2 = right ? to.left + 8 : to.right - 8;
+      const { middle: y } = from;
+      const bow = Math.min(64, Math.abs(x2 - x1) * 0.35) * (y > 70 ? -1 : 1);
+      const third = (x2 - x1) / 3;
+      const path = document.createElementNS(SVG, "path");
+      path.setAttribute(
+        "d",
+        `M ${x1} ${y} C ${x1 + third} ${y + bow}, ${x2 - third} ${y + bow}, ${x2} ${y}`,
+      );
+      path.setAttribute("stroke", colour);
+      group.append(path);
+      const length = path.getTotalLength();
+      path.style.strokeDasharray = `${length}`;
+      path.animate([{ strokeDashoffset: length }, { strokeDashoffset: 0 }], {
+        duration: 700,
+        easing: "ease-out",
+        fill: "forwards",
+      });
+      const dot = document.createElementNS(SVG, "circle");
+      dot.setAttribute("r", "3.5");
+      dot.setAttribute("fill", colour);
+      group.append(dot);
+      const steps = 24;
+      const frames = Array.from({ length: steps + 1 }, (_, i) => {
+        const point = path.getPointAtLength((length * i) / steps);
+        return { transform: `translate(${point.x}px, ${point.y}px)` };
+      });
+      dot.animate(frames, { duration: 700, easing: "ease-out", fill: "forwards" });
+    }
+  }
+  const status = document.getElementById("status")!;
+  const statusText = document.getElementById("status-text")!;
+  function drawStatus() {
+    const busy = meetings.some((m) => m.timer !== undefined);
+    status.classList.toggle("busy", busy);
+    statusText.textContent = busy ? "Syncing…" : "In sync";
+  }
+  function sync(m: Meeting) {
+    if (reduced) {
+      for (const cal of copyCals(m)) drawCopy(m, cal);
+      return;
+    }
+    clearTimeout(m.timer);
+    m.el.classList.add("waiting");
+    drawArcs(m);
+    m.timer = setTimeout(() => {
+      m.timer = undefined;
+      for (const cal of copyCals(m)) {
+        drawCopy(m, cal);
+        const el = m.copies[cal]!;
+        el.classList.remove("arrived");
+        void el.offsetWidth;
+        el.classList.add("arrived");
+      }
+      m.el.classList.remove("waiting");
+      drawStatus();
+      const group = m.arcs;
+      setTimeout(() => group?.remove(), 500);
+    }, 800);
+    drawStatus();
+  }
+  let touched = false;
+  // Meetings the visitor holds right now, so that the auto-play never fights a drag.
+  const held = new Set<HTMLElement>();
+  const ghost = document.getElementById("demo-pointer")!;
+  const stop = document.getElementById("demo-stop") as HTMLButtonElement;
+  // The visitor takes over: the auto-play ends for good, also while it is paused.
+  function takeOver() {
+    if (touched) return;
+    touched = true;
+    ghost.classList.remove("on");
+    stop.hidden = true;
+    status.setAttribute("aria-live", "polite");
+  }
+  function moveTo(m: Meeting, start: number) {
+    const next = Math.min(END - m.length, Math.max(START, start));
+    if (next === m.start) return false;
+    m.start = next;
+    drawReal(m);
+    return true;
+  }
+  for (const m of meetings) {
+    let drag: { y: number; start: number } | null = null;
+    m.el.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      takeOver();
+      held.add(m.el);
+      drag = { y: event.clientY, start: m.start };
+      m.el.classList.add("dragging");
+      m.el.setPointerCapture(event.pointerId);
+    });
+    m.el.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+      const delta = ((event.clientY - drag.y) / height()) * (END - START);
+      moveTo(m, Math.round((drag.start + delta) * 2) / 2);
+    });
+    const drop = () => {
+      held.delete(m.el);
+      if (!drag) return;
+      const moved = drag.start !== m.start;
+      drag = null;
+      m.el.classList.remove("dragging");
+      if (moved) sync(m);
+    };
+    m.el.addEventListener("pointerup", drop);
+    m.el.addEventListener("pointercancel", drop);
+    m.el.addEventListener("keydown", (event) => {
+      const step = { ArrowUp: -0.5, ArrowDown: 0.5 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      takeOver();
+      if (moveTo(m, m.start + step)) sync(m);
+    });
+  }
+  function drawAll() {
+    for (const [label, h] of hourLabels) label.style.top = `${px(h)}px`;
+    for (const m of meetings) {
+      drawReal(m);
+      for (const cal of copyCals(m)) drawCopy(m, cal);
+    }
+  }
+  drawAll();
+  new ResizeObserver(drawAll).observe(cals.work);
+  // Auto-play: a pointer drags one meeting after the other to a new time, and the copies follow.
+  // It runs only while the demo is in view and the tab is visible. It stops for good once the
+  // visitor touches a meeting, and never runs with reduced motion.
+  // [meeting, new start]. No move crosses another meeting, so no two meetings ever share a slot
+  // and the loop ends where it started: 10:00, 13:00 and 16:00.
+  const script: [number, number][] = [
+    [0, 8.5],
+    [1, 11.5],
+    [2, 14],
+    [0, 10],
+    [1, 13],
+    [2, 16],
+  ];
+  let inView = false;
+  let running = false;
+  let step = 0;
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const playing = () => !touched && inView && !document.hidden;
+  // The pointer aims at the middle of a meeting. While it drags, it keeps its x, like a hand.
+  function aim(m: Meeting, x?: number) {
+    const target = box(m.cal, m.el, m);
+    const left = x ?? (target.left + target.right) / 2;
+    ghost.style.transform = `translate(${left}px, ${target.middle}px)`;
+    return left;
+  }
+  async function play() {
+    if (running || !playing()) return;
+    running = true;
+    stop.hidden = false;
+    // The status would announce every scripted sync, so it stays quiet while the demo plays.
+    status.setAttribute("aria-live", "off");
+    while (playing()) {
+      const [index, start] = script[step % script.length]!;
+      const m = meetings[index]!;
+      ghost.classList.add("on");
+      const x = aim(m);
+      await wait(700);
+      if (!playing()) break;
+      ghost.classList.add("press");
+      m.el.classList.add("dragging");
+      const from = m.start;
+      const direction = Math.sign(start - m.start);
+      while (playing() && m.start !== start && moveTo(m, m.start + direction * 0.5)) {
+        aim(m, x);
+        await wait(150);
+      }
+      ghost.classList.remove("press");
+      if (!held.has(m.el)) m.el.classList.remove("dragging");
+      // Also after an interruption: a half-moved meeting still gets its copies.
+      if (m.start !== from) sync(m);
+      if (touched) break;
+      await wait(2200);
+      step++;
+    }
+    ghost.classList.remove("on", "press");
+    running = false;
+  }
+  if (!reduced) {
+    stop.addEventListener("click", () => {
+      takeOver();
+      // The button hides itself, so focus moves to the first meeting instead of the page.
+      meetings[0]!.el.focus();
+    });
+    new IntersectionObserver(
+      (entries) => {
+        inView = entries.some((entry) => entry.isIntersecting);
+        if (inView) setTimeout(play, 900);
+      },
+      { threshold: 0.5 },
+    ).observe(wrap);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && inView) play();
+    });
+  }
+</script>

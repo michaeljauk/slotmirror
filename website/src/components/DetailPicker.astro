@@ -1,0 +1,85 @@
+---
+// A working copy of one row in the app's rules editor: pick a detail level per direction and
+// see what the copy looks like there. Same four levels and names as the app.
+import "../styles/picker.css";
+import { google, microsoft } from "../icons";
+
+const targets = [
+  { id: "client", name: "Client", icon: microsoft, colour: "var(--client)", level: "busy" },
+  { id: "private", name: "Private", icon: google, colour: "var(--private)", level: "full" },
+];
+const levels = [
+  { id: "off", label: "Not" },
+  { id: "busy", label: "As busy" },
+  { id: "title", label: "With title" },
+  { id: "full", label: "Everything" },
+];
+---
+
+<div class="picker" style="--c:var(--work)">
+  <div class="picker-source">
+    <span class="picker-from"><i></i><Fragment set:html={microsoft} />Work</span>
+    <span class="picker-ev">Client call<small>10:00–11:00 · Teams · 3 attendees</small></span>
+  </div>
+  {
+    targets.map((target) => (
+      <div class="picker-row" style={`--t:${target.colour}`} data-target={target.id}>
+        <span class="picker-to">
+          <span aria-hidden="true">→</span>
+          <i />
+          <Fragment set:html={target.icon} />
+          {target.name}
+        </span>
+        <div class="seg" role="radiogroup" aria-label={`What the Work meeting shows in ${target.name}`}>
+          {levels.map((level) => (
+            <button
+              type="button"
+              role="radio"
+              data-level={level.id}
+              aria-checked={level.id === target.level ? "true" : "false"}
+            >
+              {level.label}
+            </button>
+          ))}
+        </div>
+        <span class="picker-there" />
+      </div>
+    ))
+  }
+</div>
+
+<script>
+  type Level = "off" | "busy" | "title" | "full";
+  const preview: Record<Level, string> = {
+    off: `<span class="none">Nothing appears</span>`,
+    busy: `<span class="copy">Busy <small>10:00–11:00</small></span>`,
+    title: `<span class="copy">Client call <small>10:00–11:00</small></span>`,
+    full: `<span class="copy">Client call <small>10:00–11:00 · Teams · agenda</small></span>`,
+  };
+  for (const row of document.querySelectorAll<HTMLElement>(".picker-row")) {
+    const there = row.querySelector<HTMLElement>(".picker-there")!;
+    const buttons = [...row.querySelectorAll<HTMLButtonElement>("button[data-level]")];
+    const select = (button: HTMLButtonElement) => {
+      for (const other of buttons) {
+        other.setAttribute("aria-checked", String(other === button));
+        other.tabIndex = other === button ? 0 : -1;
+      }
+      there.innerHTML = preview[button.dataset.level as Level];
+    };
+    for (const button of buttons) {
+      button.addEventListener("click", () => select(button));
+      // Arrow keys move inside the group, like native radio buttons.
+      button.addEventListener("keydown", (event) => {
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        const next = buttons[(buttons.indexOf(button) + step + buttons.length) % buttons.length]!;
+        select(next);
+        next.focus();
+      });
+    }
+    select(buttons.find((button) => button.getAttribute("aria-checked") === "true")!);
+    // Live only after the first preview, so that screen readers do not read both rows on load.
+    there.setAttribute("aria-live", "polite");
+  }
+</script>

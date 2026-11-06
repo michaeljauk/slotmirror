@@ -1383,7 +1383,14 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   async listCalendars(): Promise<CalendarInfo[]> {
-    return (await this.client()).listCalendars();
+    try {
+      return await (await this.client()).listCalendars();
+    } catch (error) {
+      // Logged here, where the error still has its class: over RPC the caller gets a plain Error,
+      // and a token code or a schema error loses its reason there.
+      console.error("Listing calendars failed", errorCode(error), ...errorLogFields(error));
+      throw error;
+    }
   }
 
   /** Source events of one calendar of this account. Called by the target account's instance. */

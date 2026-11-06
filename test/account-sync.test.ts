@@ -3370,6 +3370,25 @@ describe("accounts that need reconnecting", () => {
     expect((await auditOf(ruleId, "sync_run")).at(-1)?.detail).toMatchObject({ applied: 16 });
   });
 
+  it("logs why listing the calendars failed, inside the instance", async () => {
+    const { stub } = await setupRule("acc-list-fails");
+    await stub.storeTokens("acc-list-fails", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: 0,
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A refusal that is not a reconnect code: the account stays connected, so only the log tells.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ error: "invalid_client" }, { status: 401 }),
+    );
+
+    await expectRejection(stub.listCalendars());
+    const line = logged.mock.calls.find((call) => call[0] === "Listing calendars failed");
+    expect(line).toBeDefined();
+    expect(line).toContain("token_invalid_client");
+  });
+
   it("keeps the account connected if the refused token was replaced during the refresh", async () => {
     const { stub } = await setupRule("acc-race-reconnect");
     await stub.storeTokens("acc-race-reconnect", {

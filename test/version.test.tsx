@@ -2,7 +2,12 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { I18nProvider, i18nFor } from "../src/i18n";
 import { Layout } from "../src/pages/layout";
+import { version } from "../package.json";
 import { buildVersionLabel, versionLabel } from "../src/version";
+
+// vitest.config.ts sets __BUILD_COMMIT__ to "testcommit1234". The label shows nine characters.
+// Each release changes the package version, so the expected label reads it from package.json.
+const label = versionLabel(version, "testcommi");
 
 describe("versionLabel", () => {
   it("shows only the commit while the version is 0.0.0", () => {
@@ -24,7 +29,8 @@ describe("versionLabel", () => {
   });
 
   it("reads the build commit and the package version by default", () => {
-    expect(buildVersionLabel()).toBe("testcommi");
+    expect(buildVersionLabel()).toBe(label);
+    expect(label).toContain("testcommi");
   });
 });
 
@@ -69,9 +75,9 @@ describe("footer", () => {
     return (await (await app.request("/")).text()).split("<footer")[1] ?? "";
   }
 
-  it("shows the commit after the privacy link", async () => {
+  it("shows the build label after the privacy link", async () => {
     const html = await footer();
-    expect(html).toContain('<span class="version" title="Version">testcommi</span>');
+    expect(html).toContain(`<span class="version" title="Version">${label}</span>`);
     expect(html).not.toContain("undefined");
   });
 });

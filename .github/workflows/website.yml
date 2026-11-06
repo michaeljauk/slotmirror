@@ -1,15 +1,10 @@
 name: Website
 
+# The ruleset of main requires the check `build`. A workflow with a `paths` filter does not run for
+# other pull requests, so the check never reports and blocks the merge. This workflow runs for
+# every pull request, and the job skips the build steps if the pull request changes no website path.
 on:
   pull_request:
-    paths:
-      - "website/**"
-      - "design/logo/**"
-      - "docs/images/**"
-      - "CHANGELOG.md"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/website.yml"
 
 permissions:
   contents: read
@@ -23,13 +18,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Depth 2 holds the merge commit and its first parent, the base of the pull request.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          fetch-depth: 2
+      - id: changes
+        run: |
+          paths='^(website/|design/logo/|docs/images/|CHANGELOG\.md$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/website\.yml$)'
+          # -z keeps non-ASCII paths unquoted. --no-renames lists the old path of a moved file too.
+          # The list goes to a file, so that a failed git diff fails the step instead of a skip.
+          git diff --name-only -z --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
+          # grep exits 1 for no match and 2 for an error. Only no match may skip the build.
+          rc=0
+          grep -zqE "$paths" "$RUNNER_TEMP/changed" || rc=$?
+          if [ "$rc" -gt 1 ]; then exit "$rc"; fi
+          if [ "$rc" -eq 0 ]; then
+            echo "website=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "website=false" >> "$GITHUB_OUTPUT"
+            echo "The pull request changes no website path. The build is skipped."
+          fi
+      - if: steps.changes.outputs.website == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - if: steps.changes.outputs.website == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter website
-      - run: pnpm --filter website build
+      - if: steps.changes.outputs.website == 'true'
+        run: pnpm install --frozen-lockfile --filter website
+      - if: steps.changes.outputs.website == 'true'
+        run: pnpm --filter website build

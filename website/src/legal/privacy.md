@@ -40,7 +40,7 @@ The site and its documentation use PostHog (EU Cloud, Frankfurt) for statistics.
   `Content-Type`, `Content-Encoding` and `User-Agent`, drops all others, including cookies, and
   stores nothing. The PostHog project setting "Discard client IP data" removes the IP address after
   PostHog built the hash.
-- PostHog deletes the events when the retention period of the project ends.
+- PostHog deletes the events after one year.
 
 Legal basis: Art. 6(1)(f) GDPR. The legitimate interest is to know which pages people read and
 which steps they take, so that the documentation can improve. Nothing is stored on or read from

@@ -25,7 +25,7 @@ file. "You" is the person who submits the contribution.
 7. **Attribution.** The Maintainer keeps a record of your contribution in the version history of
    the project.
 
-By writing "I have read the CLA and I agree to it" in a pull request comment, you accept this
-agreement for this and all your later contributions.
+The CLA bot comments on your pull request with a link. When you sign through that link, you accept
+this agreement for this and all your later contributions.
 
-Licensor: TODO-MAINTAINER-FILLS-IN-NAME-AND-CONTACT
+Licensor: Michael Jauk, https://github.com/michaeljauk

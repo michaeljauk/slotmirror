@@ -1,6 +1,6 @@
 ---
-title: Quickstart
-description: Deploy slotmirror to Cloudflare, connect your calendars, and choose where events go.
+title: "Quickstart: deploy to Cloudflare Workers"
+description: Deploy slotmirror to your Cloudflare account on the Workers Free plan, connect your Microsoft 365 and Google calendars, and choose where events go.
 ---
 
 ## Check first: can I approve the app myself?
@@ -47,7 +47,7 @@ bytes, so do not change the number 32.
 
 ## 2. Deploy with the button
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/slotmirror/slotmirror)
 
 The button creates the Worker, the D1 database and the Durable Object in your account. In its form:
 
@@ -117,7 +117,7 @@ the other provider later, repeat steps 5 and 6 for it.
 
 ## 8. Watch the first block
 
-1. Under **Where your events go**, put your two calendars in the group **Block each other**, and
+1. On the **Rules** page, put your two calendars in the group **Block each other**, and
    choose **Save**. See below.
 2. In one calendar, create a test event for tomorrow.
 3. Watch the other calendar. With `PUBLIC_URL`, the block appears when the notification arrives. Without it, it
@@ -130,7 +130,7 @@ When the block appears, the setup works.
 You need Node 22 and pnpm 10.
 
 ```sh
-git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
+git clone https://github.com/slotmirror/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
@@ -170,11 +170,11 @@ version later, see [Updating your deployment](../updating/).
 ![Connected accounts](../../../../../docs/images/accounts.png)
 
 1. Connect each account under **Accounts**.
-2. Open **Where your events go**. Put your calendars in the group **Block each other**: each then
+2. Open **Rules**. Put your calendars in the group **Block each other**: each then
    sees the others only as "Busy", marked private.
 3. For more detail in one direction, expand the card of the source account and choose **Not**,
-   **As busy**, **With title** or **Everything** per target. **Looks like this there** shows an
-   example event as the target will show it.
+   **As busy**, **With title** or **Everything** per target. The line **There:** shows an example
+   event as the target will show it.
 4. Choose **Save**. The changes apply immediately.
 
 ![A source card with several calendars of one account](../../../../../docs/images/source-calendars.png)

@@ -449,6 +449,29 @@ describe("the account settings form", () => {
     expect(response.headers.get("location")).toBe(`/rules?open=${encodeURIComponent(g)}`);
   });
 
+  it("opens the account settings inline, closed by default, with the disconnect path below", async () => {
+    const { cookie, w } = await setup("acctinline");
+    const closed = await page(cookie, "/");
+    // Native details: it works without the script. No account is open unless asked for.
+    expect(closed).not.toMatch(/<details class="rename" open/);
+    expect(closed).toContain('<li id="account-' + w + '" class="account-row">');
+    const html = await page(cookie, `/?settings=${w}`);
+    expect(html.match(/<details class="rename" open/g)).toHaveLength(1);
+    const start = html.indexOf(`id="account-${w}"`);
+    const panel = html.slice(start, html.indexOf("</details>", start));
+    // Save belongs to the opened part, and the disconnect section follows the form.
+    expect(panel.indexOf('type="submit"')).toBeGreaterThan(panel.indexOf("workHoursOn"));
+    expect(panel.indexOf('class="account-danger"')).toBeGreaterThan(panel.indexOf("</form>"));
+    expect(panel).toContain(`href="/accounts/${w}/disconnect"`);
+    expect(panel).toContain("first removes the blocks it wrote");
+    // Every colour, also Automatic, has an accessible name.
+    const radios = [...panel.matchAll(/<input[^>]*name="color"[^>]*>/g)].map(([tag]) => tag);
+    expect(radios.length).toBeGreaterThan(1);
+    for (const tag of radios) expect(tag).toMatch(/aria-label="[^"]+"/);
+    const german = await page(cookie, `/?settings=${w}&lang=de`);
+    expect(german).toContain("Danach löscht es die Tokens.");
+  });
+
   it("leaves the end field enabled without the script, and the script disables it", async () => {
     const { user, cookie, w } = await setup("acctmid");
     await setAccountWorkHours(env, user, w, { ...OFFICE, workEnd: "24:00" });

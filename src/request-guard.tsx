@@ -22,19 +22,43 @@ export const CONTENT_SECURITY_POLICY = [
 /** Headers for every response of the Worker. Static files come from the asset binding. */
 export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
-  c.header("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  const formAction = c.get("formAction");
+  c.header(
+    "Content-Security-Policy",
+    formAction
+      ? CONTENT_SECURITY_POLICY.replace(
+          "form-action 'self'",
+          () => `form-action 'self' ${formAction}`,
+        )
+      : CONTENT_SECURITY_POLICY,
+  );
   c.header("X-Frame-Options", "DENY");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "same-origin");
 };
 
 /**
- * Endpoints that providers call server to server. They authenticate with their own secret (a client
- * state or a channel token), never with the session cookie.
+ * Endpoints that providers call server to server. They authenticate with their own secret (a
+ * client state or a channel token), never with the session cookie. `/mcp` needs no entry: it is
+ * mounted before this guard runs and checks its own Origin.
  */
 const SERVER_TO_SERVER = [/^\/webhooks\//];
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The origins of this deployment: the request's own, and the one in PUBLIC_URL. */
+export function allowedOrigins(request: Request, publicUrl: string | undefined): string[] {
+  const allowed = [new URL(request.url).origin];
+  const configured = publicUrl?.trim();
+  if (configured) {
+    try {
+      allowed.push(new URL(configured).origin);
+    } catch {
+      // A malformed PUBLIC_URL admits no further origin.
+    }
+  }
+  return allowed;
+}
 
 /**
  * True if a browser sent the request from this deployment's own pages.
@@ -50,16 +74,7 @@ export function sameOriginRequest(request: Request, publicUrl: string | undefine
   if (site !== null) return site === "same-origin" || site === "none";
   const origin = request.headers.get("origin");
   if (origin === null) return true;
-  const allowed = [new URL(request.url).origin];
-  const configured = publicUrl?.trim();
-  if (configured) {
-    try {
-      allowed.push(new URL(configured).origin);
-    } catch {
-      // A malformed PUBLIC_URL admits no further origin.
-    }
-  }
-  return allowed.includes(origin);
+  return allowedOrigins(request, publicUrl).includes(origin);
 }
 
 /**

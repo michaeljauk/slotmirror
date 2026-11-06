@@ -1,6 +1,6 @@
 ---
 title: Settings reference
-description: All variables and secrets of a slotmirror deployment, and the sync settings in the editor.
+description: All variables and secrets of a slotmirror deployment, and the sync settings on the Rules page.
 ---
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars
@@ -39,6 +39,8 @@ secrets and a sign-in provider are present, every page shows a checklist of what
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                          |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                           |
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See [Alerts](#alerts).                        |
+| `HEARTBEAT_URL`                   | secret   | Optional. Outside monitor that hears a GET once an hour. See below.                           |
+| `MCP_ENABLED`                     | variable | Optional. `1` turns on the read-only [MCP server](/docs/mcp/) and API tokens.                 |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last
 12 hours. Signing in again is one click with the provider.
@@ -53,6 +55,16 @@ If you set the secret `ALERT_WEBHOOK_URL`, slotmirror posts `{"text": "..."}` to
 is the format of Slack incoming webhooks; Google Chat and Mattermost accept it too. Microsoft Teams
 needs its own card format, so use a Teams workflow that takes the `text` field. The URL must start
 with `https://`. Without the secret, slotmirror sends nothing and reports no error.
+
+Alerts need a running Worker. To learn when it stops, set the secret `HEARTBEAT_URL` to the URL of
+an outside monitor such as healthchecks.io. The cron calls it with a plain GET once an hour, without
+any data, and the monitor alerts when the calls stop. Set the monitor's period to 1 hour and its
+grace time to 3 hours. The call needs a free subrequest, so it stops above about 44 accounts.
+
+healthchecks.io can take both secrets from one check. Set `HEARTBEAT_URL` to the ping URL and
+`ALERT_WEBHOOK_URL` to the ping URL plus `/fail`. An alert then shows up as a failure with the text
+as its ping body, and goes to the check's integrations, such as e-mail or Discord. The next heartbeat
+marks the check as up again, so an alert does not stay visible in the check.
 
 To try the webhook, use **Send test alert** on the admin page. Only admins see it, it works once per
 minute, and a failed try also counts. The page shows the result, never the URL. The activity log
@@ -123,7 +135,7 @@ down or its trigger is gone, no alert arrives. Use an outside uptime check for t
 
 ![Sync settings for all calendars](../../../../../docs/images/settings.png)
 
-Each user sets these in the editor, under **For all calendars**. They apply to every direction.
+Each user sets these on the **Rules** page, under **For all calendars**. They apply to every direction.
 
 | Setting                               | Effect                                                                                   |
 | ------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -139,7 +151,7 @@ Events marked private in the source never carry more than "Busy".
 
 ## Copy only some categories
 
-A direction can copy only part of its source. Open a source in the editor, and open **Copy only some
+A direction can copy only part of its source. Open a source on the **Rules** page, and open **Copy only some
 categories** in the row of the target. The list applies to that direction only. The exclusions under
 **For all calendars** stay as they are.
 

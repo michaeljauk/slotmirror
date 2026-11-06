@@ -1,6 +1,6 @@
 ---
-title: FAQ
-description: Common questions about slotmirror.
+title: Calendar sync FAQ
+description: Answers about cost, privacy, recurring meetings, sync delay, iCloud and the Google warning about an unverified app.
 ---
 
 ## Does it cost anything?
@@ -11,7 +11,7 @@ need Workers Paid ($5 a month). See [Limits](../limits/).
 ## What does the AGPL mean for me?
 
 This is a plain-words summary, not legal advice. The license text in the
-[LICENSE](https://github.com/michaeljauk/slotmirror/blob/main/LICENSE) file is the only binding
+[LICENSE](https://github.com/slotmirror/slotmirror/blob/main/LICENSE) file is the only binding
 source.
 
 - **You run slotmirror for yourself or your team, unchanged.** You can use it, copy it and deploy
@@ -32,10 +32,10 @@ Some companies do not allow AGPL software at all. Check your own policy first.
 
 ## What about the earlier MIT license?
 
-Code up to and including commit `93ce752` was published under the MIT license, and that stays
+Code up to and including commit `fde4b24` was published under the MIT license, and that stays
 valid for that code. You can still use that version under the MIT terms. All later changes are
 under the AGPL-3.0. The MIT text is in
-[LICENSE-MIT](https://github.com/michaeljauk/slotmirror/blob/main/LICENSE-MIT).
+[LICENSE-MIT](https://github.com/slotmirror/slotmirror/blob/main/LICENSE-MIT).
 
 ## Can the people who see my work calendar read my private events?
 

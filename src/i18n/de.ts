@@ -5,6 +5,7 @@ export const de: Messages = {
     accounts: "Konten",
     rules: "Regeln",
     activity: "Aktivität",
+    tokens: "API-Tokens",
     admin: "Verwaltung",
     main: "Hauptnavigation",
     accountMenu: "Kontomenü",
@@ -77,6 +78,10 @@ export const de: Messages = {
     nameLabel: "Name",
     nameHint: "Leer lassen für den Namen aus der Adresse.",
     save: "Speichern",
+    disconnectHeading: "Konto trennen",
+    disconnectAbout:
+      "slotmirror entfernt zuerst die Blöcke, die es in die Kalender dieses Kontos geschrieben hat. Danach löscht es die Tokens.",
+    disconnectLink: "Dieses Konto trennen…",
     connect: (provider) => `${provider} verbinden`,
     disconnectTitle: "Dieses Konto trennen?",
     disconnectText: (email) =>
@@ -336,6 +341,106 @@ export const de: Messages = {
       "Regeln zwischen anderen Kalendern als den Hauptkalendern. Der Editor oben ändert sie nicht.",
     statusFailed: (time: string, code: string) => `Sync fehlgeschlagen ${time} · ${code}`,
   },
+  mcp: {
+    instructions:
+      "Lesende Sicht auf die slotmirror-Instanz des Nutzers. Eine Regel spiegelt eine Richtung, von einem Quellkalender in einen Zielkalender. Blockzahlen stammen aus dem letzten Sync-Lauf, nicht aus dem Kalender.",
+    titles: {
+      list_accounts: "Verbundene Konten",
+      list_rules: "Sync-Regeln",
+      get_sync_status: "Sync-Status",
+    },
+    tools: {
+      list_accounts:
+        "Listet die verbundenen Kalenderkonten und zeigt, ob eines neu verbunden werden muss.",
+      list_rules:
+        "Listet die Sync-Regeln. Jede Regel ist eine Richtung von einem Quellkalender in einen Zielkalender, mit Detailstufe und aktiven Filtern.",
+      get_sync_status:
+        "Zeigt den letzten Sync-Lauf jeder Regel: Status, Änderungen und Blöcke im Ziel. `blocks` ist das Ergebnis dieses Laufs, keine Live-Zählung. Eine Regel mit Status `unknown` hat keinen Lauf im neueren Protokoll.",
+    },
+    errors: {
+      unauthorized: "Ein gültiger API-Token als Bearer-Token ist nötig.",
+      forbiddenOrigin: "Dieser Origin darf diesen Endpunkt nicht aufrufen.",
+      notReady: "Die Einrichtung dieser Instanz ist nicht abgeschlossen.",
+      tooLarge: "Die Anfrage ist zu groß.",
+      parse: "Die Anfrage ist kein gültiges JSON.",
+      invalidRequest: "Die Anfrage ist keine einzelne JSON-RPC-Nachricht.",
+      unknownMethod: "Methode nicht gefunden.",
+      unknownTool: "Unbekanntes Tool.",
+      unexpectedArguments: "Dieses Tool nimmt keine Argumente an.",
+      headerMismatch: "Die MCP-Header fehlen oder passen nicht zum Body.",
+      unsupportedVersion: "Diese Protokollversion wird nicht unterstützt.",
+      dailyLimit: "Dein Tageslimit für Tool-Aufrufe ist erreicht. Es beginnt um 00:00 UTC neu.",
+      userRowLimit:
+        "Dein Tagesbudget an Datenbankzeilen ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
+      dayChanged: "Der UTC-Tag hat während dieses Aufrufs gewechselt. Ruf das Tool erneut auf.",
+      deploymentLimit:
+        "Das Tagesbudget dieser Instanz für Agent-Aufrufe ist aufgebraucht. Es beginnt um 00:00 UTC neu.",
+      toolFailed: "Das Tool ist fehlgeschlagen. Bitte später erneut versuchen.",
+      internal: "Der Server ist fehlgeschlagen. Bitte später erneut versuchen.",
+      membersOff:
+        "Ein Admin dieser Instanz hat MCP für Mitglieder ausgeschaltet. Der Token bleibt und funktioniert wieder, sobald ein Admin es wieder einschaltet.",
+    },
+  },
+  tokens: {
+    title: "API-Tokens",
+    lead: "Mit einem Token kann ein KI-Agent oder Skript deine Konten, Regeln und den Sync-Status lesen. Er kann nichts ändern und sieht keine Termininhalte.",
+    name: "Name",
+    lifetime: "Gültig für",
+    days: (count) => `${count} Tage`,
+    create: "Token erstellen",
+    createdTitle: "Kopiere deinen Token jetzt",
+    createdHint: "Er wird nur einmal angezeigt. slotmirror speichert nur einen Hash.",
+    claudeCode: "In Claude Code hinzufügen:",
+    listTitle: "Deine Tokens",
+    readOnly: (endpoint) => `Nur lesend. Endpunkt: ${endpoint}`,
+    empty: "Noch keine Tokens.",
+    ends: "Endet auf",
+    expires: "Läuft ab",
+    expired: "Abgelaufen",
+    lastUsed: "Zuletzt genutzt",
+    never: "Nie",
+    revoke: "Widerrufen",
+    invalid: "Gib einen Namen ein und wähle eine Laufzeit.",
+    limitReached: "Du hast die Höchstzahl aktiver Tokens. Widerrufe zuerst einen.",
+    appsTitle: "Verbundene Apps",
+    appsLead:
+      "Apps, denen du mit deiner Anmeldung das Lesen erlaubt hast, etwa Claude. Sie bekommen keinen Token zum Kopieren.",
+    appsEmpty: "Keine verbundenen Apps.",
+    app: "App",
+    connected: "Verbunden",
+    refreshed: "Zuletzt erneuert",
+    disconnect: "Trennen",
+    membersOff:
+      "Ein Admin hat MCP für Mitglieder dieser Instanz ausgeschaltet. Du kannst keine Tokens anlegen und keine Apps verbinden, und deine Tokens und Apps funktionieren erst wieder, wenn ein Admin es einschaltet. Widerrufen kannst du sie weiterhin.",
+  },
+  consent: {
+    title: "App verbinden",
+    asks: (name: string) => `„${name}“ möchte deine slotmirror-Daten lesen.`,
+    can: [
+      "Deine verbundenen Konten und ob eines neu verbunden werden muss.",
+      "Deine Regeln, mit Detailstufe und aktiven Filtern.",
+      "Den Stand des letzten Syncs jeder Regel.",
+    ],
+    unchecked:
+      "Die App hat diesen Namen selbst gewählt; slotmirror hat ihn nicht geprüft. Erlaube nur, wenn du diese Verbindung selbst gestartet hast. Die App kann lesen, nie ändern, und sieht keine Termininhalte.",
+    returnsTo: (host: string) => `Deine Antwort geht zurück an ${host}.`,
+    allow: "Erlauben",
+    deny: "Ablehnen",
+    unnamed: "Eine App ohne Namen",
+    problemTitle: "Die App kann sich nicht verbinden",
+    unknownApp:
+      "Diese App ist bei dieser Instanz nicht registriert. Starte die Verbindung in der App neu.",
+    badRedirect:
+      "Die App wollte an eine Adresse zurück, die sie nicht registriert hat. Es wurde nichts gesendet.",
+    expired:
+      "Diese Anfrage ist abgelaufen oder gehört zu einer anderen Anmeldung. Starte die Verbindung in der App neu.",
+    badRequest: (code: string) =>
+      `Die App hat eine Anfrage gesendet, die diese Instanz nicht annehmen kann (${code}). Aktualisiere die App oder starte die Verbindung neu.`,
+    tooManyApps: (max: number) =>
+      `Du hast ${max} verbundene Apps. Trenne zuerst eine unter API-Tokens.`,
+    mcpOff:
+      "Ein Admin hat MCP für Mitglieder dieser Instanz ausgeschaltet. Deshalb kannst du keine App verbinden.",
+  },
   privacy: {
     title: "Datenschutz",
     operator: (name, contact) =>
@@ -350,7 +455,8 @@ export const de: Messages = {
       "OAuth-Tokens je verbundenem Konto, verschlüsselt mit AES-256-GCM.",
       "Die Namen deiner Kalender und die Regeln, die du anlegst.",
       "Ein Aktivitätsprotokoll mit Zeiten, Zahlen und Fehlercodes, ohne Termininhalte. Es wird nach 90 Tagen gelöscht.",
-      "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser.",
+      "Ein Session-Cookie und ein Sprach-Cookie in deinem Browser. Während du dich anmeldest, um eine App zu verbinden: für 10 Minuten ein Cookie mit der Anfrage dieser App.",
+      "Wenn du einen API-Token erstellst: ein Hash davon, seine letzten vier Zeichen, sein Name und die letzte Nutzung. Für Agents: die Zahl der Tool-Aufrufe und der Datenbankzeilen, die sie gelesen haben, am Tag deines letzten Aufrufs. Für jede verbundene App: wann du sie verbunden hast und ein Hash ihres Refresh-Tokens.",
     ],
     notStoredTitle: "Was nicht gespeichert wird",
     notStored:
@@ -379,6 +485,10 @@ export const de: Messages = {
     never: "nie",
     onlyAdmins: "Nur Admins können diese Seite öffnen.",
     deleteUser: "Löschen",
+    revokeTokens: (count) =>
+      count === 1 ? "1 Token oder App beenden" : `${count} Tokens und Apps beenden`,
+    revokeTokensHint:
+      "Beendet die API-Tokens und verbundenen Apps der Person sofort. Das Entfernen im Identity Provider tut das nicht.",
     resetSignIn: "Anmeldung zurücksetzen",
     resetSignInHint:
       "Löst die Bindung an das Microsoft- oder Google-Konto und beendet die Sitzungen. 24 Stunden lang bindet eine Anmeldung unter einer bestätigten Adresse die Person an ein neues Konto; das bisherige Konto bleibt gesperrt. Danach ist ein neuer Reset nötig.",
@@ -427,6 +537,15 @@ export const de: Messages = {
       near: "Nächste 7 Tage",
       leftover: "Kalender ohne Regel",
     },
+    mcpTitle: "MCP für Mitglieder",
+    mcpLead:
+      "Ob Mitglieder, nicht nur Admins, API-Tokens anlegen, Apps verbinden und den MCP-Endpunkt nutzen dürfen. Ausgeschaltet bleiben die Tokens und Apps von Mitgliedern bestehen und funktionieren nicht mehr.",
+    mcpChoices: {
+      off: "Nur Admins",
+      all: "Alle Mitglieder",
+    },
+    mcpSave: "Speichern",
+    mcpInvalid: "Wähle „Nur Admins“ oder „Alle Mitglieder“.",
   },
   activity: {
     title: "Aktivität",
@@ -466,6 +585,11 @@ export const de: Messages = {
       alert_test: "Test-Alarm angefordert",
       compare_run: "Vergleich abgeschlossen",
       compare_failed: "Vergleich fehlgeschlagen",
+      api_token_created: "API-Token erstellt",
+      api_token_revoked: "API-Token widerrufen",
+      mcp_app_connected: "App verbunden",
+      mcp_app_disconnected: "App getrennt",
+      mcp_policy_changed: "MCP für Mitglieder geändert",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} neu, ${update} geändert, ${remove} entfernt`,

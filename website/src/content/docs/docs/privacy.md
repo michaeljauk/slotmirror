@@ -14,7 +14,15 @@ service between your calendars and your deployment.
 - The names of the calendars and the rules.
 - An activity log with times, counts and error codes, without event content. Entries older than
   90 days are deleted.
-- A session cookie and a language cookie in the browser.
+- A session cookie and a language cookie in the browser. While a user signs in to connect an app,
+  a cookie holds that app's request for 10 minutes.
+- For API tokens, if the [MCP server](/docs/mcp/) is on: a hash of each token, its last four
+  characters, its name, and when it was last used. One row per user counts the tool calls and the
+  database rows they read, for the day of the user's last call.
+- For apps connected with OAuth: the name and redirect addresses that each app registered, a hash of
+  a confidential app's secret, and for each connection the hash of its refresh token, when it was
+  made and when it was last renewed. Access tokens are signed, not stored. To limit
+  registrations, a counter per day keeps a keyed hash of the registering network address.
 
 ## What is not stored
 

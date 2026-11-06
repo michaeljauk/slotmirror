@@ -7,6 +7,7 @@ export const en = {
     accounts: "Accounts",
     rules: "Rules",
     activity: "Activity",
+    tokens: "API tokens",
     admin: "Admin",
     main: "Main navigation",
     accountMenu: "Account menu",
@@ -79,6 +80,10 @@ export const en = {
     nameLabel: "Name",
     nameHint: "Leave empty for the name from the address.",
     save: "Save",
+    disconnectHeading: "Disconnect account",
+    disconnectAbout:
+      "slotmirror first removes the blocks it wrote into the calendars of this account. Then it deletes the tokens.",
+    disconnectLink: "Disconnect this account…",
     connect: (provider: string) => `Connect ${provider}`,
     disconnectTitle: "Disconnect this account?",
     disconnectText: (email: string) =>
@@ -334,6 +339,102 @@ export const en = {
       "Rules between calendars other than the main ones. The editor above does not change them.",
     statusFailed: (time: string, code: string) => `Sync failed ${time} · ${code}`,
   },
+  mcp: {
+    instructions:
+      "Read-only view of the user's slotmirror deployment. A rule mirrors one direction, from a source calendar to a target calendar. Block counts come from the last sync run, not from the calendar.",
+    titles: {
+      list_accounts: "Connected accounts",
+      list_rules: "Sync rules",
+      get_sync_status: "Sync status",
+    },
+    tools: {
+      list_accounts: "List the connected calendar accounts and whether one needs reconnecting.",
+      list_rules:
+        "List the sync rules. Each rule is one direction from a source calendar to a target calendar, with its detail level and which filters are on.",
+      get_sync_status:
+        "Show the last sync run of each rule: state, changes, and the blocks in the target. `blocks` is the result of that run, not a live count. A rule with state `unknown` has no run in the recent log.",
+    },
+    errors: {
+      unauthorized: "A valid API token is required as a bearer token.",
+      forbiddenOrigin: "This origin may not call this endpoint.",
+      notReady: "This deployment has not finished its setup.",
+      tooLarge: "The request is too large.",
+      parse: "The request is not valid JSON.",
+      invalidRequest: "The request is not a single JSON-RPC message.",
+      unknownMethod: "Method not found.",
+      unknownTool: "Unknown tool.",
+      unexpectedArguments: "This tool takes no arguments.",
+      headerMismatch: "The MCP headers are missing or do not match the request body.",
+      unsupportedVersion: "This protocol version is not supported.",
+      dailyLimit: "Your daily limit for tool calls is reached. It resets at 00:00 UTC.",
+      userRowLimit: "Your daily budget of database rows is used up. It resets at 00:00 UTC.",
+      dayChanged: "The UTC day changed during this call. Call the tool again.",
+      deploymentLimit:
+        "This deployment's daily budget for agent calls is used up. It resets at 00:00 UTC.",
+      toolFailed: "The tool failed. Try again later.",
+      internal: "The server failed. Try again later.",
+      membersOff:
+        "An admin of this deployment turned MCP off for members. The token stays and works again once an admin turns it back on.",
+    },
+  },
+  tokens: {
+    title: "API tokens",
+    lead: "A token lets an AI agent or script read your accounts, rules and sync status. It cannot change anything and sees no event content.",
+    name: "Name",
+    lifetime: "Valid for",
+    days: (count: number) => `${count} days`,
+    create: "Create token",
+    createdTitle: "Copy your token now",
+    createdHint: "It is shown only once. slotmirror stores only a hash of it.",
+    claudeCode: "Add it to Claude Code:",
+    listTitle: "Your tokens",
+    readOnly: (endpoint: string) => `Read-only. Endpoint: ${endpoint}`,
+    empty: "No tokens yet.",
+    ends: "Ends in",
+    expires: "Expires",
+    expired: "Expired",
+    lastUsed: "Last used",
+    never: "Never",
+    revoke: "Revoke",
+    invalid: "Enter a name and choose a lifetime.",
+    limitReached: "You have the maximum of active tokens. Revoke one first.",
+    appsTitle: "Connected apps",
+    appsLead:
+      "Apps that you allowed to read your data with your sign-in, such as Claude. They get no token to copy.",
+    appsEmpty: "No connected apps.",
+    app: "App",
+    connected: "Connected",
+    refreshed: "Last refresh",
+    disconnect: "Disconnect",
+    membersOff:
+      "An admin turned MCP off for members of this deployment. You cannot create tokens or connect apps, and your tokens and apps do not work until an admin turns it back on. You can still revoke them.",
+  },
+  consent: {
+    title: "Connect an app",
+    asks: (name: string) => `“${name}” wants to read your slotmirror data.`,
+    can: [
+      "Your connected accounts and whether one needs reconnecting.",
+      "Your rules, with their detail level and which filters are on.",
+      "The state of the last sync of each rule.",
+    ],
+    unchecked:
+      "The app chose this name itself; slotmirror did not check it. Allow only if you started this connection. The app can read, never change, and sees no event content.",
+    returnsTo: (host: string) => `Your answer goes back to ${host}.`,
+    allow: "Allow",
+    deny: "Deny",
+    unnamed: "An unnamed app",
+    problemTitle: "The app cannot connect",
+    unknownApp:
+      "This app is not registered with this deployment. Start the connection in the app again.",
+    badRedirect: "The app asked to return to an address it did not register. Nothing was sent.",
+    expired:
+      "This request has expired or belongs to another sign-in. Start the connection in the app again.",
+    badRequest: (code: string) =>
+      `The app sent a request this deployment cannot take (${code}). Update the app or start the connection again.`,
+    tooManyApps: (max: number) =>
+      `You have ${max} connected apps. Disconnect one under API tokens first.`,
+    mcpOff: "An admin turned MCP off for members of this deployment, so you cannot connect an app.",
+  },
   privacy: {
     title: "Privacy",
     operator: (name: string, contact: string) =>
@@ -348,7 +449,8 @@ export const en = {
       "OAuth tokens for each connected account, encrypted with AES-256-GCM.",
       "The names of your calendars and the rules you create.",
       "An activity log with times, counts and error codes, without event content. It is deleted after 90 days.",
-      "A session cookie and a language cookie in your browser.",
+      "A session cookie and a language cookie in your browser. While you sign in to connect an app: for 10 minutes, a cookie with that app's request.",
+      "If you create an API token: a hash of it, its last four characters, its name and when it was last used. For agents: the number of tool calls and the database rows they read, on the day of your last call. For each app you connect: when you connected it and a hash of its refresh token.",
     ],
     notStoredTitle: "What is not stored",
     notStored:
@@ -377,6 +479,10 @@ export const en = {
     never: "never",
     onlyAdmins: "Only admins can open this page.",
     deleteUser: "Delete",
+    revokeTokens: (count: number) =>
+      count === 1 ? "End 1 token or app" : `End ${count} tokens and apps`,
+    revokeTokensHint:
+      "Ends the user's API tokens and connected apps at once. Removing someone in the identity provider does not do this.",
     resetSignIn: "Reset sign-in",
     resetSignInHint:
       "Unbinds the user from their Microsoft or Google account and ends their sessions. For 24 hours, a sign-in under a verified address binds them to a new account; the previous account stays refused. After that, reset again.",
@@ -424,6 +530,15 @@ export const en = {
       near: "Next 7 days",
       leftover: "Calendar without a rule",
     },
+    mcpTitle: "MCP for members",
+    mcpLead:
+      "Whether members, not only admins, may create API tokens, connect apps and use the MCP endpoint. Turned off, the tokens and apps of members stay and stop working.",
+    mcpChoices: {
+      off: "Admins only",
+      all: "All members",
+    },
+    mcpSave: "Save",
+    mcpInvalid: "Choose admins only or all members.",
   },
   activity: {
     title: "Activity",
@@ -463,6 +578,11 @@ export const en = {
       alert_test: "Test alert requested",
       compare_run: "Comparison finished",
       compare_failed: "Comparison failed",
+      api_token_created: "API token created",
+      api_token_revoked: "API token revoked",
+      mcp_app_connected: "App connected",
+      mcp_app_disconnected: "App disconnected",
+      mcp_policy_changed: "MCP for members changed",
     },
     changes: (create: number, update: number, remove: number) =>
       `${create} new, ${update} changed, ${remove} removed`,

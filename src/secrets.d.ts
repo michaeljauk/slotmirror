@@ -16,6 +16,8 @@ interface WorkerSettings {
   DATA_JURISDICTION?: string;
   MAX_DETAIL_TO_EXTERNAL?: string;
   MAX_DETAIL_FROM_EXTERNAL?: string;
+  /** "1" turns on the read-only MCP endpoint and API tokens. Anything else: both answer 404. */
+  MCP_ENABLED?: string;
   /** IANA time zone for dates in the dashboard. Without it, UTC. */
   TIME_ZONE?: string;
 }
@@ -36,6 +38,8 @@ interface WorkerSecrets {
    * account needs to be connected again.
    */
   ALERT_WEBHOOK_URL?: string;
+  /** Optional. An outside monitor's URL that hears a plain GET once an hour from the cron. */
+  HEARTBEAT_URL?: string;
   /** Local load tests only, set with `wrangler dev --var`: "1" turns on simulated calendars. */
   DEV_FAKE_CALENDARS?: string;
   /** Local load tests only: simulated network time per provider call, in milliseconds. */

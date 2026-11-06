@@ -35,7 +35,12 @@ export type AuditKind =
   | "alert_sent"
   | "alert_test"
   | "compare_run"
-  | "compare_failed";
+  | "compare_failed"
+  | "api_token_created"
+  | "api_token_revoked"
+  | "mcp_app_connected"
+  | "mcp_app_disconnected"
+  | "mcp_policy_changed";
 
 /** How the removal of an offboarding ended. */
 export type CleanupResult =
@@ -507,6 +512,45 @@ export function parseDetail(json: string): RuleOutcome["detail"] {
   }
 }
 
+/** One run or failure of a rule, as `recentRuleRuns` reads it. */
+/** A run, a failure, or a run that the platform stopped at its CPU or subrequest limit. */
+export interface RecentRun {
+  ruleId: string;
+  kind: "sync_run" | "sync_failed" | "sync_run_aborted";
+  createdAt: string;
+  detail: Partial<SyncRunDetail> & { code?: string };
+}
+
+/**
+ * The runs and failures among the newest `limit` audit rows of a user, newest first, without dry
+ * runs. Unlike `latestRuleOutcomes`, which reads every audit row of the user, this stops at `limit`:
+ * an API client can call it in a loop, and D1 refuses every query of the deployment at its daily
+ * limit of rows read. The limit sits in the subquery because a LIMIT on the outer query counts
+ * matches, not rows read. A rule that ran only before these rows does not appear.
+ */
+export async function recentRuleRuns(
+  db: D1Database,
+  userId: string,
+  limit: number,
+): Promise<RecentRun[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT rule_id AS ruleId, kind, created_at AS createdAt, detail FROM (
+         SELECT id, rule_id, kind, created_at, detail FROM audit_events
+         WHERE user_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?
+       )
+       WHERE rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed', 'sync_run_aborted')
+       ORDER BY created_at DESC, id DESC`,
+    )
+    .bind(userId, limit)
+    .all<Omit<RecentRun, "detail"> & { detail: string }>();
+  return results
+    .map((row) => ({ ...row, detail: parseDetail(row.detail) }))
+    .filter((row) => !row.detail.dryRun);
+}
+
 /** What the accounts page shows for one account. */
 export interface AccountSyncStatus {
   /** "paused": every rule into the account that ever ran is paused or turned off. */
@@ -548,7 +592,9 @@ export function accountStatuses(outcomes: RuleOutcome[]): Map<string, AccountSyn
   return statuses;
 }
 
-function statusOf(outcome: RuleOutcome): AccountSyncStatus {
+export function statusOf(
+  outcome: Pick<RuleOutcome, "kind" | "createdAt" | "detail">,
+): AccountSyncStatus {
   const at = outcome.createdAt;
   if (outcome.kind === "sync_failed") return { state: "error", at, code: outcome.detail.code };
   const failed = outcome.detail.failed ?? 0;

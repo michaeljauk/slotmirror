@@ -12,13 +12,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="760" alt="The sync editor: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
+  <img src="docs/images/demo.gif" width="760" alt="The Rules page: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
 </p>
 
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
@@ -29,12 +29,13 @@ plan.
 It is for people with more than one calendar: consultants with client tenants, founders with two
 companies, anyone with a work and a private calendar. You host it yourself, so your calendar
 tokens stay with you and not with a sync service. If someone else runs a deployment, that
-operator holds the tokens. The deployment then shows who runs it before you connect an account.
+operator holds the tokens. If the operator sets a notice, the deployment shows it before you
+connect an account.
 
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.
 
-![The calendar editor: one card per calendar, and an overview of all directions](docs/images/editor.png)
+![The Rules page: one card per calendar, and an overview of all directions](docs/images/editor.png)
 
 ## What it does
 
@@ -89,7 +90,7 @@ a Cloudflare account (the free plan is enough), an account at one provider (Micr
 Google) with the right to create an OAuth app, and a way to generate two random secrets. The order
 is: deploy, read the address of your Worker, create the OAuth app, set the secrets.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/slotmirror/slotmirror)
 
 Before you click, read the quickstart: the button asks for `SESSION_SECRET` and
 `TOKEN_ENCRYPTION_KEY`, and the quickstart shows how to generate them. Leave the provider fields
@@ -150,6 +151,7 @@ locally. `wrangler.jsonc` does not list them and sets `keep_vars`, so a deploy k
 | `MICROSOFT_CLIENT_ID` / `_SECRET` | secret   | Entra app registration. Leave empty if you do not use Microsoft 365.                                                                                        |
 | `GOOGLE_CLIENT_ID` / `_SECRET`    | secret   | Google OAuth client. Leave empty if you do not use Google Calendar.                                                                                         |
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See below.                                                                                                  |
+| `HEARTBEAT_URL`                   | secret   | Optional. Outside monitor that hears a GET once an hour. See below.                                                                                         |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last 12
 hours; signing in again is one click with the provider. Their rules stop at the next sync, and their
@@ -224,6 +226,14 @@ pnpm wrangler d1 execute DB --remote --command "UPDATE users SET refused_subject
   WHERE email = 'user@example.com'"
 ```
 
+## MCP server
+
+slotmirror has an optional, read-only MCP server at `/mcp`. Agents can read accounts, rules, and the
+state of the last sync run. It reads no calendars and shows no event content. Set `MCP_ENABLED=1`.
+Clients such as Claude connect with your sign-in over OAuth; scripts use a personal token from
+**API tokens**. Tokens and connections last at most 90 days. See the
+[MCP documentation](https://slotmirror.com/docs/mcp/).
+
 ## Push notifications
 
 With `PUBLIC_URL` set, slotmirror asks Microsoft and Google to notify it when a calendar that a
@@ -249,7 +259,7 @@ marks the account and stops its work until the user connects it again:
 
 - The accounts page shows a notice at the top. It names the account's address and provider and
   has a **Reconnect** button. The button starts the provider's sign-in with that address
-  preselected. The account's row shows the same state, and the sync page shows the notice too.
+  preselected. The account's row shows the same state, and the Rules page shows the notice too.
 - The admin page lists which users have accounts that need reconnecting, without the addresses.
 - The activity log records "Token refresh failed", with the provider's error code.
 - The account asks the provider nothing more. Rules into its calendars pause, and rules that read
@@ -269,6 +279,17 @@ event. This is the format of Slack incoming webhooks; Google
 Chat and Mattermost accept it too. Microsoft Teams needs its own card format, so use a Teams
 workflow that takes the `text` field. The URL must start with `https://`. A failed post is logged
 without the URL and sent again. The settings reference describes each alert and its repeat lock.
+
+**Heartbeat.** The alerts above need a running Worker. To learn when it stops, set the secret
+`HEARTBEAT_URL` to the URL of an outside monitor such as healthchecks.io. The cron calls it with a
+plain GET once an hour, without any data, and the monitor alerts when the calls stop. Set the
+monitor's period to 1 hour and its grace time to 3 hours. The URL must start with `https://`. The
+call needs a free subrequest, so it stops above about 44 accounts.
+
+**healthchecks.io.** One check covers both secrets. Set `HEARTBEAT_URL` to the ping URL and
+`ALERT_WEBHOOK_URL` to the ping URL plus `/fail`. An alert then shows up as a failure with the text
+as its ping body, and goes to the check's integrations, such as e-mail or Discord. The next heartbeat
+marks the check as up again, so an alert does not stay visible in the check.
 
 ## Logs
 
@@ -415,5 +436,8 @@ Built by [Michael Jauk](https://github.com/michaeljauk). If this saves you time,
 slotmirror is licensed under the [GNU Affero General Public License v3.0](./LICENSE)
 (`AGPL-3.0-only`). See the [FAQ](https://slotmirror.com/docs/faq/) for what that means in plain words.
 
-Code up to and including commit `93ce752` stays available under the MIT license. Its text and
+Code up to and including commit `fde4b24` stays available under the MIT license. Its text and
 copyright line are in [LICENSE-MIT](./LICENSE-MIT). Later changes are under AGPL-3.0 only.
+
+Contributions need a signed [Contributor License Agreement](./CLA.md). The CLA bot posts the
+signing link on your pull request.

@@ -13,8 +13,8 @@ Thanks for your interest in slotmirror. Bug reports, fixes, docs and translation
 
 slotmirror is licensed under the [AGPL-3.0](LICENSE). Before we can merge your first pull request,
 you must sign the [Contributor License Agreement](CLA.md). The CLA bot comments on your pull
-request with a link. You sign once, in a comment, and the bot remembers it for later pull
-requests. The CLA lets the maintainer distribute your change under the AGPL-3.0 and, if needed,
+request with a link. You sign once through that link, and the bot remembers it for later
+pull requests. The CLA lets the maintainer distribute your change under the AGPL-3.0 and, if needed,
 under other license terms. You keep the copyright of your change.
 
 ## Development

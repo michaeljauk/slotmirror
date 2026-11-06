@@ -9,6 +9,7 @@ import {
 } from "../src/providers/provider-fetch";
 import { SESSION_COOKIE, signSession } from "../src/session";
 import type { CurrentUser } from "../src/users";
+import { parseMcpForMembers } from "../src/permissions";
 
 export const BASE = "https://slotmirror.example.workers.dev";
 
@@ -65,7 +66,9 @@ export async function signIn(
   if (!decision.allowed) throw new Error(`${email} is not allowed by the test bindings`);
   const [, result] = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO orgs (id, name, policy) VALUES (?, 'Example', ?)
+      // A new org gets "all", as an org from before migration 0024 does. Tests of the default
+      // for new orgs sign in with `admitSignIn`; a test may change the setting afterwards.
+      `INSERT INTO orgs (id, name, policy, mcp_for_members) VALUES (?, 'Example', ?, 'all')
        ON CONFLICT (id) DO UPDATE SET policy = excluded.policy`,
     ).bind(DEFAULT_ORG_ID, JSON.stringify(policy)),
     env.DB.prepare(
@@ -76,8 +79,12 @@ export async function signIn(
        RETURNING id, org_id AS orgId, email, role, session_version AS sessionVersion`,
     ).bind(crypto.randomUUID(), DEFAULT_ORG_ID, email, decision.role),
   ]);
-  const user = result?.results[0] as (CurrentUser & { sessionVersion: number }) | undefined;
-  if (!user) throw new Error(`${email} has no user row`);
+  const row = result?.results[0] as Omit<CurrentUser, "mcpForMembers"> & { sessionVersion: number };
+  if (!row) throw new Error(`${email} has no user row`);
+  const org = await env.DB.prepare("SELECT mcp_for_members AS value FROM orgs WHERE id = ?")
+    .bind(DEFAULT_ORG_ID)
+    .first<{ value: string }>();
+  const user = { ...row, mcpForMembers: parseMcpForMembers(org?.value) };
   const token = await signSession(
     { userId: user.id, exp: Math.floor(Date.now() / 1000) + 60, version: user.sessionVersion },
     env.SESSION_SECRET,

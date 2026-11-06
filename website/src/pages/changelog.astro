@@ -9,14 +9,20 @@ const files = import.meta.glob<{ Content: astro.MarkdownInstance<object>["Conten
 const changelog = Object.values(files)[0];
 ---
 
-<StarlightPage frontmatter={{ title: "Changelog", description: "Releases of slotmirror." }}>
+<StarlightPage
+  frontmatter={{
+    title: "Changelog",
+    description:
+      "Releases of slotmirror, the self-hosted busy-time sync for Microsoft 365 and Google calendars.",
+  }}
+>
   {
     changelog ? (
       <changelog.Content />
     ) : (
       <p>
         No release yet. Releases appear here and on{" "}
-        <a href="https://github.com/michaeljauk/slotmirror/releases">GitHub</a>.
+        <a href="https://github.com/slotmirror/slotmirror/releases">GitHub</a>.
       </p>
     )
   }

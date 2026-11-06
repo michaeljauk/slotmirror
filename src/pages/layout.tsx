@@ -1,10 +1,12 @@
 import type { Child } from "hono/jsx";
 import { APP_NAME } from "../brand";
 import { LOCALE_NAMES, LOCALES, useI18n, useLanguageHref, type Locale } from "../i18n";
+import { can, type Action } from "../permissions";
 import type { CurrentUser } from "../users";
 import { buildVersionLabel } from "../version";
+import { useFeatures } from "./features";
 
-export type NavItem = "accounts" | "rules" | "activity" | "admin";
+export type NavItem = "accounts" | "rules" | "activity" | "tokens" | "admin";
 
 /** A stroke icon for the navigation. The label next to it carries the meaning. */
 function NavIcon(props: { children: Child }) {
@@ -33,12 +35,16 @@ function NavIcon(props: { children: Child }) {
 const NAV: readonly {
   id: NavItem;
   href: string;
-  adminOnly?: boolean;
+  /** The action the page needs; the entry shows only to users who have it. */
+  action: Action;
+  /** Only while the deployment has the API tokens on. */
+  tokensOnly?: boolean;
   icon: () => Child;
 }[] = [
   {
     id: "accounts",
     href: "/",
+    action: "accounts:read",
     icon: () => (
       <NavIcon>
         <rect x="3" y="5" width="18" height="16" rx="2.5" />
@@ -49,6 +55,7 @@ const NAV: readonly {
   {
     id: "rules",
     href: "/rules",
+    action: "rules:read",
     icon: () => (
       <NavIcon>
         <path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4" />
@@ -58,6 +65,7 @@ const NAV: readonly {
   {
     id: "activity",
     href: "/activity",
+    action: "activity:read",
     icon: () => (
       <NavIcon>
         <path d="M3 12h4l3-8 4 16 3-8h4" />
@@ -65,9 +73,21 @@ const NAV: readonly {
     ),
   },
   {
+    id: "tokens",
+    href: "/tokens",
+    action: "tokens:read",
+    tokensOnly: true,
+    icon: () => (
+      <NavIcon>
+        <circle cx="8" cy="15" r="4.5" />
+        <path d="M11.5 11.5L20 3M16 7l3 3" />
+      </NavIcon>
+    ),
+  },
+  {
     id: "admin",
     href: "/admin",
-    adminOnly: true,
+    action: "users:read",
     icon: () => (
       <NavIcon>
         <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />
@@ -147,6 +167,7 @@ export function Layout(props: {
 }) {
   const { user } = props;
   const { locale, t } = useI18n();
+  const features = useFeatures();
   const version = buildVersionLabel();
   const footer = (
     <footer class="footer">
@@ -187,7 +208,9 @@ export function Layout(props: {
             {brand}
             {/* On a phone the same links form a row under the logo: one tap to each page. */}
             <nav class="nav" aria-label={t.nav.main}>
-              {NAV.filter((item) => !item.adminOnly || user.role === "admin").map((item) => (
+              {NAV.filter(
+                (item) => can(user, item.action) && (!item.tokensOnly || features.tokens),
+              ).map((item) => (
                 <a href={item.href} aria-current={props.active === item.id ? "page" : undefined}>
                   {item.icon()}
                   <span>{t.nav[item.id]}</span>

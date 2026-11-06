@@ -1,6 +1,6 @@
 ---
-title: Introduction
-description: What slotmirror does, who it is for, and how it works.
+title: How slotmirror syncs your calendars
+description: What slotmirror does, who it is for, and how it mirrors busy blocks between Microsoft 365 and Google calendars.
 ---
 
 slotmirror keeps several calendars in sync, so that nobody books you twice. It copies your events
@@ -11,13 +11,14 @@ plan.
 It is for people with more than one calendar: consultants with client tenants, founders with two
 companies, anyone with a work and a private calendar. You host it yourself, so your calendar
 tokens stay with you and not with a sync service. If someone else runs a deployment, that
-operator holds the tokens. The deployment then shows who runs it before you connect an account.
+operator holds the tokens. If the operator sets a notice, the deployment shows it before you
+connect an account.
 
 :::caution[Early version]
 The version is below 1.0. Settings and the database can still change between releases.
 :::
 
-![The calendar editor: one card per calendar, and an overview of all directions](../../../../../docs/images/editor.png)
+![The Rules page: one card per calendar, and an overview of all directions](../../../../../docs/images/editor.png)
 
 ## What it does
 

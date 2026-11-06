@@ -2,7 +2,9 @@ import type { Context } from "hono";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { mcpEnabled } from "./config";
 import { I18nProvider, i18nFromContext, languagePage } from "./i18n";
+import { FeaturesProvider } from "./pages/features";
 
 /**
  * Render a page in the request's locale. The doctype keeps browsers in standards mode; without it
@@ -14,7 +16,9 @@ export function render(c: Context, page: Child, status: ContentfulStatusCode = 2
     <>
       {raw("<!doctype html>")}
       <I18nProvider value={i18nFromContext(c)} languagePage={languagePage(c)}>
-        {page}
+        <FeaturesProvider value={{ tokens: mcpEnabled(c.env as Env | undefined) }}>
+          {page}
+        </FeaturesProvider>
       </I18nProvider>
     </>,
     status,

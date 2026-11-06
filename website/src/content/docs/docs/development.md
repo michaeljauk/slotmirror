@@ -79,6 +79,6 @@ pnpm trial:report --remote --config wrangler.local.jsonc
 
 ## Contributing
 
-[CONTRIBUTING.md](https://github.com/michaeljauk/slotmirror/blob/main/CONTRIBUTING.md) explains
+[CONTRIBUTING.md](https://github.com/slotmirror/slotmirror/blob/main/CONTRIBUTING.md) explains
 the setup, the commit format and pull requests. Report vulnerabilities privately, see
-[SECURITY.md](https://github.com/michaeljauk/slotmirror/blob/main/SECURITY.md).
+[SECURITY.md](https://github.com/slotmirror/slotmirror/blob/main/SECURITY.md).

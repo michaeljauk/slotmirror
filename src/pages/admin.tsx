@@ -2,6 +2,7 @@ import type { Role } from "../access";
 import type { TestAlertOutcome } from "../alerts";
 import { parseDetail, type ActivityRow } from "../audit";
 import type { DetailCaps } from "../detail-policy";
+import type { McpForMembers } from "../permissions";
 import { useI18n } from "../i18n";
 import type { CompareRunDetail } from "../sync/compare";
 import type { CurrentUser } from "../users";
@@ -19,6 +20,8 @@ export interface AdminUserRow {
   accounts: number;
   /** Accounts of the user whose refresh token the provider refused. */
   needsReconnect: number;
+  /** API tokens of the user, also expired ones. */
+  apiTokens: number;
 }
 
 /** Users of the admin's org with their number of connected accounts. No calendar data. */
@@ -40,6 +43,8 @@ export function AdminPage(props: {
   caps: DetailCaps;
   /** Domains and Entra tenants whose accounts count as work calendars. */
   org: { domains: string[]; tenantCount: number };
+  /** The org's MCP setting; null while the deployment has MCP off. */
+  mcpForMembers: McpForMembers | null;
 }) {
   const { t, formatTimestamp } = useI18n();
   const orgList = [
@@ -126,6 +131,21 @@ export function AdminPage(props: {
                             {t.admin.resetSignIn}
                           </button>
                         </form>
+                        {row.apiTokens > 0 ? (
+                          <form
+                            method="post"
+                            action={`/admin/users/${row.id}/revoke-tokens`}
+                            class="inline-form"
+                          >
+                            <button
+                              type="submit"
+                              class="link-button quiet"
+                              title={t.admin.revokeTokensHint}
+                            >
+                              {t.admin.revokeTokens(row.apiTokens)}
+                            </button>
+                          </form>
+                        ) : null}
                         <a class="link-button quiet" href={`/admin/users/${row.id}/delete`}>
                           {t.admin.deleteUser}
                         </a>
@@ -209,6 +229,35 @@ export function AdminPage(props: {
         </div>
         <p class="fineprint caps-how">{t.admin.compareHorizon}</p>
       </section>
+
+      {props.mcpForMembers ? (
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <h2>{t.admin.mcpTitle}</h2>
+              <p class="lead">{t.admin.mcpLead}</p>
+            </div>
+            <form method="post" action="/admin/mcp-policy" class="inline-form">
+              <span class="choices" role="radiogroup" aria-label={t.admin.mcpTitle}>
+                {(["off", "all"] as const).map((value) => (
+                  <label class="choice-radio">
+                    <input
+                      type="radio"
+                      name="mcpForMembers"
+                      value={value}
+                      checked={props.mcpForMembers === value}
+                    />
+                    <span class="choice">{t.admin.mcpChoices[value]}</span>
+                  </label>
+                ))}
+              </span>
+              <button type="submit" class="button">
+                {t.admin.mcpSave}
+              </button>
+            </form>
+          </div>
+        </section>
+      ) : null}
 
       <section class="section">
         <div class="section-head">

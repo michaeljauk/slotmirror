@@ -1,4 +1,14 @@
-import { CRON_TICK_MS, SILENCE_CHECK_SUBREQUESTS } from "./alerts";
+import {
+  checkSilentRules,
+  CRON_TICK_MS,
+  isHourlyTick,
+  pingHeartbeat,
+  SILENCE_CHECK_SUBREQUESTS,
+  silenceCheckCost,
+} from "./alerts";
+import { errorCode, purgeAuditEvents } from "./audit";
+import { accountSync } from "./durable";
+import { heldRulesStatement, releaseHeldRules, type HeldRule } from "./offboarding";
 
 /** The Free plan's subrequests per invocation. */
 export const MAX_CRON_SUBREQUESTS = 50;
@@ -37,4 +47,55 @@ export function accountsToTick(ids: string[], scheduledTime: number, limit: numb
   const round = Math.floor(scheduledTime / CRON_TICK_MS) % rounds;
   const start = Math.floor((round * ids.length) / rounds);
   return [...ids.slice(start), ...ids].slice(0, limit);
+}
+
+/**
+ * One cron invocation: the silence check, the audit purge, the release of held rules, the account
+ * ticks and the heartbeat. Each runtime calls it from its own scheduler.
+ */
+export async function runCron(env: Env, scheduledTime: number): Promise<void> {
+  // Before the ticks: it must still run if they use up the subrequests of this invocation.
+  const checkCost = silenceCheckCost(env, scheduledTime);
+  if (checkCost > 0) {
+    try {
+      await checkSilentRules(env, scheduledTime);
+    } catch (error) {
+      console.error("Silence check failed", errorCode(error));
+    }
+  }
+  const { results } = await env.DB.prepare("SELECT id FROM accounts ORDER BY id").all<{
+    id: string;
+  }>();
+  const tickLimit = MAX_CRON_SUBREQUESTS - CRON_FIXED_SUBREQUESTS - checkCost;
+  if (results.length > tickLimit) {
+    console.error("Cron ticks rotate at the subrequest limit", tickLimit, results.length);
+  }
+  const spare = spareSubrequests(results.length, tickLimit);
+  let held: HeldRule[] = [];
+  try {
+    const now = scheduledTime;
+    held = await purgeAuditEvents<HeldRule>(env.DB, heldRulesStatement(env, now, spare), now);
+  } catch (error) {
+    console.error("Audit purge failed", errorCode(error));
+  }
+  let holdsCost = 0;
+  try {
+    holdsCost = await releaseHeldRules(env, held, scheduledTime, spare);
+  } catch (error) {
+    holdsCost = spare;
+    console.error("Releasing held rules failed", errorCode(error));
+  }
+  const ids = results.map(({ id }) => id);
+  for (const id of accountsToTick(ids, scheduledTime, tickLimit - holdsCost)) {
+    // One failing account must not stop the ticks of the others.
+    try {
+      await accountSync(env, id).tick();
+    } catch (error) {
+      console.error("Cron tick failed", id, errorCode(error));
+    }
+  }
+  // Last, so that a call proves a finished run, and only with a subrequest left over.
+  if (isHourlyTick(scheduledTime) && ids.length + holdsCost < tickLimit) {
+    await pingHeartbeat(env);
+  }
 }

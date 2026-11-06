@@ -1,0 +1,10 @@
+// Values that astro.config.mjs and several pages share. `site` and `base` stay in
+// astro.config.mjs, the only place that sets where the site lives.
+
+export const repo = "https://github.com/slotmirror/slotmirror";
+
+// The link preview image, public/social-preview.png: its size in pixels and its alt text.
+export const previewWidth = "1280";
+export const previewHeight = "640";
+export const previewAlt =
+  'The slotmirror logo and the headline "Stop getting double-booked", next to a screenshot of the Rules page.';

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { errorLogFields } from "../src/audit";
 import { GraphCalendar } from "../src/providers/graph-calendar";
 
@@ -47,6 +48,23 @@ describe("schema errors in the log", () => {
       const logged = JSON.stringify(errorLogFields(candidate));
       expect(logged).not.toContain("SECRET");
       expect(logged).not.toContain("secret@example.com");
+    }
+  });
+
+  it("logs no key of a record, which comes from the data", () => {
+    // A Google private extended property set by another app: its key is not a field name.
+    const record = z.object({
+      extendedProperties: z.object({ private: z.record(z.string(), z.string()) }),
+    });
+    const result = record.safeParse({
+      extendedProperties: { private: { "secret@example.com": 1, Secret: 2 } },
+    });
+    expect(result.success).toBe(false);
+    for (const candidate of [result.error!, new Error(result.error!.message)]) {
+      const logged = JSON.stringify(errorLogFields(candidate));
+      expect(logged).toContain("invalid_type@extendedProperties.private.?");
+      expect(logged).not.toContain("secret");
+      expect(logged).not.toContain("Secret");
     }
   });
 

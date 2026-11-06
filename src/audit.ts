@@ -318,7 +318,13 @@ export function errorLogFields(error: unknown): string[] {
 }
 
 const ISSUE_CODE = /^[a-z_]{1,40}$/;
-const PATH_KEY = /^[A-Za-z_$@][\w$@.-]{0,63}$/;
+/** A field name. No "@", "." or "-", so an email address or a title cannot pass as one. */
+const PATH_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+/**
+ * Fields that hold a record: the key after them comes from the data, not from the schema. Google
+ * extended properties ("private", "shared") and Graph batch response headers.
+ */
+const RECORD_FIELDS = new Set(["private", "shared", "headers"]);
 const MAX_ISSUES = 5;
 
 /**
@@ -344,9 +350,12 @@ function schemaIssues(error: Error): string | undefined {
     if (typeof code !== "string" || !ISSUE_CODE.test(code) || !Array.isArray(path)) {
       return undefined;
     }
-    const keys = path.map((key) =>
-      typeof key === "number" || (typeof key === "string" && PATH_KEY.test(key)) ? key : "?",
-    );
+    const keys = path.map((key: unknown, index) => {
+      if (typeof key === "number") return key;
+      const parent: unknown = index > 0 ? path[index - 1] : undefined;
+      if (typeof parent === "string" && RECORD_FIELDS.has(parent)) return "?";
+      return typeof key === "string" && PATH_KEY.test(key) ? key : "?";
+    });
     parts.push(`${code}@${keys.join(".")}`);
   }
   return `schema ${parts.join(" ")}`;

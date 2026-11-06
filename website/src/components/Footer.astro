@@ -1,0 +1,28 @@
+---
+// Starlight's footer plus the links to the imprint and the privacy notice, so that both are one
+// click away on every docs page.
+import Default from "@astrojs/starlight/components/Footer.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Default {...Astro.props}><slot /></Default>
+<nav class="legal" aria-label="Legal">
+  <a href={`${base}/imprint/`}>Imprint</a>
+  <a href={`${base}/privacy/`}>Privacy notice</a>
+</nav>
+
+<style>
+  .legal {
+    display: flex;
+    gap: 1.5rem;
+    margin-top: 2rem;
+    font-size: var(--sl-text-sm);
+  }
+  .legal a {
+    color: var(--sl-color-gray-3);
+  }
+  .legal a:hover {
+    color: var(--sl-color-white);
+  }
+</style>

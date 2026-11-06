@@ -1,0 +1,37 @@
+---
+// Information under § 5 ECG and disclosure under § 25 MedienG (Austria). The operator data comes
+// from build variables; see src/operator.ts.
+import "../styles/legal.css";
+import MissingOperator from "../components/MissingOperator.astro";
+import OperatorBlock from "../components/OperatorBlock.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { operator } from "../operator";
+import { repo } from "../site";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<SiteLayout title="Imprint: slotmirror" description="Who runs slotmirror.com." noindex={!operator}>
+  <article class="legal">
+    <h1>Imprint</h1>
+    {
+      operator ? (
+        <>
+          <h2>Operator and media owner</h2>
+          <OperatorBlock operator={operator} details />
+          <h2>About this site</h2>
+          <p>
+            This site informs about slotmirror, open-source software that mirrors busy times
+            between Microsoft 365 and Google calendars, and documents how to run it. The source code
+            is public on <a href={repo}>GitHub</a>.
+          </p>
+          <p>
+            How this site handles personal data: <a href={`${base}/privacy/`}>Privacy notice</a>.
+          </p>
+        </>
+      ) : (
+        <MissingOperator />
+      )
+    }
+  </article>
+</SiteLayout>

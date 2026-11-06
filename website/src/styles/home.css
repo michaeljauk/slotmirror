@@ -1,4 +1,7 @@
-/* The website outside the docs, starting with the home page. Docs pages use Starlight's styles. */
+/*
+ * The website outside the docs: the home page, the imprint and the privacy notice. Docs pages use
+ * Starlight's styles.
+ */
 :root {
   --bg: #f4f5f8;
   --surface: #ffffff;

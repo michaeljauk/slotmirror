@@ -30,17 +30,17 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.4.12",
+    "@cloudflare/vitest-plugin": "1.5.0",
     "@commitlint/cli": "21.2.4",
     "@commitlint/config-conventional": "21.2.4",
-    "@types/node": "24.19.2",
+    "@types/node": "26.6.6",
     "husky": "9.1.7",
     "oxfmt": "0.75.0",
     "oxlint": "1.90.0",
     "oxlint-tsgolint": "7.0.2005",
     "typescript": "7.0.2",
-    "vitest": "5.0.5",
-    "wrangler": "4.156.1"
+    "vitest": "5.1.0",
+    "wrangler": "4.156.2"
   },
   "engines": {
     "node": ">=22"

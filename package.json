@@ -10,6 +10,7 @@
     "trial:report": "node scripts/trial-report.ts",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy --define \"__BUILD_COMMIT__:\\\"$(git rev-parse --short=9 HEAD 2>/dev/null)\\\"\"",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:schema": "vitest run --project node --update src/runtime/node/registry.node.test.ts",
     "cf-typegen": "wrangler types --strict-vars=false",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "lint": "oxlint --type-aware",

@@ -19,7 +19,8 @@ under other license terms. You keep the copyright of your change.
 
 ## Development
 
-Requirements: Node.js 22 or later, pnpm 10.
+Requirements: Node.js 24 or later, pnpm 10. The tests of the Node runtime use `node:sqlite` APIs that
+Node 22 lacks.
 
 ```sh
 pnpm install

@@ -59,13 +59,30 @@ export function rawErrorLogs(source: string): string[] {
   return found;
 }
 
+/**
+ * Places that must turn an error into text, and why. The test fails if one of them is gone or
+ * occurs twice, so the list stays exact.
+ */
+const ERROR_TEXT_ALLOWED = [
+  // The Node runtime copies D1's error form "D1_ERROR: <SQLite message>"; safeMessage() then
+  // decides what reaches a log, as on Cloudflare.
+  "../src/runtime/node/sql-database.ts: String(error)",
+  "../src/runtime/node/sql-database.ts: ${error.message}",
+  // A failed migration stops the start and names the file and the SQLite error of its static SQL.
+  "../src/runtime/node/migrations.ts: String(error)",
+];
+
 describe("log hygiene", () => {
   it("logs no raw error, message or stack outside errorLogFields", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(10);
-    const offenders = Object.entries(sources).flatMap(([path, code]) =>
+    const hits = Object.entries(sources).flatMap(([path, code]) =>
       rawErrorLogs(code).map((hit) => `${path}: ${hit}`),
     );
-    expect(offenders).toEqual([]);
+    expect(hits.filter((hit) => !ERROR_TEXT_ALLOWED.includes(hit))).toEqual([]);
+    // Each allowed place occurs exactly once: not gone, and not copied.
+    expect(hits.filter((hit) => ERROR_TEXT_ALLOWED.includes(hit)).sort()).toEqual(
+      [...ERROR_TEXT_ALLOWED].sort(),
+    );
   });
 
   it("finds a raw error in a console call", () => {

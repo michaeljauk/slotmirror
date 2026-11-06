@@ -974,7 +974,7 @@ const UNCHANGED_ROW = "slotmirror-unchanged-row";
  * path fails instead, and its error names the path. The path depends on changes(), so SQLite
  * cannot evaluate it ahead of time.
  */
-function requireChange(env: Env): D1PreparedStatement {
+export function requireChange(env: Env): D1PreparedStatement {
   return env.DB.prepare(
     `SELECT json_extract('{}', CASE WHEN changes() > 0 THEN '$' ELSE '${UNCHANGED_ROW}' END)`,
   );
@@ -986,7 +986,10 @@ function isRequiredChangeMissing(error: unknown): boolean {
 }
 
 /** Run a batch with `requireChange` guards; a failed guard throws `EditorConflict`. */
-async function guardedBatch(env: Env, statements: D1PreparedStatement[]): Promise<D1Result[]> {
+export async function guardedBatch(
+  env: Env,
+  statements: D1PreparedStatement[],
+): Promise<D1Result[]> {
   try {
     return await env.DB.batch(statements);
   } catch (error) {

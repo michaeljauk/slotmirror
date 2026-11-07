@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { RESUME_COOKIE, resumeTarget } from "../mcp-oauth";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
-import { errorLogFields, recordAudit } from "../audit";
+import { recordAudit } from "../audit";
 import { PROVIDER_LABEL, signInProviders, type Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
@@ -25,6 +25,7 @@ import { APP_NAME } from "../brand";
 import { refreshUserCalendars } from "../calendars";
 import { admitSignIn, CONSUMER_TENANT_ID } from "../users";
 import { accountSync } from "../durable";
+import { carrier, log } from "../telemetry";
 
 export const auth = new Hono<AppEnv>();
 
@@ -69,13 +70,12 @@ function oauthErrorPage(
   const label = PROVIDER_LABEL[provider];
   const reference = loggedReference ?? newReference();
   if (!loggedReference) {
-    console.error(
-      "oauth error",
+    log.error("oauth.provider_error", {
       provider,
       purpose,
-      `code=${info.code ?? "none"}`,
-      `ref=${reference}`,
-    );
+      code: info.code ?? "none",
+      reference,
+    });
   }
   const helpHref = `${TROUBLESHOOTING_URL}${info.anchor ? `#${info.anchor}` : ""}`;
   const retryHref = `/auth/${provider}/${purpose === "sign-in" ? "login" : "connect"}`;
@@ -286,11 +286,10 @@ auth.get("/:provider/callback", async (c) => {
       error instanceof TokenError
         ? classifyExchangeError(error.code, error.aadsts)
         : classifyExchangeError(undefined, undefined);
-    console.error(
-      `${provider} token exchange failed`,
-      `code=${info.code ?? "none"}`,
-      `ref=${reference}`,
-      ...errorLogFields(error),
+    log.error(
+      "oauth.token_exchange_failed",
+      { provider, code: info.code ?? "none", reference },
+      error,
     );
     return oauthErrorPage(c, provider, stored.purpose, info, 502, reference);
   }
@@ -399,6 +398,7 @@ auth.get("/:provider/callback", async (c) => {
       accessExpiresAt: Date.now() + tokens.expires_in * 1000,
     },
     provider,
+    carrier(),
   );
   await c.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
     .bind(account.id)

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../app-env";
 import { accountSync } from "../durable";
+import { carrier } from "../telemetry";
 import { setGroupMembership } from "../editor";
 import type { Provider } from "../config";
 import { fakePagePath, measureFetchBudget } from "../providers/fake-calendar";
@@ -204,7 +205,7 @@ dev.post("/cycle", async (c) => {
   )
     .bind(user.id)
     .all<{ id: string }>();
-  for (const row of results) await accountSync(c.env, row.id).requestSync();
+  for (const row of results) await accountSync(c.env, row.id).requestSync(carrier());
   return c.json({ started: results.length });
 });
 

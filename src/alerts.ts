@@ -1,8 +1,9 @@
 import { DEFAULT_ORG_ID } from "./access";
-import { auditStatement, errorLogFields, type AuditEvent, type AuditKind } from "./audit";
+import { auditStatement, type AuditEvent, type AuditKind } from "./audit";
 import { PROVIDER_LABEL, type Provider } from "./config";
 import { i18nFor, LOCALES } from "./i18n";
 import type { CompareMode, CompareRunDetail } from "./sync/compare";
+import { log } from "./telemetry";
 import { OWNER_COLUMNS, ownerAdmission, type OwnerColumns } from "./users";
 
 /** A slow webhook must not hold the alarm that found the refused token. */
@@ -143,7 +144,7 @@ async function postAlert(env: Env, text: string): Promise<AlertOutcome> {
   const url = alertUrl(env);
   if (!url) return "off";
   if (!url.startsWith("https://")) {
-    console.error("ALERT_WEBHOOK_URL must start with https://");
+    log.error("alert.webhook_url_invalid");
     return "failed";
   }
   try {
@@ -157,11 +158,11 @@ async function postAlert(env: Env, text: string): Promise<AlertOutcome> {
       signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
     });
     if (response.ok) return "sent";
-    console.error("Alert webhook answered", response.status);
+    log.error("alert.webhook_refused", { status: response.status });
     return "failed";
   } catch (error) {
     // The fields leave out the message, which can quote the URL.
-    console.error("Alert webhook failed", ...errorLogFields(error));
+    log.error("alert.webhook_failed", {}, error);
     return "failed";
   }
 }
@@ -236,7 +237,7 @@ async function lockAlerts(
       ),
     );
   } catch (error) {
-    console.error("Storing an alert lock failed", ...errorLogFields(error));
+    log.error("alert.lock_write_failed", {}, error);
   }
 }
 
@@ -411,7 +412,7 @@ export async function pingHeartbeat(env: Env): Promise<void> {
   const url = env.HEARTBEAT_URL?.trim();
   if (!url) return;
   if (!url.startsWith("https://")) {
-    console.error("HEARTBEAT_URL must start with https://");
+    log.error("heartbeat.url_invalid");
     return;
   }
   try {
@@ -420,10 +421,10 @@ export async function pingHeartbeat(env: Env): Promise<void> {
       redirect: "manual",
       signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
     });
-    if (!response.ok) console.error("Heartbeat answered", response.status);
+    if (!response.ok) log.error("heartbeat.refused", { status: response.status });
   } catch (error) {
     // The fields leave out the message, which can quote the URL.
-    console.error("Heartbeat failed", ...errorLogFields(error));
+    log.error("heartbeat.failed", {}, error);
   }
 }
 
@@ -604,7 +605,7 @@ async function readLocksAfterFailure(env: Env, now: number): Promise<AlertLock[]
     const locks = alertLockStatement(env.DB, DEFAULT_ORG_ID, lockStart(now));
     return (await locks.all<AlertLock>()).results;
   } catch (error) {
-    console.error("Reading the alert lock failed", ...errorLogFields(error));
+    log.error("alert.lock_read_failed", {}, error);
     return [];
   }
 }
@@ -633,7 +634,7 @@ export async function checkSilentRules(env: Env, now: number): Promise<void> {
   try {
     reads = await env.DB.batch(silentRuleStatements(env.DB, now));
   } catch (error) {
-    console.error("Silence check failed", ...errorLogFields(error));
+    log.error("silence_check.failed", {}, error);
     await reportBlindCheck(env, "database", await readLocksAfterFailure(env, now));
     return;
   }
@@ -646,7 +647,7 @@ export async function checkSilentRules(env: Env, now: number): Promise<void> {
   const scanned = scan.results.reduce((sum, group) => sum + group.scanned, 0);
   // Rows beyond the limit may hold a rule's run, so no rule counts as silent.
   if (scanned >= SILENCE_SCAN_ROWS) {
-    console.error("Silence check skipped: the audit scan reached its limit", scanned);
+    log.error("silence_check.scan_limit", { scanned });
     await reportBlindCheck(env, "scanLimit", locks.results);
     return;
   }

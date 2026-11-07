@@ -33,6 +33,8 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `src/api-tokens.ts`               | Personal API tokens: hashes, expiry, the daily limit of tool calls                |
 | `src/mcp-oauth.ts`                | OAuth for MCP: metadata, client registration, codes, grants, signed access tokens |
 | `src/account-sync.ts`             | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
+| `src/telemetry.ts`                | Logger, spans and request context behind a port; adapters in `src/runtime/`       |
+| `src/error-fields.ts`             | What a log may hold of an error: name, safe code and message, stack frames        |
 | `src/offboarding.ts`              | Removing accounts and users: rule holds, jobs, retirement                         |
 | `src/cleanup.ts`                  | Tombstones of offboarding jobs: end state and the blocks left per calendar        |
 | `src/providers/`                  | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
@@ -52,6 +54,13 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **Privacy.** Never log or store event titles, descriptions, attendees or locations unless a rule
   explicitly asks for that detail level. The audit log stores IDs and times, not content. Never
   log tokens.
+- **Log through `log` from `src/telemetry.ts`, never `console`.** Use a dotted event name in lower
+  case (`"calendars.list_failed"`), scalar fields, and the caught value as the third argument:
+  `log.error("removal.failed", { ruleId }, error)`. The logger keeps only `errorFields(error)`.
+  Log IDs of slotmirror, not remote calendar IDs: a Google calendar ID is often an email address.
+  `test/log-hygiene.test.ts` checks the event names and that no raw error reaches a log. A call
+  into `AccountSync` passes `carrier()` as its last argument, so that the instance logs with the
+  caller's request ID.
 - **Migrations are additive.** Add tables and columns. Do not drop or rename anything. Do not add
   `NOT NULL` without a default. The previous Worker must run on the new schema, because migrations
   run before the code and do not run backward. See `website/src/content/docs/docs/updating.md`.

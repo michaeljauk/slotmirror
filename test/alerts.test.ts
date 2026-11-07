@@ -86,7 +86,9 @@ describe("reconnect alert", () => {
       "google",
     );
     expect(sent).toBe("failed");
-    expect(error.mock.calls).toEqual([["Alert webhook answered", 302]]);
+    expect(error.mock.calls).toEqual([
+      [expect.objectContaining({ event: "alert.webhook_refused", status: 302 })],
+    ]);
   });
 });
 
@@ -131,7 +133,9 @@ describe("comparison alert through the real fetch", () => {
     const url = "https://hook-redirects.test/secret";
     const result = await sendCompareAlert({ ...env, ALERT_WEBHOOK_URL: url }, scope, [alert]);
     expect(result).toEqual({ outcome: "failed", open: [alert] });
-    expect(error.mock.calls).toEqual([["Alert webhook answered", 302]]);
+    expect(error.mock.calls).toEqual([
+      [expect.objectContaining({ event: "alert.webhook_refused", status: 302 })],
+    ]);
     expect(await locksOf("real-redirected")).toBe(0);
   });
 });

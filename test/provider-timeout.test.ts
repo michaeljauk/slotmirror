@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { errorCode, errorLogFields } from "../src/audit";
+import { errorCode } from "../src/audit";
+import { errorFields } from "../src/error-fields";
 import { GoogleApiError, GoogleCalendar } from "../src/providers/google-calendar";
 import { GraphCalendar, GraphError } from "../src/providers/graph-calendar";
 import { requestToken, TokenError } from "../src/providers/oauth-token";
@@ -197,7 +198,7 @@ describe("calendar adapters", () => {
     expect(error).toMatchObject({ status: 504, reason: "timeout" });
     expect(errorCode(error)).toBe("graph_504_timeout");
     expect(timeouts).toHaveBeenCalledWith(expect.any(Function), timeoutMs);
-    expect(JSON.stringify(errorLogFields(error))).not.toContain("SECRET");
+    expect(JSON.stringify(errorFields(error))).not.toContain("SECRET");
     expect((error as Error).message).not.toContain("SECRET");
   });
 
@@ -217,7 +218,7 @@ describe("calendar adapters", () => {
     expect(error).toMatchObject({ status: 504, reason: "timeout" });
     expect(errorCode(error)).toBe("google_504_timeout");
     expect(timeouts).toHaveBeenCalledWith(expect.any(Function), timeoutMs);
-    expect(JSON.stringify(errorLogFields(error))).not.toContain("SECRET");
+    expect(JSON.stringify(errorFields(error))).not.toContain("SECRET");
     expect((error as Error).message).not.toContain("SECRET");
   });
 

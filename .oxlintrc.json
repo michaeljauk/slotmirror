@@ -14,7 +14,7 @@
               },
               {
                 "group": ["cloudflare:*"],
-                "message": "Only src/account-sync.ts imports cloudflare:workers. The Node runtime aliases it to a shim, see src/runtime/types.ts."
+                "message": "Only src/account-sync.ts and src/runtime/workers/ import cloudflare:workers. The Node runtime aliases it to a shim, see src/runtime/types.ts."
               }
             ],
             "paths": [
@@ -337,6 +337,116 @@
               {
                 "name": "zlib",
                 "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/runtime/workers/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["node:*", "!node:async_hooks"],
+                "message": "The Workers adapter uses only node:async_hooks, which nodejs_compat provides on workerd."
+              }
+            ],
+            "paths": [
+              {
+                "name": "assert",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "buffer",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "child_process",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "crypto",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "dns",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "events",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "fs",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "fs/promises",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "http",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "https",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "net",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "os",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "path",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "process",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "sqlite",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "stream",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "timers",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "tls",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "url",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "util",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "worker_threads",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "zlib",
+                "message": "The core runs on workerd and Node. Put Node APIs in src/runtime/node/."
+              },
+              {
+                "name": "async_hooks",
+                "message": "Import node:async_hooks, which nodejs_compat provides on workerd."
               }
             ]
           }

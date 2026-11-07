@@ -34,8 +34,8 @@ Some companies do not allow AGPL software at all. Check your own policy first.
 
 Code up to and including commit `fde4b24` was published under the MIT license, and that stays
 valid for that code. You can still use that version under the MIT terms. All later changes are
-under the AGPL-3.0. The MIT text is in
-[LICENSE-MIT](https://github.com/slotmirror/slotmirror/blob/main/LICENSE-MIT).
+under the AGPL-3.0. The MIT text is in the
+[LICENSE file at that commit](https://github.com/slotmirror/slotmirror/blob/fde4b24b2ee3cf4e9c57d8c7fd308f54c29a634a/LICENSE).
 
 ## Can the people who see my work calendar read my private events?
 

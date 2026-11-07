@@ -3,6 +3,7 @@ import { GoogleApiError } from "./providers/google-calendar";
 import { GraphError } from "./providers/graph-calendar";
 import { TokenError } from "./providers/microsoft";
 import { parseProviderErrorMessage } from "./sync/throttle";
+import { schemaIssues } from "./schema-issues";
 
 /**
  * The audit log answers "who did what, and did the sync work". It stores IDs, times, counts and
@@ -315,50 +316,6 @@ export function errorLogFields(error: unknown): string[] {
   if (message) fields.push(message);
   fields.push(stackFrames(error));
   return fields;
-}
-
-const ISSUE_CODE = /^[a-z_]{1,40}$/;
-/** A field name. No "@", "." or "-", so an email address or a title cannot pass as one. */
-const PATH_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
-/**
- * Fields that hold a record: the key after them comes from the data, not from the schema. Google
- * extended properties ("private", "shared") and Graph batch response headers.
- */
-const RECORD_FIELDS = new Set(["private", "shared", "headers"]);
-const MAX_ISSUES = 5;
-
-/**
- * A schema error as "schema <code>@<path> ...", for example "schema invalid_type@value.1.owner".
- * A Zod error that crossed a Durable Object boundary keeps only its message, the JSON list of its
- * issues, so the issues come from the error itself or from that message. Only the code and the
- * path go into the log: never the expected or received values, and never Zod's text.
- */
-function schemaIssues(error: Error): string | undefined {
-  let issues: unknown = (error as { issues?: unknown }).issues;
-  if (issues === undefined) {
-    if (!error.message.startsWith("[")) return undefined;
-    try {
-      issues = JSON.parse(error.message);
-    } catch {
-      return undefined;
-    }
-  }
-  if (!Array.isArray(issues) || issues.length === 0) return undefined;
-  const parts: string[] = [];
-  for (const issue of issues.slice(0, MAX_ISSUES)) {
-    const { code, path } = (issue ?? {}) as { code?: unknown; path?: unknown };
-    if (typeof code !== "string" || !ISSUE_CODE.test(code) || !Array.isArray(path)) {
-      return undefined;
-    }
-    const keys = path.map((key: unknown, index) => {
-      if (typeof key === "number") return key;
-      const parent: unknown = index > 0 ? path[index - 1] : undefined;
-      if (typeof parent === "string" && RECORD_FIELDS.has(parent)) return "?";
-      return typeof key === "string" && PATH_KEY.test(key) ? key : "?";
-    });
-    parts.push(`${code}@${keys.join(".")}`);
-  }
-  return `schema ${parts.join(" ")}`;
 }
 
 /** A short code for an error, safe to store: no response bodies, no event content. */

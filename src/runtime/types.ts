@@ -23,8 +23,9 @@ export interface SqlDatabase {
 /** The part of `D1PreparedStatement` that the code uses. */
 export interface SqlStatement {
   /**
-   * Binds values like D1: string, number, null, ArrayBuffer and boolean (stored as 0 or 1). The
-   * Node runtime rejects other values when the statement runs, as D1 does.
+   * Binds values like D1: string, number, null, boolean (stored as 0 or 1) and binary data
+   * (ArrayBuffer, a typed array or an array of bytes). For other values it throws at once, on D1
+   * and on the Node runtime.
    */
   bind(...values: unknown[]): SqlStatement;
   first<T = Record<string, unknown>>(column?: string): Promise<T | null>;

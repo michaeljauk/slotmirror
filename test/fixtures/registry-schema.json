@@ -1,0 +1,1692 @@
+{
+  "tables": {
+    "accounts": {
+      "sql": "CREATE TABLE accounts(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id)ON DELETE CASCADE,provider TEXT NOT NULL CHECK(provider IN('microsoft','google')),email TEXT NOT NULL,tenant_id TEXT,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),in_block_group INTEGER NOT NULL DEFAULT 0 CHECK(in_block_group IN(0,1)),display_name TEXT,needs_reconnect INTEGER NOT NULL DEFAULT 0 CHECK(needs_reconnect IN(0,1)),color TEXT,work_hours TEXT,source_options TEXT,UNIQUE(provider,email))",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "provider",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "email",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "tenant_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "in_block_group",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "display_name",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "needs_reconnect",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "color",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "work_hours",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "source_options",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "accounts_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "user_id",
+          "sql": "CREATE INDEX accounts_user ON accounts(user_id)"
+        },
+        {
+          "name": "sqlite_autoindex_accounts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_accounts_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "provider,email",
+          "sql": null
+        }
+      ]
+    },
+    "api_tokens": {
+      "sql": "CREATE TABLE api_tokens(token_hash TEXT PRIMARY KEY,id TEXT NOT NULL UNIQUE,user_id TEXT NOT NULL REFERENCES users(id)ON DELETE CASCADE,name TEXT NOT NULL,last_four TEXT NOT NULL,scope TEXT NOT NULL DEFAULT 'read',session_version INTEGER NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),last_used_at TEXT)",
+      "columns": [
+        {
+          "name": "token_hash",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "last_four",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "scope",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'read'",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "session_version",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "expires_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "last_used_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "api_tokens_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "user_id",
+          "sql": "CREATE INDEX api_tokens_user ON api_tokens(user_id)"
+        },
+        {
+          "name": "sqlite_autoindex_api_tokens_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "token_hash",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_api_tokens_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        }
+      ]
+    },
+    "api_usage": {
+      "sql": "CREATE TABLE api_usage(user_id TEXT PRIMARY KEY REFERENCES users(id)ON DELETE CASCADE,day TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,rows_read INTEGER NOT NULL DEFAULT 0)",
+      "columns": [
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "day",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "calls",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rows_read",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_api_usage_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "user_id",
+          "sql": null
+        }
+      ]
+    },
+    "api_usage_total": {
+      "sql": "CREATE TABLE api_usage_total(day TEXT PRIMARY KEY,calls INTEGER NOT NULL DEFAULT 0,rows_read INTEGER NOT NULL DEFAULT 0)",
+      "columns": [
+        {
+          "name": "day",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "calls",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rows_read",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_api_usage_total_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "day",
+          "sql": null
+        }
+      ]
+    },
+    "audit_events": {
+      "sql": "CREATE TABLE audit_events(id INTEGER PRIMARY KEY AUTOINCREMENT,org_id TEXT NOT NULL,user_id TEXT,account_id TEXT,rule_id TEXT,kind TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),report_id TEXT)",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "org_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "account_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rule_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "kind",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "detail",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'{}'",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "report_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "audit_events_alert_sent",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1,
+          "columns": "org_id,created_at",
+          "sql": "CREATE INDEX audit_events_alert_sent ON audit_events(org_id,created_at DESC)WHERE kind = 'alert_sent'"
+        },
+        {
+          "name": "audit_events_org_created",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "org_id,created_at",
+          "sql": "CREATE INDEX audit_events_org_created ON audit_events(org_id,created_at DESC)"
+        },
+        {
+          "name": "audit_events_report",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1,
+          "columns": "report_id",
+          "sql": "CREATE UNIQUE INDEX audit_events_report ON audit_events(report_id)WHERE report_id IS NOT NULL"
+        },
+        {
+          "name": "audit_events_user_created",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "user_id,created_at",
+          "sql": "CREATE INDEX audit_events_user_created ON audit_events(user_id,created_at DESC)"
+        }
+      ]
+    },
+    "calendars": {
+      "sql": "CREATE TABLE calendars(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id)ON DELETE CASCADE,remote_id TEXT NOT NULL,name TEXT NOT NULL,can_edit INTEGER NOT NULL DEFAULT 0 CHECK(can_edit IN(0,1)),is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN(0,1)),is_source INTEGER NOT NULL DEFAULT 0 CHECK(is_source IN(0,1)),watched_until INTEGER,UNIQUE(account_id,remote_id))",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "account_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "remote_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "can_edit",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "is_default",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "is_source",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "watched_until",
+          "type": "INTEGER",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "accounts",
+          "from": "account_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_calendars_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_calendars_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "account_id,remote_id",
+          "sql": null
+        }
+      ]
+    },
+    "cleanup_tombstones": {
+      "sql": "CREATE TABLE cleanup_tombstones(account_id TEXT NOT NULL,remote_calendar_id TEXT,rule_id TEXT NOT NULL,org_id TEXT NOT NULL,user_id TEXT NOT NULL,calendar_name TEXT,rule_tag TEXT NOT NULL,block_title TEXT,rule_was_off INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'open',removed INTEGER NOT NULL DEFAULT 0,blocks_left INTEGER,left_estimated INTEGER NOT NULL DEFAULT 0,window_start TEXT,window_end TEXT,deadline_at TEXT,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),updated_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),finished_at TEXT,PRIMARY KEY(account_id,rule_id))",
+      "columns": [
+        {
+          "name": "account_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "remote_calendar_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rule_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 2,
+          "hidden": 0
+        },
+        {
+          "name": "org_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "calendar_name",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rule_tag",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "block_title",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rule_was_off",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "state",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'open'",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "removed",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "blocks_left",
+          "type": "INTEGER",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "left_estimated",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "window_start",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "window_end",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "deadline_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "finished_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "cleanup_tombstones_org",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "org_id",
+          "sql": "CREATE INDEX cleanup_tombstones_org ON cleanup_tombstones(org_id)"
+        },
+        {
+          "name": "cleanup_tombstones_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "user_id",
+          "sql": "CREATE INDEX cleanup_tombstones_user ON cleanup_tombstones(user_id)"
+        },
+        {
+          "name": "sqlite_autoindex_cleanup_tombstones_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "account_id,rule_id",
+          "sql": null
+        }
+      ]
+    },
+    "d1_migrations": {
+      "sql": "CREATE TABLE \"d1_migrations\"(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "applied_at",
+          "type": "TIMESTAMP",
+          "not_null": 1,
+          "default_value": "CURRENT_TIMESTAMP",
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_d1_migrations_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "name",
+          "sql": null
+        }
+      ]
+    },
+    "oauth_clients": {
+      "sql": "CREATE TABLE oauth_clients(id TEXT PRIMARY KEY,secret_hash TEXT,name TEXT NOT NULL,redirect_uris TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),last_used_at TEXT)",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "secret_hash",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "redirect_uris",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "last_used_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "oauth_clients_used",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "last_used_at,created_at",
+          "sql": "CREATE INDEX oauth_clients_used ON oauth_clients(last_used_at,created_at)"
+        },
+        {
+          "name": "sqlite_autoindex_oauth_clients_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        }
+      ]
+    },
+    "oauth_codes": {
+      "sql": "CREATE TABLE oauth_codes(code_hash TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES oauth_clients(id)ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id)ON DELETE CASCADE,redirect_uri TEXT NOT NULL,code_challenge TEXT NOT NULL,resource TEXT NOT NULL,session_version INTEGER NOT NULL,expires_at TEXT NOT NULL)",
+      "columns": [
+        {
+          "name": "code_hash",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "client_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "redirect_uri",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "code_challenge",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "resource",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "session_version",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "expires_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        },
+        {
+          "table": "oauth_clients",
+          "from": "client_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "oauth_codes_client",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "client_id",
+          "sql": "CREATE INDEX oauth_codes_client ON oauth_codes(client_id)"
+        },
+        {
+          "name": "oauth_codes_expires",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "expires_at",
+          "sql": "CREATE INDEX oauth_codes_expires ON oauth_codes(expires_at)"
+        },
+        {
+          "name": "oauth_codes_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "user_id",
+          "sql": "CREATE INDEX oauth_codes_user ON oauth_codes(user_id)"
+        },
+        {
+          "name": "sqlite_autoindex_oauth_codes_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "code_hash",
+          "sql": null
+        }
+      ]
+    },
+    "oauth_grants": {
+      "sql": "CREATE TABLE oauth_grants(id TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES oauth_clients(id)ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id)ON DELETE CASCADE,scope TEXT NOT NULL,resource TEXT NOT NULL,session_version INTEGER NOT NULL,refresh_hash TEXT NOT NULL UNIQUE,code_hash TEXT UNIQUE,generation INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),refreshed_at TEXT,refresh_expires_at TEXT NOT NULL,expires_at TEXT NOT NULL,UNIQUE(user_id,client_id))",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "client_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "scope",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "resource",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "session_version",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "refresh_hash",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "code_hash",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "generation",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "refresh_expires_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "expires_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        },
+        {
+          "table": "oauth_clients",
+          "from": "client_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "oauth_grants_client",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "client_id",
+          "sql": "CREATE INDEX oauth_grants_client ON oauth_grants(client_id)"
+        },
+        {
+          "name": "sqlite_autoindex_oauth_grants_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_oauth_grants_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "refresh_hash",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_oauth_grants_3",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "code_hash",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_oauth_grants_4",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "user_id,client_id",
+          "sql": null
+        }
+      ]
+    },
+    "oauth_registrations": {
+      "sql": "CREATE TABLE oauth_registrations(key TEXT PRIMARY KEY,day TEXT NOT NULL,count INTEGER NOT NULL DEFAULT 0)",
+      "columns": [
+        {
+          "name": "key",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "day",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "count",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "oauth_registrations_day",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "day",
+          "sql": "CREATE INDEX oauth_registrations_day ON oauth_registrations(day)"
+        },
+        {
+          "name": "sqlite_autoindex_oauth_registrations_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "key",
+          "sql": null
+        }
+      ]
+    },
+    "orgs": {
+      "sql": "CREATE TABLE orgs(id TEXT PRIMARY KEY,name TEXT NOT NULL,policy TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),mcp_for_members TEXT NOT NULL DEFAULT 'off')",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "policy",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'{}'",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "mcp_for_members",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'off'",
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_orgs_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        }
+      ]
+    },
+    "rule_holds": {
+      "sql": "CREATE TABLE rule_holds(rule_id TEXT NOT NULL REFERENCES rules(id)ON DELETE CASCADE,hold_id TEXT NOT NULL,until INTEGER NOT NULL,PRIMARY KEY(rule_id,hold_id))",
+      "columns": [
+        {
+          "name": "rule_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "hold_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 2,
+          "hidden": 0
+        },
+        {
+          "name": "until",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "rules",
+          "from": "rule_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "rule_holds_until",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "until",
+          "sql": "CREATE INDEX rule_holds_until ON rule_holds(until)"
+        },
+        {
+          "name": "sqlite_autoindex_rule_holds_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "rule_id,hold_id",
+          "sql": null
+        }
+      ]
+    },
+    "rules": {
+      "sql": "CREATE TABLE rules(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id)ON DELETE CASCADE,source_calendar_id TEXT NOT NULL REFERENCES calendars(id)ON DELETE CASCADE,target_calendar_id TEXT NOT NULL REFERENCES calendars(id)ON DELETE CASCADE,options TEXT NOT NULL DEFAULT '{}',enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN(0,1)),origin TEXT NOT NULL DEFAULT 'custom' CHECK(origin IN('group','custom')),CHECK(source_calendar_id <> target_calendar_id),UNIQUE(source_calendar_id,target_calendar_id))",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "user_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "source_calendar_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "target_calendar_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "options",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'{}'",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "enabled",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "1",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "origin",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'custom'",
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "calendars",
+          "from": "target_calendar_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        },
+        {
+          "table": "calendars",
+          "from": "source_calendar_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        },
+        {
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "rules_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "user_id",
+          "sql": "CREATE INDEX rules_user ON rules(user_id)"
+        },
+        {
+          "name": "sqlite_autoindex_rules_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_rules_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "source_calendar_id,target_calendar_id",
+          "sql": null
+        }
+      ]
+    },
+    "sync_runs": {
+      "sql": "CREATE TABLE sync_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,rule_id TEXT NOT NULL REFERENCES rules(id)ON DELETE CASCADE,started_at TEXT NOT NULL,finished_at TEXT,status TEXT NOT NULL CHECK(status IN('running','ok','error')),created INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,error TEXT)",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "rule_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "started_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "finished_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "status",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "updated",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "deleted",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "error",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "rules",
+          "from": "rule_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "sync_runs_rule_started",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": "rule_id,started_at",
+          "sql": "CREATE INDEX sync_runs_rule_started ON sync_runs(rule_id,started_at DESC)"
+        }
+      ]
+    },
+    "users": {
+      "sql": "CREATE TABLE users(id TEXT PRIMARY KEY,org_id TEXT NOT NULL REFERENCES orgs(id)ON DELETE CASCADE,email TEXT NOT NULL UNIQUE,tenant_id TEXT,role TEXT NOT NULL CHECK(role IN('member','admin')),created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),last_sign_in_at TEXT,sync_settings TEXT NOT NULL DEFAULT '{}',session_version INTEGER NOT NULL DEFAULT 0,ms_tenant_id TEXT,ms_object_id TEXT,google_subject TEXT,rebind_until TEXT,refused_subjects TEXT)",
+      "columns": [
+        {
+          "name": "id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 1,
+          "hidden": 0
+        },
+        {
+          "name": "org_id",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "email",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "tenant_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "role",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "last_sign_in_at",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "sync_settings",
+          "type": "TEXT",
+          "not_null": 1,
+          "default_value": "'{}'",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "session_version",
+          "type": "INTEGER",
+          "not_null": 1,
+          "default_value": "0",
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "ms_tenant_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "ms_object_id",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "google_subject",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "rebind_until",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        },
+        {
+          "name": "refused_subjects",
+          "type": "TEXT",
+          "not_null": 0,
+          "default_value": null,
+          "primary_key": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "table": "orgs",
+          "from": "org_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_users_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": "id",
+          "sql": null
+        },
+        {
+          "name": "sqlite_autoindex_users_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": "email",
+          "sql": null
+        },
+        {
+          "name": "users_google_subject",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1,
+          "columns": "google_subject",
+          "sql": "CREATE UNIQUE INDEX users_google_subject ON users(google_subject)WHERE google_subject IS NOT NULL"
+        },
+        {
+          "name": "users_ms_identity",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1,
+          "columns": "ms_tenant_id,ms_object_id",
+          "sql": "CREATE UNIQUE INDEX users_ms_identity ON users(ms_tenant_id,ms_object_id)WHERE ms_object_id IS NOT NULL"
+        }
+      ]
+    }
+  },
+  "others": [
+    {
+      "type": "trigger",
+      "name": "cleanup_tombstones_rule_gone",
+      "tableName": "rules",
+      "sql": "CREATE TRIGGER cleanup_tombstones_rule_gone AFTER DELETE ON rules WHEN OLD.enabled = 1 BEGIN DELETE FROM cleanup_tombstones WHERE rule_id = OLD.id AND state <> 'open' AND EXISTS(SELECT 1 FROM users u WHERE u.id = OLD.user_id); END"
+    },
+    {
+      "type": "trigger",
+      "name": "cleanup_tombstones_rule_off",
+      "tableName": "rules",
+      "sql": "CREATE TRIGGER cleanup_tombstones_rule_off AFTER UPDATE OF enabled ON rules WHEN OLD.enabled = 1 AND NEW.enabled = 0 BEGIN DELETE FROM cleanup_tombstones WHERE rule_id = NEW.id AND state <> 'open' AND EXISTS(SELECT 1 FROM users u WHERE u.id = NEW.user_id); END"
+    },
+    {
+      "type": "trigger",
+      "name": "rule_holds_end",
+      "tableName": "rules",
+      "sql": "CREATE TRIGGER rule_holds_end AFTER UPDATE OF enabled ON rules WHEN NEW.enabled = 1 BEGIN DELETE FROM rule_holds WHERE rule_id = NEW.id; END"
+    }
+  ]
+}

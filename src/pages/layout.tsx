@@ -97,12 +97,14 @@ const NAV: readonly {
 ];
 
 /** The logo mark: two calendars, the event mirrored as a hatched busy block. */
-function BrandMark() {
+/** `hatchId` must be unique on the page when the mark appears twice. */
+export function BrandMark(props: { hatchId?: string }) {
+  const hatch = props.hatchId ?? "brand-hatch";
   return (
     <svg class="brand-mark" width="28" height="28" viewBox="0 0 64 64" aria-hidden="true">
       <defs>
         <pattern
-          id="brand-hatch"
+          id={hatch}
           width="5"
           height="5"
           patternUnits="userSpaceOnUse"
@@ -116,7 +118,7 @@ function BrandMark() {
         <rect x="36" y="7" width="23" height="50" rx="6" />
       </g>
       <rect x="10.5" y="22" width="12" height="18" rx="3" fill="var(--accent)" />
-      <rect x="41.5" y="22" width="12" height="18" rx="3" fill="url(#brand-hatch)" />
+      <rect x="41.5" y="22" width="12" height="18" rx="3" fill={`url(#${hatch})`} />
     </svg>
   );
 }
@@ -163,6 +165,8 @@ export function Layout(props: {
   title: string;
   user?: CurrentUser | null;
   active?: NavItem;
+  /** A step outside the app, such as a consent: no navigation, only the logo bar. */
+  focused?: boolean;
   children: Child;
 }) {
   const { user } = props;
@@ -202,7 +206,7 @@ export function Layout(props: {
         <link rel="stylesheet" href="/style.css" />
         <script src="/editor.js" defer />
       </head>
-      {user ? (
+      {user && !props.focused ? (
         <body class="has-sidebar">
           <aside class="sidebar">
             {brand}

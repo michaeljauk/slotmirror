@@ -485,8 +485,17 @@ export async function resumeTarget(
     resumeSecret(env),
     now,
   );
-  const path = payload?.path;
-  return typeof path === "string" && path.startsWith(RESUME_PREFIX) ? path : null;
+  return resumePath(payload?.path);
+}
+
+/**
+ * The value if it is a path of the authorization endpoint, else null. A control character would
+ * make the Location header throw, and a path over 2000 characters would not fit the cookie.
+ */
+export function resumePath(value: unknown): string | null {
+  if (typeof value !== "string" || !value.startsWith(RESUME_PREFIX)) return null;
+  if (value.length > 2000 || /\p{Cc}/u.test(value)) return null;
+  return value;
 }
 
 /**

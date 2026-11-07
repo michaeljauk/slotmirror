@@ -411,6 +411,10 @@ export const en = {
   },
   consent: {
     title: "Connect an app",
+    signedInAs: (email: string) => `Signed in as ${email}`,
+    readOnly: "Read only",
+    readsLabel: "Can read",
+    notYou: "Not you?",
     asks: (name: string) => `“${name}” wants to read your slotmirror data.`,
     can: [
       "Your connected accounts and whether one needs reconnecting.",

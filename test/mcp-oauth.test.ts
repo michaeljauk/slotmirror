@@ -625,6 +625,93 @@ describe("authorization", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("frames the consent as a step outside the app: no navigation, the account that answers", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    // Like the sign-in page: the logo bar, but no sidebar, page links or user menu.
+    expect(html).toContain('class="topbar"');
+    expect(html).not.toContain("has-sidebar");
+    expect(html).not.toContain('href="/rules"');
+    expect(html).not.toContain('popovertarget="user-menu"');
+    expect(html).toContain("Signed in as owner@example.com");
+    // The tile shows a letter, never a logo, and the warning and the target stay on the page.
+    expect(html).toMatch(/class="consent-tile app"[^>]*>A</);
+    expect(html).toContain("slotmirror did not check it");
+    expect(html).toContain("Your answer goes back to 127.0.0.1:33418.");
+    // The logo appears twice; each pattern id must be unique, or the second mark loses its hatch.
+    const ids = [...html.matchAll(/<pattern id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("puts a letter or digit in the app tile, never a symbol that could read as a badge", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const cases: [string, string][] = [
+      ["\u2705 Verified companion", "V"],
+      ["\u200b\u0301agent", "A"],
+      ["\ufdfd", "?"],
+      ["42 tools", "4"],
+    ];
+    for (const [name, initial] of cases) {
+      const client = await registeredClient({ client_name: name });
+      const flow: Flow = {
+        clientId: client.client_id,
+        verifier: newVerifier(),
+        redirectUri: LOOPBACK,
+      };
+      const { html } = await consent(cookie, flow);
+      expect(/class="consent-tile app"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(initial);
+    }
+  });
+
+  it("signs out a user who is not the right one, and the request waits for the next sign-in", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    const query = authorizeQuery(flow, await challengeOf(flow.verifier));
+    const form = /<form method="post" action="\/auth\/logout"[^>]*>([\s\S]*?)<\/form>/.exec(html);
+    expect(form?.[1]).toContain("Not you?");
+    const resume = /name="resume" value="([^"]+)"/
+      .exec(form?.[1] ?? "")?.[1]
+      ?.replaceAll("&amp;", "&");
+    expect(resume).toBe(`/oauth/authorize?${query}`);
+
+    const out = await postForm("/auth/logout", { resume: resume ?? "" }, { cookie, origin: BASE });
+    expect(out.status).toBe(302);
+    expect(out.headers.get("location")).toBe(`/oauth/authorize?${query}`);
+    expect(out.headers.get("set-cookie")).toMatch(/slotmirror_session=;/);
+    // Signed out, the same request sets the resume cookie, as for any visitor.
+    const again = await fetchApp(`/oauth/authorize?${query}`);
+    expect(again.headers.get("location")).toBe("/");
+    expect(again.headers.get("set-cookie")).toContain("slotmirror_resume=");
+
+    // Any other target goes home, so the form cannot send a user to another page or site.
+    for (const target of [
+      "https://evil.example/",
+      "//evil.example/",
+      "/rules",
+      "/oauth/authorizeX",
+      // A line break would make the Location header throw; a long path would not fit the cookie.
+      "/oauth/authorize?a\r\nb",
+      `/oauth/authorize?${"a".repeat(2000)}`,
+    ]) {
+      const response = await postForm("/auth/logout", { resume: target }, { origin: BASE });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/");
+    }
+  });
+
   it("accepts any port for a loopback redirect, but not another path", async () => {
     const { cookie } = await signIn("owner@example.com");
     const client = await registeredClient();

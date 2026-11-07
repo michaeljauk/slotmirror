@@ -1,0 +1,252 @@
+/*
+ * The home page: a light hero with the live demo, product mockups, the trust block and the two
+ * ways to run slotmirror. Sentence-case headings, left-aligned sections. Colours come from the
+ * tokens in home.css, so light and dark both work.
+ */
+.wrap {
+  width: min(1200px, 100% - 40px);
+  margin-inline: auto;
+}
+
+.home h1 {
+  font-size: clamp(34px, 4vw, 54px);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  font-weight: 700;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+
+.home h2 {
+  font-size: clamp(26px, 2.6vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  margin: 0 0 16px;
+  text-wrap: balance;
+}
+
+.home h3 {
+  font-size: 19px;
+  line-height: 1.3;
+  font-weight: 650;
+  margin: 0 0 10px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 14.5px;
+  color: var(--muted);
+}
+
+.lead {
+  font-size: 18px;
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 0 32px;
+}
+
+/* Hero */
+.hero {
+  padding: clamp(40px, 6vw, 88px) 0 clamp(24px, 4vw, 48px);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 6fr) minmax(0, 7fr);
+  gap: clamp(32px, 5vw, 72px);
+  align-items: center;
+}
+
+.hero .sub {
+  font-size: clamp(18px, 1.5vw, 21px);
+  color: var(--muted);
+  max-width: 42ch;
+  margin: 0 0 28px;
+}
+
+.fine {
+  font-size: 15px;
+  color: var(--muted);
+  margin: 18px 0 0;
+}
+
+.fine a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.fine svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The live demo and the level picker sit in a plain window. */
+.frame {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: clamp(12px, 2vw, 20px);
+  box-shadow:
+    0 1px 2px rgb(15 22 38 / 6%),
+    0 12px 32px -18px rgb(15 22 38 / 25%);
+}
+
+/* Text on one side, a demo or mockup on the other. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: clamp(28px, 5vw, 72px);
+  align-items: center;
+}
+
+.split-even {
+  grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+}
+
+.split-text p {
+  max-width: 48ch;
+}
+
+.mock-figure {
+  margin: 0;
+  padding: 0.5em 0.5em 0 0;
+}
+
+/* Trust: three columns with thin dividers. */
+.trust {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--line-strong);
+}
+
+.trust-col {
+  padding: 24px 28px 8px 0;
+}
+
+.trust-col + .trust-col {
+  padding-left: 28px;
+  border-left: 1px solid var(--line);
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.plain-list li {
+  margin-bottom: 8px;
+}
+
+.scopes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scopes li {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 14px;
+}
+
+.provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.scopes code {
+  font-size: 14.5px;
+  background: var(--grid);
+  border-radius: 6px;
+  padding: 1px 7px;
+  overflow-wrap: anywhere;
+}
+
+.struck {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.struck li {
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 15px;
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+/* Two ways to run it, side by side. */
+.paths {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.path {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: clamp(22px, 3vw, 36px);
+}
+
+.path .buttons {
+  margin-top: 20px;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin: 0 0 12px;
+}
+
+.tag-ok {
+  color: var(--c-green);
+  border-color: currentcolor;
+}
+
+@media (max-width: 900px) {
+  .hero-grid,
+  .split,
+  .split-even,
+  .paths,
+  .trust {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trust-col + .trust-col {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 640px) {
+  .wrap {
+    width: calc(100% - 32px);
+  }
+}

@@ -1,0 +1,58 @@
+---
+// A simplified mockup of a block group: three calendars in a row, plus a subscribed calendar that
+// is only read. The meeting of each calendar appears, then its busy copies appear in the other
+// two. CSS only. Decorative, so the figure that holds it carries the description.
+import { google, microsoft } from "../../icons";
+import "../../styles/mock.css";
+
+type Key = "work" | "client" | "private";
+const cals: { key: Key; name: string; icon: string; colour: string }[] = [
+  { key: "work", name: "Work", icon: microsoft, colour: "var(--work)" },
+  { key: "client", name: "Client", icon: microsoft, colour: "var(--client)" },
+  { key: "private", name: "Private", icon: google, colour: "var(--private)" },
+];
+// Each calendar owns one meeting. Rows are hours from 8:00; the copies sit in the same rows.
+const meetings: Record<Key, { row: number; length: number; step: number }> = {
+  work: { row: 1, length: 2, step: 0 },
+  client: { row: 4, length: 1, step: 1 },
+  private: { row: 6, length: 2, step: 2 },
+};
+---
+
+<div class="mk mk-group" aria-hidden="true">
+  <p class="mk-tag">Block group · 3 calendars</p>
+  <div class="mk-fan">
+    {
+      cals.map((cal, i) => (
+        <div class={`mk-win mk-cal mk-cal-${i}`} style={`--c:${cal.colour}`}>
+          <div class="mk-cal-head">
+            <i />
+            <Fragment set:html={cal.icon} />
+            {cal.name}
+          </div>
+          <div class="mk-hours">
+            {cals.map((other) => {
+              const m = meetings[other.key];
+              const own = other.key === cal.key;
+              return (
+                <span
+                  class:list={["mk-ev", own ? "mk-own" : "mk-copy", `mk-s${m.step}`]}
+                  style={`--c:${other.colour};--row:${m.row};--len:${m.length}`}
+                >
+                  {own ? "Meeting" : "Busy"}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      ))
+    }
+    <div class="mk-win mk-cal mk-sub">
+      <div class="mk-cal-head">Team fixtures</div>
+      <p>Subscribed. Read only.</p>
+      <div class="mk-hours">
+        <span class="mk-ev mk-feed" style="--row:2;--len:1">Match</span>
+      </div>
+    </div>
+  </div>
+</div>

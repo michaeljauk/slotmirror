@@ -105,8 +105,8 @@ RFC 8058. Each mail has `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsu
 
 ## Deletion on request
 
-A person whose unsubscribe link has expired writes to the address in the `DELETION_CONTACT` variable
-(a plain var, not in the repository; the page names the operator without it). To delete an entry:
+A person whose unsubscribe link has expired writes to the address in `DELETION_CONTACT` (a secret,
+not in the repository; the page names the operator without it). To delete an entry:
 
 ```sh
 cd waitlist
@@ -118,15 +118,17 @@ Do not paste the address into tickets or chat.
 
 ## Set up
 
-All steps need a Cloudflare, Resend or Turnstile account. Nothing here ran in production.
+All steps need a Cloudflare, Resend or Turnstile account. `wrangler.jsonc` holds the values of
+the production Worker. A new setup replaces the database ID and the custom domain with its own.
 
 ```sh
 cd waitlist
 pnpm install
-pnpm wrangler d1 create slotmirror-waitlist --jurisdiction=eu   # put the ID into wrangler.jsonc
+pnpm wrangler d1 create slotmirror-waitlist --jurisdiction=eu   # put your ID into wrangler.jsonc
 pnpm wrangler secret put RESEND_API_KEY
 pnpm wrangler secret put TURNSTILE_SECRET
 pnpm wrangler secret put HASH_PEPPER             # e.g. the output of: openssl rand -base64 32
+pnpm wrangler secret put DELETION_CONTACT        # optional, see "Deletion on request"
 pnpm run deploy
 ```
 
@@ -134,8 +136,10 @@ The jurisdiction of a D1 database cannot change after creation. Create the datab
 `--jurisdiction=eu` from the start. A database without it stays outside the EU jurisdiction.
 `pnpm deploy` is a pnpm built-in and does not run the `deploy` script, so use `pnpm run deploy`.
 
-Then add the custom domain `slotmirror.app` to the Worker. Verify the sending domain in Resend and
-pick an EU region for it. Create a Turnstile widget for `slotmirror.com` and `slotmirror.app`.
+The deploy attaches the custom domain from `routes` in `wrangler.jsonc`. The workers.dev address
+and preview URLs are off. If a redirect rule covers the domain, exclude `/api/signup`, `/confirm`
+and `/unsubscribe` from it: redirect rules run before Workers. Verify the sending domain in Resend
+and pick an EU region for it. Create a Turnstile widget for `slotmirror.com` and `slotmirror.app`.
 
 Local development: copy `.dev.vars.example` to `.dev.vars`, run `pnpm db:migrate:local`, then
 `pnpm dev`. Turnstile has test keys for local runs. They report the host `localhost`, which the Worker refuses.

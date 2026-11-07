@@ -66,7 +66,8 @@
 .cal {
   position: relative;
   height: var(--cal-height);
-  border-radius: 8px;
+  /* A column has no box of its own: the hour lines and a rule on each side mark it. A boxed
+     column inside the demo window reads as a card inside a card. */
   background: repeating-linear-gradient(
     to bottom,
     var(--grid) 0,
@@ -74,7 +75,8 @@
     transparent 1px,
     transparent calc(var(--cal-height) / 10)
   );
-  border: 1px solid var(--line);
+  border-inline: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   overflow: hidden;
 }
 

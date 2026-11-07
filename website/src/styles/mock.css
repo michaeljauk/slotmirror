@@ -1,0 +1,659 @@
+/*
+ * Product mockups of the app for the home page: simplified screens with thin borders, soft deep
+ * shadows and a slight 3D tilt. The calendar colours come from home.css. Sizes are in em, so a mockup scales with its font size. Motion stops
+ * for prefers-reduced-motion and shows one fixed state.
+ */
+.mk {
+  --mk-ink: var(--text);
+  --mk-edge: var(--line);
+  --mk-lift:
+    0 1px 2px rgb(15 22 38 / 6%), 0 8px 20px -6px rgb(15 22 38 / 12%),
+    0 32px 64px -24px rgb(15 22 38 / 28%);
+  --mk-float:
+    0 2px 4px rgb(15 22 38 / 8%), 0 18px 36px -10px rgb(15 22 38 / 22%),
+    0 48px 90px -30px rgb(43 89 195 / 40%);
+  --mk-paper: var(--surface);
+  --mk-cycle: 12s;
+  font-size: clamp(12px, 1.12vw, 15px);
+  line-height: 1.4;
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .mk {
+  --mk-lift:
+    0 1px 2px rgb(0 0 0 / 30%), 0 8px 20px -6px rgb(0 0 0 / 45%), 0 32px 64px -24px rgb(0 0 0 / 70%);
+  --mk-float:
+    0 2px 4px rgb(0 0 0 / 35%), 0 18px 36px -10px rgb(0 0 0 / 55%),
+    0 48px 90px -30px rgb(134 166 242 / 30%);
+}
+
+.mk svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
+.mk-win {
+  background: var(--mk-paper);
+  border: 1px solid var(--mk-edge);
+  border-radius: 0.9em;
+  box-shadow: var(--mk-lift);
+}
+
+.mk-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.6em 0.9em;
+  border-bottom: 1px solid var(--mk-edge);
+  font-size: 0.85em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.mk-bar i {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.mk-bar span {
+  margin-left: 0.5em;
+}
+
+.mk-line {
+  display: block;
+  height: 0.55em;
+  margin-top: 0.4em;
+  border-radius: 1em;
+  background: var(--grid);
+}
+
+/* Rules */
+.mk-rules {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0 0 1.5em;
+}
+
+.mk-main {
+  width: 76%;
+  transform: perspective(1800px) rotateX(4deg) rotateY(7deg);
+  transform-origin: left center;
+}
+
+.mk-body {
+  padding: 1.1em 1.3em 0.4em;
+}
+
+.mk-from {
+  display: flex;
+  gap: 0.8em;
+  align-items: center;
+  padding-bottom: 1em;
+}
+
+.mk-from strong {
+  font-size: 1.1em;
+}
+
+.mk-ico {
+  display: grid;
+  place-items: center;
+  width: 2.3em;
+  height: 2.3em;
+  border: 1px solid var(--c);
+  border-radius: 0.55em;
+}
+
+.mk-ico svg {
+  width: 1.3em;
+  height: 1.3em;
+}
+
+.mk-dir {
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr);
+  gap: 0.7em 1em;
+  align-items: center;
+  padding: 1em 0;
+  border-top: 1px solid var(--mk-edge);
+}
+
+.mk-to {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  font-weight: 650;
+}
+
+.mk-to i {
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 0.15em;
+  background: var(--c);
+}
+
+.mk-arrow {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.mk-seg {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line-strong);
+  border-radius: 0.6em;
+  overflow: visible;
+  max-width: 26em;
+}
+
+.mk-opt {
+  position: relative;
+  z-index: 1;
+  padding: 0.45em 0.2em;
+  text-align: center;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.mk-opt + .mk-opt {
+  border-left: 1px solid var(--mk-edge);
+}
+
+.mk-static .mk-on {
+  background: var(--mk-ink);
+  color: var(--mk-paper);
+  font-weight: 600;
+}
+
+.mk-pill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 25%;
+  background: var(--mk-ink);
+  animation: mk-slide var(--mk-cycle) infinite;
+}
+
+.mk-seg .mk-opt.mk-p0,
+.mk-seg .mk-opt.mk-p1,
+.mk-seg .mk-opt.mk-p2,
+.mk-seg .mk-opt.mk-p3 {
+  animation: mk-ink-on var(--mk-cycle) infinite;
+}
+
+/* The track is as wide as one option, so a translate of 100% moves the cursor by one option. */
+.mk-track {
+  position: absolute;
+  z-index: 2;
+  inset: 0 auto 0 0;
+  width: 25%;
+  pointer-events: none;
+  animation: mk-point var(--mk-cycle) infinite;
+}
+
+.mk-cursor {
+  position: absolute;
+  top: 55%;
+  left: 56%;
+  width: 1.6em;
+  height: 1.6em;
+  animation: mk-click calc(var(--mk-cycle) / 4) infinite;
+}
+
+.mk-cursor svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 2px 2px rgb(0 0 0 / 25%));
+}
+
+.mk-there {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-height: 2em;
+}
+
+.mk-label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.mk-chips {
+  display: grid;
+}
+
+.mk-chips > * {
+  grid-area: 1 / 1;
+  animation: mk-show var(--mk-cycle) infinite;
+}
+
+.mk-chip {
+  justify-self: start;
+  padding: 0.2em 0.65em;
+  border-radius: 0.45em;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.mk-none {
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+}
+
+.mk-busy {
+  border: 1px solid var(--private);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--private) 22%, var(--mk-paper)) 0 0.35em,
+    var(--mk-paper) 0.35em 0.7em
+  );
+}
+
+.mk-full {
+  background: var(--private);
+  color: var(--on-c);
+  border: 1px solid var(--private);
+}
+
+/* Phase i shows from i * 3s to i * 3s + 3s of the 12s cycle. */
+.mk-p0 {
+  animation-delay: 0s !important;
+}
+
+.mk-p1 {
+  animation-delay: -9s !important;
+}
+
+.mk-p2 {
+  animation-delay: -6s !important;
+}
+
+.mk-p3 {
+  animation-delay: -3s !important;
+}
+
+.mk-matrix {
+  position: absolute;
+  right: 0;
+  top: 2.2em;
+  width: 36%;
+  box-shadow: var(--mk-float);
+  transform: perspective(1400px) rotateY(-14deg) rotateX(6deg) translateZ(40px);
+}
+
+.mk-grid {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  gap: 0.35em;
+  padding: 0.9em;
+  font-size: 0.85em;
+}
+
+.mk-h {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mk-h::before {
+  content: "";
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 0.15em;
+  background: var(--c);
+}
+
+.mk-cell {
+  display: grid;
+  place-items: center;
+  min-height: 2.6em;
+  border-radius: 0.45em;
+  background: color-mix(in srgb, var(--accent) 16%, var(--mk-paper));
+  font-weight: 600;
+}
+
+.mk-self {
+  background: repeating-linear-gradient(135deg, var(--grid) 0 0.3em, var(--mk-paper) 0.3em 0.6em);
+}
+
+.mk-live {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent-ink);
+}
+
+.mk-live > span {
+  grid-area: 1 / 1;
+  animation: mk-show var(--mk-cycle) infinite;
+}
+
+@keyframes mk-show {
+  0%,
+  23% {
+    opacity: 1;
+    transform: none;
+  }
+
+  25%,
+  98% {
+    opacity: 0;
+    transform: translateY(0.25em);
+  }
+
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mk-ink-on {
+  0%,
+  23% {
+    color: var(--mk-paper);
+  }
+
+  25%,
+  98% {
+    color: var(--mk-ink);
+  }
+
+  100% {
+    color: var(--mk-paper);
+  }
+}
+
+@keyframes mk-slide {
+  0%,
+  23% {
+    translate: 0;
+  }
+
+  25%,
+  48% {
+    translate: 100%;
+  }
+
+  50%,
+  73% {
+    translate: 200%;
+  }
+
+  75%,
+  98% {
+    translate: 300%;
+  }
+
+  100% {
+    translate: 0;
+  }
+}
+
+@keyframes mk-point {
+  0%,
+  20% {
+    translate: 0;
+  }
+
+  25%,
+  45% {
+    translate: 100%;
+  }
+
+  50%,
+  70% {
+    translate: 200%;
+  }
+
+  75%,
+  95% {
+    translate: 300%;
+  }
+
+  100% {
+    translate: 0;
+  }
+}
+
+/* A click just before the cursor moves on. */
+@keyframes mk-click {
+  0%,
+  64% {
+    scale: 1;
+  }
+
+  72% {
+    scale: 0.82;
+  }
+
+  80%,
+  100% {
+    scale: 1;
+  }
+}
+
+/* Block group */
+.mk-group {
+  --mk-hour: 2.2em;
+  position: relative;
+  padding: 0 0 1em;
+}
+
+.mk-tag {
+  display: inline-block;
+  margin: 0 0 1em;
+  padding: 0.25em 0.8em;
+  border: 1px solid var(--line-strong);
+  border-radius: 1em;
+  background: var(--mk-paper);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.mk-fan {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 0.85fr);
+  gap: 0.9em;
+  align-items: start;
+}
+
+.mk-fan {
+  transform: perspective(1600px) rotateX(10deg) rotateY(-12deg);
+  transform-style: preserve-3d;
+}
+
+.mk-cal-1 {
+  translate: 0 1.2em;
+  box-shadow: var(--mk-float);
+}
+
+.mk-cal-2 {
+  translate: 0 2.4em;
+}
+
+.mk-cal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.55em 0.7em;
+  border-bottom: 1px solid var(--mk-edge);
+  font-weight: 650;
+  font-size: 0.95em;
+  white-space: nowrap;
+}
+
+.mk-cal-head i {
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 0.15em;
+  background: var(--c);
+}
+
+.mk-hours {
+  position: relative;
+  height: calc(var(--mk-hour) * 9);
+  margin: 0.5em;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--mk-hour) - 1px),
+    var(--line) calc(var(--mk-hour) - 1px) var(--mk-hour)
+  );
+}
+
+.mk-ev {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--row) * var(--mk-hour) + 2px);
+  height: calc(var(--len) * var(--mk-hour) - 4px);
+  padding: 0.2em 0.45em;
+  border-radius: 0.4em;
+  font-size: 0.82em;
+  font-weight: 600;
+  overflow: hidden;
+  animation: mk-pop 9s infinite both;
+}
+
+.mk-own {
+  background: var(--c);
+  color: var(--on-c);
+  box-shadow: 0 4px 10px -4px color-mix(in srgb, var(--c) 70%, transparent);
+}
+
+.mk-copy {
+  border: 1px solid var(--c);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--c) 22%, var(--mk-paper)) 0 0.35em,
+    var(--mk-paper) 0.35em 0.7em
+  );
+}
+
+/* Step s: the meeting appears at s * 2.2s, its copies 0.5s later. */
+.mk-own.mk-s0 {
+  animation-delay: 0s;
+}
+
+.mk-copy.mk-s0 {
+  animation-delay: 0.5s;
+}
+
+.mk-own.mk-s1 {
+  animation-delay: 2.2s;
+}
+
+.mk-copy.mk-s1 {
+  animation-delay: 2.7s;
+}
+
+.mk-own.mk-s2 {
+  animation-delay: 4.4s;
+}
+
+.mk-copy.mk-s2 {
+  animation-delay: 4.9s;
+}
+
+@keyframes mk-pop {
+  0% {
+    opacity: 0;
+    scale: 0.7;
+  }
+
+  5%,
+  88% {
+    opacity: 1;
+    scale: 1;
+  }
+
+  95%,
+  100% {
+    opacity: 0;
+    scale: 1;
+  }
+}
+
+.mk-sub {
+  border-style: dashed;
+  box-shadow: none;
+  margin-top: 2em;
+}
+
+.mk-sub p {
+  margin: 0.5em 0.7em 0;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
+.mk-sub .mk-hours {
+  height: calc(var(--mk-hour) * 5);
+}
+
+.mk-feed {
+  border: 1px dashed var(--line-strong);
+  animation: none;
+}
+
+@media (max-width: 900px) {
+  .mk {
+    font-size: 13px;
+  }
+
+  .mk-main {
+    width: 100%;
+  }
+
+  .mk-matrix {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: 78%;
+    margin: -0.8em 0 0 auto;
+  }
+
+  .mk-dir {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mk-there {
+    grid-column: 1;
+  }
+
+  .mk-fan {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mk-sub {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk *,
+  .mk *::before {
+    animation: none !important;
+  }
+
+  .mk-pill {
+    translate: 100%;
+  }
+
+  .mk-track {
+    translate: 100%;
+  }
+
+  .mk-seg .mk-opt.mk-p1 {
+    color: var(--mk-paper);
+  }
+
+  .mk-chips > :not(.mk-p1),
+  .mk-live > :not(.mk-p1) {
+    visibility: hidden;
+  }
+}

@@ -29,7 +29,8 @@ The site and its documentation use PostHog (EU Cloud, Frankfurt) for statistics.
   statistics. A visitor gets no persistent ID. PostHog builds a hash from IP address, user agent
   and a daily salt, and the hash changes every day.
 - The site records page views and these events: a click on a "Deploy to Cloudflare" button or
-  link, a click on the main button of the home page, and a sign-up sent from the waitlist form.
+  link, a click on a quickstart button of the home page, a click on the home page button that
+  leads to the waitlist, and a sign-up sent from the waitlist form.
 - Each event carries the page URL and the referring page, both without query string, fragment or
   campaign parameters, and technical data such as browser, operating system, screen size,
   language and time zone. The sign-up event carries no email address, no token and no answer of

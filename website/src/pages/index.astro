@@ -1,14 +1,27 @@
 ---
 import Demo from "../components/Demo.astro";
 import DetailPicker from "../components/DetailPicker.astro";
-import Iso from "../components/Iso.astro";
-import Logo from "../components/Logo.astro";
-import SlotField from "../components/SlotField.astro";
-import { icons } from "../iso-scenes";
+import GroupMock from "../components/mock/GroupMock.astro";
+import RulesMock from "../components/mock/RulesMock.astro";
+import WaitlistForm from "../components/WaitlistForm.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { detail, guides, hero, how, pillars } from "../home-content";
-import { cloudflare, github } from "../icons";
+import { detail, guides, hero, more } from "../home-content";
+import { github, google, microsoft } from "../icons";
 import { previewAlt, previewHeight, previewWidth, repo } from "../site";
+import {
+  blocks,
+  hosted,
+  neverStored,
+  neverStoredNote,
+  permissions,
+  setup,
+  signInScopes,
+  stored,
+  storedNote,
+  where,
+} from "../trust-content";
+import { waitlist } from "../waitlist-config";
+import "../styles/landing.css";
 
 // The search title is short enough for a result page (about 60 characters). Link previews keep
 // the hero headline as their title.
@@ -30,16 +43,7 @@ const heroSub = latency
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const page = (path: string) => `${base}/${path}`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
-const pillar = (key: string) => pillars.find((item) => item.key === key)!;
 const preview = new URL(page("social-preview.png"), Astro.site);
-
-// The waitlist form shows only if both build variables are set. Without them nothing renders.
-const waitlistUrl = (import.meta.env.PUBLIC_WAITLIST_URL as string | undefined)
-  ?.trim()
-  .replace(/\/$/, "");
-const turnstileKey = (import.meta.env.PUBLIC_TURNSTILE_SITE_KEY as string | undefined)?.trim();
-// An address without https:// would make a relative endpoint, so it counts as unset.
-const waitlist = Boolean(waitlistUrl?.startsWith("https://") && turnstileKey);
 
 // release-please writes CHANGELOG.md at the repository root with the first release.
 const changelogs = import.meta.glob<string>("../../../CHANGELOG.md", {
@@ -102,96 +106,139 @@ const structuredDataJson = JSON.stringify(structuredData).replace(/</g, "\\u003c
     <script type="application/ld+json" is:inline set:html={structuredDataJson} />
   </Fragment>
 
-  <div class="hero on-deep">
-    <SlotField id="hero-field" class="slot-field" />
-    <div class="hero-inner">
+  <div class="hero">
+    <div class="wrap hero-grid">
       <div>
-        <span class="eyebrow">Open source · Self-hosted</span>
         <h1>{hero.title}</h1>
         <p class="sub">{heroSub}</p>
         <div class="buttons">
           <a class="button primary" href={page("docs/quickstart/")} data-track="quickstart_click"
-            ><Fragment set:html={cloudflare} />Start the quickstart</a
+            >Set it up yourself</a
           >
-          <a class="button outline" href={repo}><Fragment set:html={github} />View on GitHub</a>
+          {
+            waitlist && (
+              <a class="button" href="#waitlist" data-track="waitlist_jump">
+                Join the hosted waitlist
+              </a>
+            )
+          }
         </div>
-        <p class="free">{hero.free}</p>
+        <p class="fine">
+          {hero.free}{" "}
+          <a href={repo}><Fragment set:html={github} />Source on GitHub</a>
+        </p>
       </div>
-      <div class="hero-stage">
-        <span class="badge hatched b1" style="--c:var(--work)"
-          ><i></i>“Busy” by default</span
-        >
-        <span class="badge late b2"><i></i>Copies follow a moved meeting</span>
-        <div class="hero-card"><Demo /></div>
-      </div>
+      <div class="frame"><Demo /></div>
     </div>
   </div>
 
-  <section class="show">
-    <div class="card card-vermilion wide on-deep">
-      <div class="card-text">
-        <h2 class="loud">{detail.title}</h2>
-        <p>{detail.lead}</p>
-        <p>{pillar("privacy").text}</p>
-      </div>
-      <div class="mock">
-        <div class="window"><DetailPicker /></div>
-        <span class="badge late" style="--c:var(--private)"><i></i>{pillar("privacy").title}</span>
-      </div>
+  <section class="split">
+    <div class="split-text">
+      <h2>{detail.title}</h2>
+      <p>{detail.lead}</p>
+      <p class="muted">Try it: pick a level and see what the copy shows in the other calendar.</p>
     </div>
-
-    <div class="card card-blue on-deep">
-      <div class="card-text">
-        <h2 class="loud">{pillar("moves").title}</h2>
-        <p>{pillar("moves").text}</p>
-      </div>
-      <div class="mock iso-mock" aria-hidden="true">
-        <span class="badge b-top" style="--c:var(--work)"><i></i>Moved to Thursday</span>
-        <span class="badge hatched late b-bottom" style="--c:var(--work)"
-          ><i></i>The copy moves too</span
-        >
-        <Iso boxes={icons.moves!} id="iso-moves" class="iso" scale={30} />
-      </div>
-    </div>
-
-    <div class="card card-green on-deep">
-      <div class="card-text">
-        <h2 class="loud">{pillar("more").title}</h2>
-        <p>{pillar("more").text}</p>
-      </div>
-      <div class="mock iso-mock" aria-hidden="true">
-        <span class="badge b-top" style="--c:var(--work)"><i></i>Work</span>
-        <span class="badge late b-side" style="--c:var(--client)"><i></i>Client</span>
-        <span class="badge b-bottom" style="--c:var(--private)"><i></i>Team fixtures</span>
-        <Iso boxes={icons.more!} id="iso-more" class="iso" scale={30} />
-      </div>
-    </div>
+    <div class="frame"><DetailPicker /></div>
   </section>
 
   <section>
-    <h2 class="loud center rule">{how.title}</h2>
-    <p class="lead center">
-      {how.lead}{" "}
-      <a href={page(how.link.slug)}>{how.link.text}</a>
+    <figure
+      class="mock-figure"
+      role="img"
+      aria-label="A mockup of the rules page. For events from Work, a cursor picks a level for Personal: Not, As busy, With title, Everything. The preview of the copy and the overview change with it."
+    >
+      <RulesMock />
+    </figure>
+  </section>
+
+  <section class="split split-even">
+    <div class="split-text">
+      <h2>{more.title}</h2>
+      <p>{more.text}</p>
+    </div>
+    <figure
+      class="mock-figure"
+      role="img"
+      aria-label="A mockup of a block group: Work, Client and Private. Each meeting appears in its own calendar, then as a busy copy in the other two. A subscribed team calendar is only read."
+    >
+      <GroupMock />
+    </figure>
+  </section>
+
+  <section id="trust">
+    <h2>Before you connect a calendar</h2>
+    <p class="lead">{where}</p>
+    <div class="trust">
+      <div class="trust-col">
+        <h3>What it asks for</h3>
+        <ul class="scopes">
+          {
+            permissions.map((item) => (
+              <li>
+                <span class="provider">
+                  <Fragment set:html={item.provider === "Google" ? google : microsoft} />
+                  <code>{item.scope}</code>
+                </span>
+                <span class="muted">{item.why}</span>
+              </li>
+            ))
+          }
+        </ul>
+        <p class="small">{signInScopes}</p>
+        <p class="small">{blocks}</p>
+      </div>
+      <div class="trust-col">
+        <h3>What the database holds</h3>
+        <ul class="plain-list">{stored.map((item) => <li>{item}</li>)}</ul>
+        <p class="small">
+          {storedNote} <a href={page("docs/privacy/")}>Privacy and data location</a>
+        </p>
+      </div>
+      <div class="trust-col">
+        <h3>What it never stores</h3>
+        <ul class="struck">{neverStored.map((item) => <li>{item}</li>)}</ul>
+        <p class="small">{neverStoredNote}</p>
+        <p class="small">
+          <a href={page("docs/privacy/")}>Privacy and data location</a>{" "}
+          <span aria-hidden="true">·</span>{" "}
+          <a href={repo}>Read the code</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="paths">
+    <h2>Two ways to run it</h2>
+    <div class="paths">
+      <div class="path">
+        <p class="tag tag-ok">Available now</p>
+        <h3>Run it yourself</h3>
+        <p>What you need:</p>
+        <ul class="plain-list">{setup.needs.map((item) => <li>{item}</li>)}</ul>
+        <p class="muted">{setup.effort}</p>
+        <div class="buttons">
+          <a class="button primary" href={page("docs/quickstart/")} data-track="quickstart_click"
+            >Open the quickstart</a
+          >
+          <a class="button" href={page("guides/self-hosted-calendar-sync/")}
+            >What self-hosting means</a
+          >
+        </div>
+      </div>
+      <div class="path" id="waitlist">
+        <p class="tag">{hosted.status}</p>
+        <h3>{hosted.title}</h3>
+        <p>{waitlist ? `${hosted.text} ${hosted.join}` : hosted.text}</p>
+        {waitlist ? <WaitlistForm /> : <p class="muted">The waitlist opens soon.</p>}
+      </div>
+    </div>
+    <p class="small">
+      slotmirror is below 1.0. Settings and the database can still change between releases.
     </p>
-    <ol class="steps">
-      {
-        how.steps.map((step, index) => (
-          <li>
-            <span class="num">{index + 1}</span>
-            <div>
-              <h3>{step.title}</h3>
-              <p>{step.text}</p>
-            </div>
-          </li>
-        ))
-      }
-    </ol>
-    <p class="small center">{how.note}</p>
   </section>
 
   <section id="guides">
-    <h2 class="loud center rule">Start from your situation</h2>
+    <h2>Guides for common setups</h2>
     <ul class="guide-list">
       {
         guides.map((guide) => (
@@ -212,7 +259,7 @@ const structuredDataJson = JSON.stringify(structuredData).replace(/</g, "\\u003c
   {
     latest && (
       <section id="changelog">
-        <h2 class="loud rule">Changelog</h2>
+        <h2>Changelog</h2>
         <p class="changes">
           <span class="version">{latest[1]}</span>
           <time datetime={latest[2]}>{latest[2]}</time>
@@ -222,68 +269,4 @@ const structuredDataJson = JSON.stringify(structuredData).replace(/</g, "\\u003c
     )
   }
 
-  {
-    waitlist && (
-      <section id="waitlist">
-        <h2 class="loud rule">Not available yet</h2>
-        <p class="lead">
-          A hosted slotmirror does not exist yet. Leave your address to hear when it opens.
-          Joining the list is not a purchase.
-        </p>
-        <form
-          class="waitlist"
-          id="waitlist-form"
-          method="post"
-          hidden
-          data-endpoint={`${waitlistUrl}/api/signup`}
-          data-site-key={turnstileKey}
-        >
-          <label for="waitlist-email">Email address</label>
-          <div class="waitlist-row">
-            <input
-              id="waitlist-email"
-              name="email"
-              type="email"
-              autocomplete="email"
-              inputmode="email"
-              maxlength="254"
-              required
-              aria-describedby="waitlist-status"
-            />
-            <button class="button primary" type="submit" id="waitlist-submit">
-              Join the waitlist
-            </button>
-          </div>
-          <div id="waitlist-widget" class="waitlist-widget" />
-          <p id="waitlist-status" class="waitlist-status" role="status" aria-live="polite" />
-          <p class="note">
-            We use your address only for this list. We send one mail to confirm it. You can
-            unsubscribe from that mail. <a href={page("privacy/")}>Privacy notice</a>
-          </p>
-        </form>
-      </section>
-    )
-  }
-
-  <section>
-    <div class="cta-card on-deep">
-      <SlotField id="cta-field" class="slot-field" cols={16} rows={9} />
-      <div class="eyes" data-eyes><Logo id="logo-big" /></div>
-      <div class="cta-text">
-        <h2 class="loud">Your calendars keep an eye on each other.</h2>
-        <p>{hero.free}</p>
-        <div class="buttons">
-          <a class="button primary" href={page("docs/quickstart/")}
-            ><Fragment set:html={cloudflare} />Start the quickstart</a
-          >
-          <a class="button outline" href={repo}><Fragment set:html={github} />View on GitHub</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <script>
-    // The waitlist code loads only if this build renders the form.
-    if (document.querySelector("#waitlist-form")) void import("../scripts/waitlist");
-  </script>
 </SiteLayout>

@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { languageDetector } from "hono/language";
+import { routePath } from "hono/route";
 import * as z from "zod/mini";
 import { alertsConfigured, sendTestAlert, TEST_ALERT_OUTCOMES } from "./alerts";
 import { revokeUserTokens } from "./api-tokens";
@@ -631,9 +632,9 @@ app.post("/admin/mcp-policy", async (c) => {
 // and a SyntaxError can quote the input. See `errorFields`.
 app.onError((error, c) => {
   if (error instanceof HTTPException) return error.getResponse();
-  // The route pattern, not the path: a path can hold a calendar ID, and an OAuth callback carries
-  // its code in the query.
-  log.error("request.failed", { method: c.req.method, route: c.req.routePath }, error);
+  // The route pattern of the last matched handler, not the path: a path can hold a calendar ID,
+  // and an OAuth callback carries its code in the query.
+  log.error("request.failed", { method: c.req.method, route: routePath(c, -1) }, error);
   const { t } = i18nFromContext(c);
   if (c.req.header("x-fragment") === "1") return c.text(t.messages.errorText, 500);
   return render(

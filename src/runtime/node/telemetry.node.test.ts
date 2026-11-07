@@ -15,7 +15,8 @@ describe("the Node telemetry adapter", () => {
     const id = await startRequest("cron", async () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
       const error = new Error("secret for alice@corp.example");
-      log.error("test.failed", { accountId: "a-1" }, error);
+      // A field named like the timestamp does not replace it.
+      log.error("test.failed", { accountId: "a-1", time: "x" }, error);
       return requestId();
     });
     expect(lines).toHaveLength(1);

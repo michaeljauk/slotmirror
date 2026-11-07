@@ -84,6 +84,8 @@ export function rawErrorLogs(source: string): string[] {
     const named = [event, fields, ...extra].join(", ").replace(SAFE_CALLS, "");
     if (/\.(message|stack)\b/.test(named) || word.test(named)) found.push(`log(${named})`);
     if (error !== undefined && !/^\w+$/.test(error)) found.push(`log(..., ${error})`);
+    // A remote calendar ID is often an email address; log IDs of slotmirror instead.
+    if (/\b(?:calendarId|remoteCalendarId|email)\b/.test(fields)) found.push(`log(${fields})`);
   }
   // `.catch(console.error)` passes the raw error as the argument.
   for (const m of code.matchAll(/\.catch\(\s*console\.\w+\s*\)/g)) found.push(m[0]);
@@ -161,6 +163,8 @@ describe("log hygiene", () => {
     expect(rawErrorLogs('log.error("x.y", {}, error.message);')).toHaveLength(1);
     expect(rawErrorLogs('log.error("x.y", { code: errorCode(error) }, error);')).toHaveLength(0);
     expect(rawErrorLogs('log.with({ id }).error("x.y", { text: e.message });')).toHaveLength(1);
+    expect(rawErrorLogs('log.error("x.y", { calendarId }, error);')).toHaveLength(1);
+    expect(rawErrorLogs('log.warn("x.y", { email: user.email });')).toHaveLength(1);
     expect(rawErrorLogs("try { x(); } catch (boom) { log.error('x.y', { boom }); }")).toHaveLength(
       1,
     );

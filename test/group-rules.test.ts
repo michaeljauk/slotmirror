@@ -512,6 +512,7 @@ describe("unexpected errors", () => {
     expect(errors).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "request.failed",
+        route: "/rules",
         // The request middleware gave the request its ID.
         requestId: expect.stringMatching(/^[0-9a-f]{16}$/),
         trigger: "http",

@@ -555,6 +555,13 @@ h2 {
   background: var(--accent-hover);
 }
 
+/* Held or not allowed: it looks off and takes no hover. */
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
 .link-button {
   border: 0;
   background: none;
@@ -2977,24 +2984,128 @@ details.swatch > summary::-webkit-details-marker {
   user-select: all;
 }
 
+/* Consent to connect an app: a step outside the app, framed like the sign-in page. */
+
 .consent .card {
-  max-width: 560px;
-  padding: 24px;
+  padding: 28px;
+  text-align: left;
 }
 
-.consent-list {
-  margin: 0 0 16px;
-  padding-left: 20px;
-  color: var(--text);
+.consent .card > h1,
+.consent .card > .lead {
+  text-align: center;
 }
 
-.consent-list li {
-  margin: 4px 0;
+/* The app chose its name: a long one without spaces must not widen the page. */
+.consent .card > .lead {
+  overflow-wrap: anywhere;
+}
+
+.consent h1 {
+  margin-bottom: 4px;
+}
+
+/* The app and slotmirror, joined. */
+.consent-pair {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.consent-tile {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.consent-tile.app {
+  background: #efeee9;
+  color: var(--muted);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.consent-link {
+  width: 44px;
+  border-top: 2px dashed var(--line-strong);
+}
+
+.consent-body {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.consent-label {
+  font-weight: 600;
+}
+
+.consent-label .badge {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.consent-checks {
+  margin: 8px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.consent-checks li {
+  display: flex;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.consent-check {
+  flex: none;
+  margin-top: 3px;
+  color: var(--ok);
+}
+
+.consent-meta {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.consent-meta .link-button {
+  color: var(--accent);
+  font-size: inherit;
+}
+
+.consent-switch {
+  white-space: nowrap;
 }
 
 .consent-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.consent-actions .button {
+  justify-content: center;
+  height: 40px;
+}
+
+@media (max-width: 560px) {
+  .consent .card {
+    padding: 22px 18px;
+  }
+
+  .consent-actions {
+    grid-template-columns: 1fr;
+  }
 }

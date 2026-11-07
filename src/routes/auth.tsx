@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { RESUME_COOKIE, resumeTarget } from "../mcp-oauth";
+import { RESUME_COOKIE, resumePath, resumeTarget } from "../mcp-oauth";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
 import { errorLogFields, recordAudit } from "../audit";
@@ -182,7 +182,10 @@ auth.post("/logout", async (c) => {
   const user = c.get("user");
   if (user) await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_out" });
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
-  return c.redirect("/");
+  // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
+  // the next sign-in. Only a path of the authorization endpoint passes.
+  const form = await c.req.parseBody();
+  return c.redirect(resumePath(form.resume) ?? "/");
 });
 
 auth.get("/:provider/login", async (c) => {

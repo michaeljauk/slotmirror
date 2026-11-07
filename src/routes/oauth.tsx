@@ -177,10 +177,10 @@ oauthPages.get("/authorize", async (c) => {
     return problem(c, 400, message);
   }
   const user = c.get("user");
+  const url = new URL(c.req.url);
+  const path = `${url.pathname}${url.search}`;
   if (!user) {
     // Sign in first, then come back to this request. The cookie holds only this path, signed.
-    const url = new URL(c.req.url);
-    const path = `${url.pathname}${url.search}`;
     // A browser drops a cookie over 4 KB. A longer request signs in and goes home instead.
     if (path.length > 2000) return c.redirect("/");
     setCookie(c, RESUME_COOKIE, await signResume(c.env, path), {
@@ -205,6 +205,7 @@ oauthPages.get("/authorize", async (c) => {
       user={user}
       appName={request.client.name}
       returnsTo={new URL(request.redirectUri).host}
+      resume={path}
       ticket={await signConsentTicket(c.env, user.id, request)}
     />,
   );

@@ -415,6 +415,10 @@ export const de: Messages = {
   },
   consent: {
     title: "App verbinden",
+    signedInAs: (email: string) => `Angemeldet als ${email}`,
+    readOnly: "Nur lesen",
+    readsLabel: "Darf lesen",
+    notYou: "Nicht du?",
     asks: (name: string) => `„${name}“ möchte deine slotmirror-Daten lesen.`,
     can: [
       "Deine verbundenen Konten und ob eines neu verbunden werden muss.",

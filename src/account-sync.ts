@@ -3,7 +3,6 @@ import {
   accountOwner,
   auditStatement,
   errorCode,
-  errorLogFields,
   recordAudit,
   recordAuditChecked,
   runsWithOutcome,
@@ -92,6 +91,7 @@ import {
   throttleDelayMs,
   type BatchResult,
 } from "./sync/throttle";
+import { carrier, log, resumeRequest, startRequest, type Carrier } from "./telemetry";
 import type { ExistingBlock, SourceEvent, SyncPlan } from "./sync/types";
 import { decryptJson, encryptJson } from "./token-crypto";
 import { detailLevelFor } from "./detail-policy";
@@ -669,19 +669,29 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /**
+   * Runs `fn` as part of the caller's request, so that its log lines carry the caller's request
+   * ID and this account. A call from another method of this instance stays in its own request.
+   */
+  private inRequest<T>(from: Carrier | undefined, fn: () => Promise<T>): Promise<T> {
+    return resumeRequest(from, fn, { accountId: this.ctx.id.name });
+  }
+
+  /**
    * Ask for a full cycle soon. Repeated calls before the alarm fires do not move it. During a
    * cycle, the alarm goes on with the queue, and one full cycle follows for all calls together.
    */
-  async requestSync(): Promise<void> {
-    // A new cycle starts from the provider's current data.
-    this.sourceCache.clear();
-    const pending = await this.pendingAlarm();
-    await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
-    await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
-    // While paused, the mark waits for the alarm that new tokens start.
-    if (pending === null && !(await this.pause())) {
-      await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
-    }
+  async requestSync(from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      // A new cycle starts from the provider's current data.
+      this.sourceCache.clear();
+      const pending = await this.pendingAlarm();
+      await this.ctx.storage.delete(FEED_ONLY_ALARM_KEY);
+      await this.ctx.storage.put(CYCLE_AGAIN_KEY, true);
+      // While paused, the mark waits for the alarm that new tokens start.
+      if (pending === null && !(await this.pause())) {
+        await this.ctx.storage.setAlarm(Date.now() + this.delays().debounce);
+      }
+    });
   }
 
   /**
@@ -689,65 +699,67 @@ export class AccountSync extends DurableObject<Env> {
    * rules whose source or target calendar has no active watch; changes to watched calendars
    * arrive as notifications. Without PUBLIC_URL no calendar is watched, so every tick polls all.
    */
-  async tick(): Promise<void> {
-    const accountId = this.accountIdOrNull();
-    if (!accountId) return;
-    await this.reportAbortedRuns(accountId, { retryAlerts: true });
-    await this.sendCompareAlerts(accountId);
-    // The pages show the D1 flag, so the pause follows it. A flag without a pause pauses and
-    // probes; a pause whose flag is gone, after its own D1 write, is stale and ends.
-    const row = await this.env.DB.prepare(
-      "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
-    )
-      .bind(accountId)
-      .first<{ flag: number }>();
-    let pause = await this.pause();
-    if (pause && !pause.flagPending && row?.flag === 0) {
-      await this.unpause();
-      return;
-    }
-    if (!pause && row?.flag === 1) pause = await this.pauseForStaleFlag(accountId);
-    if (pause) {
-      await this.failOpenCompares({ reason: "paused", code: pause.code });
-      await this.whilePaused(accountId, pause);
-      return;
-    }
-    await this.compareTick();
-    const lastFull = (await this.ctx.storage.get<number>(FULL_CYCLE_KEY)) ?? 0;
-    if (Date.now() - lastFull >= FULL_CYCLE_EVERY_MS) {
-      await this.requestSync();
-      return;
-    }
-    const now = Date.now();
-    // A requested full cycle runs every rule. Queued rules would run before it and delay it.
-    if (await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) {
-      if ((await this.pendingAlarm()) === null)
+  async tick(from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      const accountId = this.accountIdOrNull();
+      if (!accountId) return;
+      await this.reportAbortedRuns(accountId, { retryAlerts: true });
+      await this.sendCompareAlerts(accountId);
+      // The pages show the D1 flag, so the pause follows it. A flag without a pause pauses and
+      // probes; a pause whose flag is gone, after its own D1 write, is stale and ends.
+      const row = await this.env.DB.prepare(
+        "SELECT needs_reconnect AS flag FROM accounts WHERE id = ?",
+      )
+        .bind(accountId)
+        .first<{ flag: number }>();
+      let pause = await this.pause();
+      if (pause && !pause.flagPending && row?.flag === 0) {
+        await this.unpause();
+        return;
+      }
+      if (!pause && row?.flag === 1) pause = await this.pauseForStaleFlag(accountId);
+      if (pause) {
+        await this.failOpenCompares({ reason: "paused", code: pause.code });
+        await this.whilePaused(accountId, pause);
+        return;
+      }
+      await this.compareTick();
+      const lastFull = (await this.ctx.storage.get<number>(FULL_CYCLE_KEY)) ?? 0;
+      if (Date.now() - lastFull >= FULL_CYCLE_EVERY_MS) {
+        await this.requestSync();
+        return;
+      }
+      const now = Date.now();
+      // A requested full cycle runs every rule. Queued rules would run before it and delay it.
+      if (await this.ctx.storage.get<boolean>(CYCLE_AGAIN_KEY)) {
+        if ((await this.pendingAlarm()) === null)
+          await this.setSyncAlarm(now + this.delays().debounce);
+        return;
+      }
+      const { results } = await this.env.DB.prepare(
+        `SELECT r.id, ${OWNER_COLUMNS} FROM rules r
+         JOIN calendars sc ON sc.id = r.source_calendar_id
+         JOIN accounts sa ON sa.id = sc.account_id
+         JOIN calendars tc ON tc.id = r.target_calendar_id
+         JOIN users u ON u.id = r.user_id
+         JOIN orgs o ON o.id = u.org_id
+         WHERE tc.account_id = ? AND r.enabled = 1 AND sa.needs_reconnect = 0
+           AND (sc.watched_until IS NULL OR sc.watched_until < ?
+                OR tc.watched_until IS NULL OR tc.watched_until < ?)
+         ORDER BY r.id`,
+      )
+        .bind(accountId, now, now)
+        .all<{ id: string } & OwnerColumns>();
+      const due = results.filter(ownerAdmission(this.env)).map((row) => row.id);
+      if (due.length === 0) return;
+      await this.updateQueue<string>(RULE_QUEUE_KEY, (queue) =>
+        inPrecedenceOrder([...new Set([...queue, ...due])]),
+      );
+      this.sourceCache.clear();
+      if ((await this.pendingAlarm()) === null) {
         await this.setSyncAlarm(now + this.delays().debounce);
-      return;
-    }
-    const { results } = await this.env.DB.prepare(
-      `SELECT r.id, ${OWNER_COLUMNS} FROM rules r
-       JOIN calendars sc ON sc.id = r.source_calendar_id
-       JOIN accounts sa ON sa.id = sc.account_id
-       JOIN calendars tc ON tc.id = r.target_calendar_id
-       JOIN users u ON u.id = r.user_id
-       JOIN orgs o ON o.id = u.org_id
-       WHERE tc.account_id = ? AND r.enabled = 1 AND sa.needs_reconnect = 0
-         AND (sc.watched_until IS NULL OR sc.watched_until < ?
-              OR tc.watched_until IS NULL OR tc.watched_until < ?)
-       ORDER BY r.id`,
-    )
-      .bind(accountId, now, now)
-      .all<{ id: string } & OwnerColumns>();
-    const due = results.filter(ownerAdmission(this.env)).map((row) => row.id);
-    if (due.length === 0) return;
-    await this.updateQueue<string>(RULE_QUEUE_KEY, (queue) =>
-      inPrecedenceOrder([...new Set([...queue, ...due])]),
-    );
-    this.sourceCache.clear();
-    if ((await this.pendingAlarm()) === null) {
-      await this.setSyncAlarm(now + this.delays().debounce);
-    }
+      }
+    });
   }
 
   /**
@@ -767,23 +779,25 @@ export class AccountSync extends DurableObject<Env> {
    * alarm waits for a running write batch and for `Retry-After`, and one read covers a burst of
    * notifications. Without a known channel the sync starts at once.
    */
-  async googleChanged(channelId: string): Promise<void> {
-    const accountId = this.accountIdOrNull();
-    if (!accountId || (await this.retiring())) return;
-    const calendarId = this.storedWatches().find((watch) => watch.id === channelId)?.calendarId;
-    if (!calendarId) {
-      await notifyChange(this.env, accountId);
-      return;
-    }
-    const changed = { calendarId, notifiedAt: Date.now() };
-    // A queued calendar keeps its place, so that one calendar cannot hold back the others.
-    await this.updateQueue<ChangedCalendar | string>(CHANGED_CALENDARS_KEY, (stored) => {
-      const queue = stored.map(changedCalendar);
-      return queue.some((queued) => queued.calendarId === calendarId)
-        ? queue.map((queued) => (queued.calendarId === calendarId ? changed : queued))
-        : [...queue, changed];
+  async googleChanged(channelId: string, from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      const accountId = this.accountIdOrNull();
+      if (!accountId || (await this.retiring())) return;
+      const calendarId = this.storedWatches().find((watch) => watch.id === channelId)?.calendarId;
+      if (!calendarId) {
+        await notifyChange(this.env, accountId);
+        return;
+      }
+      const changed = { calendarId, notifiedAt: Date.now() };
+      // A queued calendar keeps its place, so that one calendar cannot hold back the others.
+      await this.updateQueue<ChangedCalendar | string>(CHANGED_CALENDARS_KEY, (stored) => {
+        const queue = stored.map(changedCalendar);
+        return queue.some((queued) => queued.calendarId === calendarId)
+          ? queue.map((queued) => (queued.calendarId === calendarId ? changed : queued))
+          : [...queue, changed];
+      });
+      await this.setCheckAlarm();
     });
-    await this.setCheckAlarm();
   }
 
   /**
@@ -793,16 +807,18 @@ export class AccountSync extends DurableObject<Env> {
    * check sees every write of an alarm. A manual run (`runRule` from the editor) is no alarm; for
    * its writes only the debounce delay gives that time.
    */
-  async graphChanged(eventIds: string[]): Promise<void> {
-    if (!this.accountIdOrNull() || (await this.retiring())) return;
-    const now = Date.now();
-    await this.ctx.blockConcurrencyWhile(async () => {
-      const queued =
-        (await this.ctx.storage.get<Record<string, number>>(NOTIFIED_EVENTS_KEY)) ?? {};
-      for (const id of eventIds) queued[id] = now;
-      await this.ctx.storage.put(NOTIFIED_EVENTS_KEY, queued);
+  async graphChanged(eventIds: string[], from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      if (!this.accountIdOrNull() || (await this.retiring())) return;
+      const now = Date.now();
+      await this.ctx.blockConcurrencyWhile(async () => {
+        const queued =
+          (await this.ctx.storage.get<Record<string, number>>(NOTIFIED_EVENTS_KEY)) ?? {};
+        for (const id of eventIds) queued[id] = now;
+        await this.ctx.storage.put(NOTIFIED_EVENTS_KEY, queued);
+      });
+      await this.setCheckAlarm();
     });
-    await this.setCheckAlarm();
   }
 
   /** Set an alarm for a change check, unless one is pending. It runs before any other work. */
@@ -921,7 +937,7 @@ export class AccountSync extends DurableObject<Env> {
         throttled = true;
         delayMs = throttleDelay;
       } else {
-        console.error("Reading the change feed failed", calendarId, ...errorLogFields(error));
+        log.error("feed.read_failed", { calendarId }, error);
       }
     }
     if (!throttled) {
@@ -952,7 +968,7 @@ export class AccountSync extends DurableObject<Env> {
       await this.ctx.storage.delete(SYNC_REQUEST_RETRY_KEY);
       return true;
     } catch (error) {
-      console.error("Requesting a sync after a change failed", ...errorLogFields(error));
+      log.error("sync.request_after_change_failed", {}, error);
       const failed = error instanceof SyncRequestError ? error.accountIds : undefined;
       const pending = await this.ctx.storage.get<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY);
       // A pending retry keeps its attempts and time, so that new changes cannot extend it.
@@ -985,13 +1001,10 @@ export class AccountSync extends DurableObject<Env> {
     } catch (error) {
       const attempts = retry.attempts + 1;
       if (attempts >= MAX_SYNC_REQUEST_ATTEMPTS) {
-        console.error(
-          "Requesting a sync after a change failed; giving up",
-          ...errorLogFields(error),
-        );
+        log.error("sync.request_after_change_given_up", { attempts }, error);
         await this.ctx.storage.delete(SYNC_REQUEST_RETRY_KEY);
       } else {
-        console.error("Requesting a sync after a change failed again", ...errorLogFields(error));
+        log.error("sync.request_after_change_failed", { attempts }, error);
         const accountIds = error instanceof SyncRequestError ? error.accountIds : retry.accountIds;
         await this.ctx.storage.put<SyncRequestRetry>(SYNC_REQUEST_RETRY_KEY, {
           ...(accountIds ? { accountIds } : {}),
@@ -1090,10 +1103,13 @@ export class AccountSync extends DurableObject<Env> {
     accountId: string,
     tokens: StoredTokens,
     provider: Provider = "microsoft",
+    from?: Carrier,
   ): Promise<void> {
-    await this.writeTokens(accountId, tokens, provider);
-    await this.endRetirement();
-    await this.unpause();
+    return this.inRequest(from, async () => {
+      await this.writeTokens(accountId, tokens, provider);
+      await this.endRetirement();
+      await this.unpause();
+    });
   }
 
   /** Replace the stored tokens. */
@@ -1241,7 +1257,7 @@ export class AccountSync extends DurableObject<Env> {
       const owner = await accountOwner(this.env.DB, accountId);
       if (owner) await recordAudit(this.env.DB, { ...owner, accountId, kind, detail });
     } catch (error) {
-      console.error("Audit lookup failed", kind, ...errorLogFields(error));
+      log.error("audit.owner_lookup_failed", { auditKind: kind }, error);
     }
   }
 
@@ -1260,7 +1276,7 @@ export class AccountSync extends DurableObject<Env> {
         !owner || (await recordAuditChecked(this.env.DB, { ...owner, accountId, kind, detail }))
       );
     } catch (error) {
-      console.error("Audit lookup failed", kind, ...errorLogFields(error));
+      log.error("audit.owner_lookup_failed", { auditKind: kind }, error);
       return false;
     }
   }
@@ -1324,7 +1340,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.refresh(stored.accountId, stored.provider, stored.tokens.refreshToken);
     } catch (error) {
-      console.error("Token probe failed", ...errorLogFields(error));
+      log.error("token.probe_failed", {}, error);
       return;
     }
     await this.unpause();
@@ -1335,9 +1351,11 @@ export class AccountSync extends DurableObject<Env> {
   }
 
   /** Delete tokens and subscriptions, and cancel a pending sync. */
-  async forget(): Promise<void> {
-    await this.stopWatches();
-    await this.wipe();
+  async forget(from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      await this.stopWatches();
+      await this.wipe();
+    });
   }
 
   private async wipe(): Promise<void> {
@@ -1362,11 +1380,11 @@ export class AccountSync extends DurableObject<Env> {
           await client.unwatch(watch);
           this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
         } catch (error) {
-          console.error("Stopping a watch failed", watch.id, ...errorLogFields(error));
+          log.error("watch.stop_failed", { watchId: watch.id }, error);
         }
       }
     } catch (error) {
-      console.error("Stopping watches failed", ...errorLogFields(error));
+      log.error("watch.stop_all_failed", {}, error);
     }
   }
 
@@ -1382,20 +1400,17 @@ export class AccountSync extends DurableObject<Env> {
     return (await this.ctx.storage.get(RETIREMENT_CHECK_KEY)) !== undefined;
   }
 
-  async listCalendars(): Promise<CalendarInfo[]> {
-    try {
-      return await (await this.client()).listCalendars();
-    } catch (error) {
-      // Logged here, where the error still has its class: over RPC the caller gets a plain Error,
-      // and a token code or a schema error loses its reason there.
-      console.error(
-        "Listing calendars failed",
-        this.accountIdOrNull(),
-        errorCode(error),
-        ...errorLogFields(error),
-      );
-      throw error;
-    }
+  async listCalendars(from?: Carrier): Promise<CalendarInfo[]> {
+    return this.inRequest(from, async () => {
+      try {
+        return await (await this.client()).listCalendars();
+      } catch (error) {
+        // Logged here, where the error still has its class: over RPC the caller gets a plain Error,
+        // and a token code or a schema error loses its reason there.
+        log.error("calendars.list_failed", { code: errorCode(error) }, error);
+        throw error;
+      }
+    });
   }
 
   /** Source events of one calendar of this account. Called by the target account's instance. */
@@ -1404,18 +1419,21 @@ export class AccountSync extends DurableObject<Env> {
     window: { start: Date; end: Date },
     withBody: boolean,
     options: { respectPenalty?: boolean } = {},
+    from?: Carrier,
   ): Promise<SourceEvent[]> {
-    // A read that respects the penalty fails differently, so it shares no cache entry with others.
-    const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}|${options.respectPenalty === true}`;
-    const cached = this.sourceCache.get(key);
-    if (cached && Date.now() - cached.at < SOURCE_CACHE_MS) return cached.events;
-    const events = this.client(options).then((client) =>
-      client.sourceEvents(remoteCalendarId, window, { withBody }),
-    );
-    this.sourceCache.set(key, { at: Date.now(), events });
-    // A failed read is not cached.
-    events.catch(() => this.sourceCache.delete(key));
-    return events;
+    return this.inRequest(from, async () => {
+      // A read that respects the penalty fails differently, so it shares no cache entry with others.
+      const key = `${remoteCalendarId}|${window.start.toISOString()}|${window.end.toISOString()}|${withBody}|${options.respectPenalty === true}`;
+      const cached = this.sourceCache.get(key);
+      if (cached && Date.now() - cached.at < SOURCE_CACHE_MS) return cached.events;
+      const events = this.client(options).then((client) =>
+        client.sourceEvents(remoteCalendarId, window, { withBody }),
+      );
+      this.sourceCache.set(key, { at: Date.now(), events });
+      // A failed read is not cached.
+      events.catch(() => this.sourceCache.delete(key));
+      return events;
+    });
   }
 
   /**
@@ -1426,29 +1444,32 @@ export class AccountSync extends DurableObject<Env> {
   async readCompareEvents(
     remoteCalendarId: string,
     window: { start: Date; end: Date },
+    from?: Carrier,
   ): Promise<CompareRead> {
-    // A quick answer before queueing; the queued call checks again, see `client()`.
-    const left = await this.penaltyLeft();
-    if (left > 0) return { kind: "throttled", retryAfterMs: left };
-    try {
-      const events = await this.readSourceEvents(remoteCalendarId, window, false, {
-        respectPenalty: true,
-      });
-      return { kind: "events", events };
-    } catch (error) {
-      if (error instanceof PenaltyActive) {
-        return { kind: "throttled", retryAfterMs: error.retryAfterMs };
+    return this.inRequest(from, async () => {
+      // A quick answer before queueing; the queued call checks again, see `client()`.
+      const left = await this.penaltyLeft();
+      if (left > 0) return { kind: "throttled", retryAfterMs: left };
+      try {
+        const events = await this.readSourceEvents(remoteCalendarId, window, false, {
+          respectPenalty: true,
+        });
+        return { kind: "events", events };
+      } catch (error) {
+        if (error instanceof PenaltyActive) {
+          return { kind: "throttled", retryAfterMs: error.retryAfterMs };
+        }
+        // `client()` has stored the penalty before the error reached this point.
+        const delay = throttleDelayMs(error);
+        if (delay !== null) return { kind: "throttled", retryAfterMs: delay };
+        const { status } = error as { status?: unknown };
+        if (status === 403 || status === 404 || status === 410) {
+          log.error("source.unavailable", { status }, error);
+          return { kind: "unavailable" };
+        }
+        throw error;
       }
-      // `client()` has stored the penalty before the error reached this point.
-      const delay = throttleDelayMs(error);
-      if (delay !== null) return { kind: "throttled", retryAfterMs: delay };
-      const { status } = error as { status?: unknown };
-      if (status === 403 || status === 404 || status === 410) {
-        console.error("A source calendar can no longer be read", ...errorLogFields(error));
-        return { kind: "unavailable" };
-      }
-      throw error;
-    }
+    });
   }
 
   /** Milliseconds left of the current provider penalty, or 0. */
@@ -1470,7 +1491,7 @@ export class AccountSync extends DurableObject<Env> {
       const current = (await this.ctx.storage.get<number>(THROTTLED_UNTIL_KEY)) ?? 0;
       if (until > current) await this.ctx.storage.put(THROTTLED_UNTIL_KEY, until);
     } catch (error) {
-      console.error("Recording a provider penalty failed", ...errorLogFields(error));
+      log.error("throttle.penalty_write_failed", {}, error);
     }
   }
 
@@ -1482,14 +1503,17 @@ export class AccountSync extends DurableObject<Env> {
     remoteCalendarId: string,
     window: { start: Date; end: Date },
     withBody: boolean,
+    from?: Carrier,
   ): Promise<SourceRead> {
-    try {
-      return { events: await this.readSourceEvents(remoteCalendarId, window, withBody) };
-    } catch (error) {
-      const waitMs = throttleDelayMs(error);
-      if (waitMs === null || !(error instanceof Error)) throw error;
-      return { throttled: { message: error.message, waitMs } };
-    }
+    return this.inRequest(from, async () => {
+      try {
+        return { events: await this.readSourceEvents(remoteCalendarId, window, withBody) };
+      } catch (error) {
+        const waitMs = throttleDelayMs(error);
+        if (waitMs === null || !(error instanceof Error)) throw error;
+        return { throttled: { message: error.message, waitMs } };
+      }
+    });
   }
 
   /** Local load tests only: replace this account's simulated events. */
@@ -1548,13 +1572,19 @@ export class AccountSync extends DurableObject<Env> {
    * Run one rule whose target calendar belongs to this account. With `dryRun`, plan only and
    * write nothing.
    */
-  async runRule(ruleId: string, options: { dryRun?: boolean } = {}): Promise<RunResult> {
-    if (options.dryRun) return this.runRuleOnce(ruleId, options);
-    // Two runs that overlap would plan the same creates and write every block twice, for example
-    // after a double click on "Run" or a click while the alarm runs the rule. A second run from the
-    // UI gets the result of the first, so that "Run" reports what was written. The alarm waits
-    // instead (`runRuleAfterOthers()`). A dry run writes nothing and never joins a real run.
-    return this.runningRules.get(ruleId) ?? this.startRun(ruleId);
+  async runRule(
+    ruleId: string,
+    options: { dryRun?: boolean } = {},
+    from?: Carrier,
+  ): Promise<RunResult> {
+    return this.inRequest(from, async () => {
+      if (options.dryRun) return this.runRuleOnce(ruleId, options);
+      // Two runs that overlap would plan the same creates and write every block twice, for example
+      // after a double click on "Run" or a click while the alarm runs the rule. A second run from the
+      // UI gets the result of the first, so that "Run" reports what was written. The alarm waits
+      // instead (`runRuleAfterOthers()`). A dry run writes nothing and never joins a real run.
+      return this.runningRules.get(ruleId) ?? this.startRun(ruleId);
+    });
   }
 
   /**
@@ -1596,7 +1626,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.ctx.storage.put(key, marker);
     } catch (error) {
-      console.error("Storing a run marker failed", ...errorLogFields(error));
+      log.error("run.marker_write_failed", {}, error);
     }
   }
 
@@ -1605,7 +1635,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.ctx.storage.delete(key);
     } catch (error) {
-      console.error("Removing a run marker failed", ...errorLogFields(error));
+      log.error("run.marker_delete_failed", {}, error);
     }
   }
 
@@ -1626,7 +1656,7 @@ export class AccountSync extends DurableObject<Env> {
         if (found || retryAlerts) await this.sendAbortAlerts(accountId);
       })
       .catch((error: unknown) => {
-        console.error("Reporting aborted runs failed", ...errorLogFields(error));
+        log.error("run.abort_report_failed", {}, error);
       })
       .finally(() => {
         this.abortReport = null;
@@ -1720,7 +1750,7 @@ export class AccountSync extends DurableObject<Env> {
         }),
       );
     } catch (error) {
-      console.error("Sending a comparison alert failed", ...errorLogFields(error));
+      log.error("compare.alert_failed", {}, error);
     }
   }
 
@@ -1872,10 +1902,9 @@ export class AccountSync extends DurableObject<Env> {
       // the batch shows that Graph takes the zone. A 400 for a timed block or a delete says nothing
       // about the zone.
       if (allDayZone && result.allDayRefused && !result.allDayAccepted) {
-        console.error(
-          "Graph refused all-day writes in the mailbox zone, so UTC applies for the day",
-          ...Object.keys(result.statuses),
-        );
+        log.error("graph.all_day_zone_refused", {
+          statuses: Object.keys(result.statuses).join(" "),
+        });
         await this.storeMailboxZone(null);
         allDayZone = undefined;
       }
@@ -1938,7 +1967,7 @@ export class AccountSync extends DurableObject<Env> {
     } catch (error) {
       const waitMs = throttleDelayMs(error);
       if (waitMs !== null) return { waitMs };
-      console.error("Reading the mailbox zone failed", ...errorLogFields(error));
+      log.error("graph.mailbox_zone_failed", {}, error);
       await this.storeMailboxZone(stored?.zone ?? null, true);
       return known;
     }
@@ -1959,7 +1988,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.ctx.storage.put(`${RULE_OK_PREFIX}${ruleId}`, startedAt);
     } catch (error) {
-      console.error("Noting a successful run failed", ...errorLogFields(error));
+      log.error("run.ok_write_failed", {}, error);
     }
   }
 
@@ -1995,7 +2024,7 @@ export class AccountSync extends DurableObject<Env> {
       return { window, markers: new Set(markers) };
     } catch (error) {
       if (throttleDelayMs(error) !== null) throw error;
-      console.error("The edge read of a rule failed", ...errorLogFields(error));
+      log.error("run.edge_read_failed", {}, error);
       return undefined;
     }
   }
@@ -2012,6 +2041,7 @@ export class AccountSync extends DurableObject<Env> {
       remoteCalendarId,
       window,
       withBody,
+      carrier(),
     );
     if ("throttled" in read) {
       throw new SourceThrottledError(read.throttled.message, read.throttled.waitMs);
@@ -2030,53 +2060,57 @@ export class AccountSync extends DurableObject<Env> {
     ruleId: string,
     remoteCalendarId: string,
     beyond?: Date,
+    from?: Carrier,
   ): Promise<RemovalResult> {
-    const readsBefore = this.providerReads;
-    const target = await this.client();
-    const ruleTag = await ruleTagFor(ruleId);
-    const cleanup = cleanupWindow();
-    const window = beyond ? { start: beyond, end: cleanup.end } : cleanup;
-    const blocks = (await target.existingBlocks(remoteCalendarId, window, [ruleTag])).filter(
-      (block) => !beyond || startsBeyond(block, beyond),
-    );
-    let edgeReadFailed = false;
-    if (!beyond) {
-      // Blocks from before today stay as a record, except those that end at the start of the
-      // window. Whether the read above returns those depends on the target's time zone.
-      const edge = await this.blocksAtRemovalEdge(target, remoteCalendarId, ruleTag, cleanup);
-      edgeReadFailed = edge === undefined;
-      const found = new Set(blocks.map((block) => block.targetId));
-      blocks.push(...(edge ?? []).filter((block) => !found.has(block.targetId)));
-    }
-    const actions = blocks.map((block) => ({
-      kind: "delete" as const,
-      targetId: block.targetId,
-      marker: block.marker,
-    }));
-    let removed = 0;
-    let retryAfterMs: number | undefined;
-    const batches = chunk(actions, target.batchLimit);
-    for (const batch of batches.slice(0, batchBudget(this.providerReads - readsBefore))) {
-      let result: BatchResult;
-      try {
-        result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
-      } catch (error) {
-        if (removed === 0) throw error;
-        console.error("Removal batch failed", ruleId, ...errorLogFields(error));
-        retryAfterMs = throttleDelayMs(error) ?? undefined;
-        break;
+    return this.inRequest(from, async () => {
+      const readsBefore = this.providerReads;
+      const target = await this.client();
+      const ruleTag = await ruleTagFor(ruleId);
+      const cleanup = cleanupWindow();
+      const window = beyond ? { start: beyond, end: cleanup.end } : cleanup;
+      const blocks = (await target.existingBlocks(remoteCalendarId, window, [ruleTag])).filter(
+        (block) => !beyond || startsBeyond(block, beyond),
+      );
+      let edgeReadFailed = false;
+      if (!beyond) {
+        // Blocks from before today stay as a record, except those that end at the start of the
+        // window. Whether the read above returns those depends on the target's time zone.
+        const edge = await this.blocksAtRemovalEdge(target, remoteCalendarId, ruleTag, cleanup);
+        edgeReadFailed = edge === undefined;
+        const found = new Set(blocks.map((block) => block.targetId));
+        blocks.push(...(edge ?? []).filter((block) => !found.has(block.targetId)));
       }
-      if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
-      removed += batch.length - result.failed - result.throttled;
-      if (result.throttled > 0) {
-        // Further batches would only extend the penalty.
-        retryAfterMs = clampRetryAfter(result.retryAfterMs);
-        break;
+      const actions = blocks.map((block) => ({
+        kind: "delete" as const,
+        targetId: block.targetId,
+        marker: block.marker,
+      }));
+      let removed = 0;
+      let retryAfterMs: number | undefined;
+      const batches = chunk(actions, target.batchLimit);
+      for (const batch of batches.slice(0, batchBudget(this.providerReads - readsBefore))) {
+        let result: BatchResult;
+        try {
+          result = await target.applyBatch(remoteCalendarId, ruleTag, batch);
+        } catch (error) {
+          if (removed === 0) throw error;
+          log.error("removal.batch_failed", { ruleId }, error);
+          retryAfterMs = throttleDelayMs(error) ?? undefined;
+          break;
+        }
+        if (result.writtenIds?.length) await this.rememberWrites(result.writtenIds);
+        removed += batch.length - result.failed - result.throttled;
+        if (result.throttled > 0) {
+          // Further batches would only extend the penalty.
+          retryAfterMs = clampRetryAfter(result.retryAfterMs);
+          break;
+        }
       }
-    }
-    const remaining = actions.length - removed;
-    if (retryAfterMs === undefined) return { removed, remaining, throttled: false, edgeReadFailed };
-    return { removed, remaining, throttled: true, retryAfterMs, edgeReadFailed };
+      const remaining = actions.length - removed;
+      if (retryAfterMs === undefined)
+        return { removed, remaining, throttled: false, edgeReadFailed };
+      return { removed, remaining, throttled: true, retryAfterMs, edgeReadFailed };
+    });
   }
 
   /**
@@ -2098,7 +2132,7 @@ export class AccountSync extends DurableObject<Env> {
       return blocks.filter((block) => endsAtStart(block, cleanup));
     } catch (error) {
       if (throttleDelayMs(error) !== null) throw error;
-      console.error("The edge read of a removal failed", ...errorLogFields(error));
+      log.error("removal.edge_read_failed", {}, error);
       return undefined;
     }
   }
@@ -2112,8 +2146,11 @@ export class AccountSync extends DurableObject<Env> {
     ruleId: string,
     remoteCalendarId: string,
     { trim = false }: { trim?: boolean } = {},
+    from?: Carrier,
   ): Promise<void> {
-    await this.queueRemovals([{ ruleId, remoteCalendarId }], { trim });
+    return this.inRequest(from, async () => {
+      await this.queueRemovals([{ ruleId, remoteCalendarId }], { trim });
+    });
   }
 
   /**
@@ -2127,41 +2164,44 @@ export class AccountSync extends DurableObject<Env> {
   async queueRemovals(
     rules: { ruleId: string; remoteCalendarId: string }[],
     { trim = false, offboarding }: { trim?: boolean; offboarding?: OffboardingOwner } = {},
+    from?: Carrier,
   ): Promise<void> {
-    if (rules.length === 0) return;
-    const progress = offboarding
-      ? { offboarding: { ...offboarding, removed: 0, since: Date.now() } }
-      : {};
-    const jobs: Removal[] = rules.map(({ ruleId, remoteCalendarId }) => ({
-      ruleId,
-      remoteCalendarId,
-      attempts: 0,
-      ...(trim ? { trim: true as const } : {}),
-      ...progress,
-    }));
-    await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) => {
-      const next = queue.map((queued) =>
-        jobs.some((job) => sameRemoval(queued, job))
-          ? {
-              ...queued,
-              ...(queued.offboarding ? {} : progress),
-              ...(queued.trim ? {} : { requeued: (queued.requeued ?? 0) + 1 }),
-            }
-          : queued,
-      );
-      for (const job of jobs) {
-        if (!next.some((queued) => sameRemoval(queued, job))) next.push(job);
+    return this.inRequest(from, async () => {
+      if (rules.length === 0) return;
+      const progress = offboarding
+        ? { offboarding: { ...offboarding, removed: 0, since: Date.now() } }
+        : {};
+      const jobs: Removal[] = rules.map(({ ruleId, remoteCalendarId }) => ({
+        ruleId,
+        remoteCalendarId,
+        attempts: 0,
+        ...(trim ? { trim: true as const } : {}),
+        ...progress,
+      }));
+      await this.updateQueue<Removal>(REMOVAL_QUEUE_KEY, (queue) => {
+        const next = queue.map((queued) =>
+          jobs.some((job) => sameRemoval(queued, job))
+            ? {
+                ...queued,
+                ...(queued.offboarding ? {} : progress),
+                ...(queued.trim ? {} : { requeued: (queued.requeued ?? 0) + 1 }),
+              }
+            : queued,
+        );
+        for (const job of jobs) {
+          if (!next.some((queued) => sameRemoval(queued, job))) next.push(job);
+        }
+        return next;
+      });
+      const pending = await this.ctx.storage.getAlarm();
+      const soon = Date.now() + this.delays().nextRun;
+      if (pending === null || pending > soon) await this.setSyncAlarm(soon);
+      if (offboarding?.accountId) {
+        const deadlineAt = new Date(Date.now() + CLEANUP_DEADLINE_MS).toISOString();
+        const ruleIds = rules.map(({ ruleId }) => ruleId);
+        await noteTombstoneJob(this.env.DB, offboarding.accountId, ruleIds, deadlineAt).run();
       }
-      return next;
     });
-    const pending = await this.ctx.storage.getAlarm();
-    const soon = Date.now() + this.delays().nextRun;
-    if (pending === null || pending > soon) await this.setSyncAlarm(soon);
-    if (offboarding?.accountId) {
-      const deadlineAt = new Date(Date.now() + CLEANUP_DEADLINE_MS).toISOString();
-      const ruleIds = rules.map(({ ruleId }) => ruleId);
-      await noteTombstoneJob(this.env.DB, offboarding.accountId, ruleIds, deadlineAt).run();
-    }
   }
 
   /**
@@ -2172,12 +2212,14 @@ export class AccountSync extends DurableObject<Env> {
    * must be able to cancel also if the answer of this call got lost. A caller of a version without
    * generations passes none, and this call then makes one that no cancel names.
    */
-  async retire(generation: string = crypto.randomUUID()): Promise<void> {
-    await this.ctx.storage.put(RETIRING_KEY, generation);
-    await this.ctx.storage.delete(RETIREMENT_CHECK_KEY);
-    const pending = await this.ctx.storage.getAlarm();
-    const soon = Date.now() + this.delays().nextRun;
-    if (pending === null || pending > soon) await this.setSyncAlarm(soon);
+  async retire(generation: string = crypto.randomUUID(), from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      await this.ctx.storage.put(RETIRING_KEY, generation);
+      await this.ctx.storage.delete(RETIREMENT_CHECK_KEY);
+      const pending = await this.ctx.storage.getAlarm();
+      const soon = Date.now() + this.delays().nextRun;
+      if (pending === null || pending > soon) await this.setSyncAlarm(soon);
+    });
   }
 
   /**
@@ -2188,13 +2230,15 @@ export class AccountSync extends DurableObject<Env> {
    * the account. A caller of a version without generations passes none, and this call then does
    * nothing: it cannot tell which request it belongs to.
    */
-  async cancelRetire(generation?: string): Promise<void> {
-    const accountId = this.accountIdOrNull();
-    if (!accountId || generation === undefined) return;
-    const row = await this.env.DB.prepare("SELECT 1 AS found FROM accounts WHERE id = ?")
-      .bind(accountId)
-      .first<{ found: number }>();
-    if (row) await this.endRetirement(generation);
+  async cancelRetire(generation?: string, from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      const accountId = this.accountIdOrNull();
+      if (!accountId || generation === undefined) return;
+      const row = await this.env.DB.prepare("SELECT 1 AS found FROM accounts WHERE id = ?")
+        .bind(accountId)
+        .first<{ found: number }>();
+      if (row) await this.endRetirement(generation);
+    });
   }
 
   /**
@@ -2349,7 +2393,7 @@ export class AccountSync extends DurableObject<Env> {
       );
       await this.env.DB.batch(statements.flat());
     } catch (error) {
-      console.error("Writing a cleanup result failed", ...errorLogFields(error));
+      log.error("cleanup.report_write_failed", {}, error);
       return;
     }
     const written = new Set(reports.map((report) => report.id));
@@ -2367,7 +2411,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await noteTombstoneProgress(this.env.DB, { accountId, ruleId }, removed, left ?? null).run();
     } catch (error) {
-      console.error("Noting the progress of a cleanup failed", ...errorLogFields(error));
+      log.error("cleanup.progress_write_failed", {}, error);
     }
   }
 
@@ -2393,7 +2437,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       return await ruleWritesInto(this.env, job.ruleId, job.remoteCalendarId);
     } catch (error) {
-      console.error("Removal rule lookup failed", errorCode(error));
+      log.error("removal.rule_lookup_failed", { code: errorCode(error) }, error);
       return false;
     }
   }
@@ -2483,7 +2527,7 @@ export class AccountSync extends DurableObject<Env> {
         outcome = "continue";
       }
     } catch (error) {
-      console.error("Queued removal failed", job.ruleId, ...errorLogFields(error));
+      log.error("removal.failed", { ruleId: job.ruleId }, error);
       const throttleDelay = throttleDelayMs(error);
       if (throttleDelay !== null) {
         outcome = "throttled";
@@ -2557,6 +2601,10 @@ export class AccountSync extends DurableObject<Env> {
    * they wait too. If another account throttled the read of a rule's source, only that rule waits.
    */
   override async alarm(): Promise<void> {
+    await startRequest("alarm", () => this.alarmStep(), { accountId: this.ctx.id.name });
+  }
+
+  private async alarmStep(): Promise<void> {
     let failed = false;
     try {
       await this.runAlarm();
@@ -2564,7 +2612,7 @@ export class AccountSync extends DurableObject<Env> {
       // The retries of the platform end after a few attempts, and a retiring account may have no
       // row, so no cron reaches it. Its next alarm comes from here. Other alarms retry as before.
       if (!(await this.retirementOpen())) throw error;
-      console.error("A step of a retirement failed", ...errorLogFields(error));
+      log.error("retirement.step_failed", {}, error);
       failed = true;
     }
     // While paused, the alarm runs neither removals nor the retry of a sync request, so an alarm
@@ -2608,10 +2656,10 @@ export class AccountSync extends DurableObject<Env> {
       // Without tokens no removal can run, for example after `forget()` or a new jurisdiction.
       const removals = await this.ctx.storage.get<Removal[]>(REMOVAL_QUEUE_KEY);
       if (removals !== undefined) {
-        console.error(
-          "Dropping queued removals: no tokens",
-          this.ctx.id.name ?? this.ctx.id.toString(),
-        );
+        log.error("removal.dropped_no_tokens", {
+          instance: this.ctx.id.name ?? this.ctx.id.toString(),
+          jobs: removals.length,
+        });
         await this.reportCleanup(removals, "no_tokens");
         await this.ctx.storage.delete(REMOVAL_QUEUE_KEY);
       }
@@ -2713,7 +2761,7 @@ export class AccountSync extends DurableObject<Env> {
         delayMs = result.retryAfterMs ?? this.delays().nextRun;
       } catch (error) {
         // One broken rule must not stop the others; the run has recorded the failure.
-        console.error("Rule run failed", ruleId, ...errorLogFields(error));
+        log.error("run.failed", { ruleId }, error);
         // A throttled read is retried after the wait instead of in the next cron cycle.
         const throttleDelay = throttleDelayMs(error);
         if (throttleDelay !== null && error instanceof SourceThrottledError) {
@@ -2791,7 +2839,7 @@ export class AccountSync extends DurableObject<Env> {
       if (failures > 0) await this.ctx.storage.delete(RULE_LOOKUP_FAILURES_KEY);
       return running;
     } catch (error) {
-      console.error("Rule lookup failed", errorCode(error));
+      log.error("run.rule_lookup_failed", { code: errorCode(error) }, error);
       await this.ctx.storage.put(RULE_LOOKUP_FAILURES_KEY, failures + 1);
       const wait = Math.min(RULE_LOOKUP_RETRY_MAX_MS, RULE_LOOKUP_RETRY_MS * 2 ** failures);
       // A removal or a retry that is due earlier keeps its time.
@@ -2859,23 +2907,25 @@ export class AccountSync extends DurableObject<Env> {
    * calendar with an open comparison keeps it, except that a full comparison replaces a daily one:
    * a daily comparison can wait a day for its confirmation, and a full one covers its window.
    */
-  async startCompares(mode: "full" | "near" = "full"): Promise<CompareStart> {
-    const counts: CompareStart = { started: 0, open: 0, failed: 0 };
-    const accountId = this.accountIdOrNull();
-    if (!accountId || (await this.retiring())) return counts;
-    for (const calendar of await targetCalendars(this.env.DB, accountId)) {
-      const context = await this.compareContext(calendar.calendarId);
-      if (context.rules.length === 0) continue;
-      counts[await this.startCompare(calendar, context, mode)]++;
-    }
-    if (mode === "full") {
-      for (const calendar of await leftoverCalendars(this.env, accountId)) {
+  async startCompares(mode: "full" | "near" = "full", from?: Carrier): Promise<CompareStart> {
+    return this.inRequest(from, async () => {
+      const counts: CompareStart = { started: 0, open: 0, failed: 0 };
+      const accountId = this.accountIdOrNull();
+      if (!accountId || (await this.retiring())) return counts;
+      for (const calendar of await targetCalendars(this.env.DB, accountId)) {
         const context = await this.compareContext(calendar.calendarId);
-        counts[await this.startCompare(calendar, context, "leftover")]++;
+        if (context.rules.length === 0) continue;
+        counts[await this.startCompare(calendar, context, mode)]++;
       }
-    }
-    await this.keepCompareAlarm();
-    return counts;
+      if (mode === "full") {
+        for (const calendar of await leftoverCalendars(this.env, accountId)) {
+          const context = await this.compareContext(calendar.calendarId);
+          counts[await this.startCompare(calendar, context, "leftover")]++;
+        }
+      }
+      await this.keepCompareAlarm();
+      return counts;
+    });
   }
 
   /** What a comparison of a calendar reads the rules for. */
@@ -2999,7 +3049,7 @@ export class AccountSync extends DurableObject<Env> {
       }
       await this.keepCompareAlarm();
     } catch (error) {
-      console.error("The tick of a comparison failed", ...errorLogFields(error));
+      log.error("compare.tick_failed", {}, error);
     }
   }
 
@@ -3037,7 +3087,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.compareNextSlice(state);
     } catch (error) {
-      console.error("A comparison failed", ...errorLogFields(error));
+      log.error("compare.failed", {}, error);
       if (await this.stillOpen(state)) await this.failCompare(state, compareFailure(error));
     }
   }
@@ -3148,7 +3198,11 @@ export class AccountSync extends DurableObject<Env> {
       const read =
         accountId === ownAccount
           ? await this.readCompareEvents(remoteCalendarId, window)
-          : await accountSync(this.env, accountId).readCompareEvents(remoteCalendarId, window);
+          : await accountSync(this.env, accountId).readCompareEvents(
+              remoteCalendarId,
+              window,
+              carrier(),
+            );
       if (read.kind === "throttled") throw new CompareStopped({ reason: "throttled" });
       if (read.kind === "unavailable") throw new CompareStopped({ reason: "source_unavailable" });
       events.set(source, read.events);
@@ -3166,68 +3220,70 @@ export class AccountSync extends DurableObject<Env> {
    * expire within a day, and stop those no rule needs. Without PUBLIC_URL all watches stop, and only
    * the cron syncs. A failure leaves the cron as the fallback for that calendar.
    */
-  async ensureWatches(): Promise<void> {
-    const accountId = this.accountIdOrNull();
-    if (!accountId) return;
-    const url = webhookUrl(this.env, this.providerOrDefault(), accountId);
-    const stored = this.storedWatches();
-    const { results } = await this.env.DB.prepare(
-      `SELECT c.remote_id AS remoteId, ${OWNER_COLUMNS} FROM calendars c
-       JOIN rules r ON (r.source_calendar_id = c.id OR r.target_calendar_id = c.id)
-       JOIN users u ON u.id = r.user_id
-       JOIN orgs o ON o.id = u.org_id
-       WHERE c.account_id = ? AND r.enabled = 1`,
-    )
-      .bind(accountId)
-      .all<{ remoteId: string } & OwnerColumns>();
-    // A calendar of an owner the policy no longer admits loses its watch with the next cycle.
-    const admitted = results.filter(ownerAdmission(this.env));
-    const needed = url ? new Set(admitted.map((row) => row.remoteId)) : new Set<string>();
-    if (needed.size === 0 && stored.length === 0) return;
-
-    const client = await this.client();
-    const now = Date.now();
-    const markWatched = (calendarId: string, until: number | null) =>
-      this.env.DB.prepare(
-        "UPDATE calendars SET watched_until = ? WHERE account_id = ? AND remote_id = ?",
+  async ensureWatches(from?: Carrier): Promise<void> {
+    return this.inRequest(from, async () => {
+      const accountId = this.accountIdOrNull();
+      if (!accountId) return;
+      const url = webhookUrl(this.env, this.providerOrDefault(), accountId);
+      const stored = this.storedWatches();
+      const { results } = await this.env.DB.prepare(
+        `SELECT c.remote_id AS remoteId, ${OWNER_COLUMNS} FROM calendars c
+         JOIN rules r ON (r.source_calendar_id = c.id OR r.target_calendar_id = c.id)
+         JOIN users u ON u.id = r.user_id
+         JOIN orgs o ON o.id = u.org_id
+         WHERE c.account_id = ? AND r.enabled = 1`,
       )
-        .bind(until, accountId, calendarId)
-        .run();
-    for (const watch of stored) {
-      if (needed.has(watch.calendarId)) continue;
-      await client.unwatch(watch).catch((error: unknown) => {
-        console.error("Stopping a watch failed", watch.id, ...errorLogFields(error));
-      });
-      this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
-      await this.ctx.storage.delete(`${SYNC_TOKEN_PREFIX}${watch.calendarId}`);
-      await markWatched(watch.calendarId, null);
-    }
-    if (!url) return;
-    const token = await webhookToken(this.env, accountId);
-    for (const calendarId of needed) {
-      const current = stored.find((watch) => watch.calendarId === calendarId);
-      if (current && current.expiresAt - now > RENEW_BEFORE_MS) {
-        await markWatched(calendarId, current.expiresAt);
-        continue;
+        .bind(accountId)
+        .all<{ remoteId: string } & OwnerColumns>();
+      // A calendar of an owner the policy no longer admits loses its watch with the next cycle.
+      const admitted = results.filter(ownerAdmission(this.env));
+      const needed = url ? new Set(admitted.map((row) => row.remoteId)) : new Set<string>();
+      if (needed.size === 0 && stored.length === 0) return;
+
+      const client = await this.client();
+      const now = Date.now();
+      const markWatched = (calendarId: string, until: number | null) =>
+        this.env.DB.prepare(
+          "UPDATE calendars SET watched_until = ? WHERE account_id = ? AND remote_id = ?",
+        )
+          .bind(until, accountId, calendarId)
+          .run();
+      for (const watch of stored) {
+        if (needed.has(watch.calendarId)) continue;
+        await client.unwatch(watch).catch((error: unknown) => {
+          log.error("watch.stop_failed", { watchId: watch.id }, error);
+        });
+        this.ctx.storage.sql.exec(`DELETE FROM subscriptions WHERE remote_id = ?`, watch.id);
+        await this.ctx.storage.delete(`${SYNC_TOKEN_PREFIX}${watch.calendarId}`);
+        await markWatched(watch.calendarId, null);
       }
-      try {
-        const renewed = current ? await client.renew(current, now + WATCH_LIFETIME_MS) : null;
-        if (renewed) {
-          this.storeWatch(calendarId, renewed, current?.id);
-          await markWatched(calendarId, renewed.expiresAt);
+      if (!url) return;
+      const token = await webhookToken(this.env, accountId);
+      for (const calendarId of needed) {
+        const current = stored.find((watch) => watch.calendarId === calendarId);
+        if (current && current.expiresAt - now > RENEW_BEFORE_MS) {
+          await markWatched(calendarId, current.expiresAt);
           continue;
         }
-        const fresh = await client.watch(calendarId, url, token, now + WATCH_LIFETIME_MS);
-        this.storeWatch(calendarId, fresh, current?.id);
-        await markWatched(calendarId, fresh.expiresAt);
-        // Google channels cannot be extended: the old one overlaps briefly, then stops.
-        if (current) await client.unwatch(current).catch(() => undefined);
-      } catch (error) {
-        console.error("Watching a calendar failed", calendarId, ...errorLogFields(error));
-        // Without a watch, the cron polls this calendar every 10 minutes.
-        await markWatched(calendarId, null);
+        try {
+          const renewed = current ? await client.renew(current, now + WATCH_LIFETIME_MS) : null;
+          if (renewed) {
+            this.storeWatch(calendarId, renewed, current?.id);
+            await markWatched(calendarId, renewed.expiresAt);
+            continue;
+          }
+          const fresh = await client.watch(calendarId, url, token, now + WATCH_LIFETIME_MS);
+          this.storeWatch(calendarId, fresh, current?.id);
+          await markWatched(calendarId, fresh.expiresAt);
+          // Google channels cannot be extended: the old one overlaps briefly, then stops.
+          if (current) await client.unwatch(current).catch(() => undefined);
+        } catch (error) {
+          log.error("watch.start_failed", { calendarId }, error);
+          // Without a watch, the cron polls this calendar every 10 minutes.
+          await markWatched(calendarId, null);
+        }
       }
-    }
+    });
   }
 
   /** Watches are an optimisation; a failure, such as a revoked token, must not break the alarm. */
@@ -3235,7 +3291,7 @@ export class AccountSync extends DurableObject<Env> {
     try {
       await this.ensureWatches();
     } catch (error) {
-      console.error("Keeping watches failed", ...errorLogFields(error));
+      log.error("watch.keep_failed", {}, error);
     }
   }
 
@@ -3406,7 +3462,7 @@ export class AccountSync extends DurableObject<Env> {
         detail: { ...(runId ? { runId } : {}), code: errorCode(error) },
       });
     } catch (lookupError) {
-      console.error("Audit lookup failed", ruleId, ...errorLogFields(lookupError));
+      log.error("audit.owner_lookup_failed", { ruleId }, lookupError);
       return false;
     }
   }

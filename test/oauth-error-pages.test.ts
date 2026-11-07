@@ -245,8 +245,8 @@ describe("other provider errors", () => {
     const reference = /Reference<\/dt><dd><code>([0-9a-f]{8})<\/code>/.exec(html)?.[1];
     expect(reference).toBeDefined();
     const logged = JSON.stringify(log.mock.calls);
-    expect(logged).toContain(`ref=${reference}`);
-    expect(logged).toContain("code=AADSTS7000215");
+    expect(logged).toContain(`"reference":"${reference}"`);
+    expect(logged).toContain('"code":"AADSTS7000215"');
     expect(logged).not.toContain("bob@corp.example");
     expect(html).not.toContain("bob@corp.example");
   });

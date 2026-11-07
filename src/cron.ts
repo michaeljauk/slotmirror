@@ -9,6 +9,7 @@ import {
 import { errorCode, purgeAuditEvents } from "./audit";
 import { accountSync } from "./durable";
 import { heldRulesStatement, releaseHeldRules, type HeldRule } from "./offboarding";
+import { carrier, log } from "./telemetry";
 
 /** The Free plan's subrequests per invocation. */
 export const MAX_CRON_SUBREQUESTS = 50;
@@ -60,7 +61,7 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     try {
       await checkSilentRules(env, scheduledTime);
     } catch (error) {
-      console.error("Silence check failed", errorCode(error));
+      log.error("silence_check.failed", { code: errorCode(error) }, error);
     }
   }
   const { results } = await env.DB.prepare("SELECT id FROM accounts ORDER BY id").all<{
@@ -68,7 +69,7 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
   }>();
   const tickLimit = MAX_CRON_SUBREQUESTS - CRON_FIXED_SUBREQUESTS - checkCost;
   if (results.length > tickLimit) {
-    console.error("Cron ticks rotate at the subrequest limit", tickLimit, results.length);
+    log.error("cron.ticks_rotate", { tickLimit, accounts: results.length });
   }
   const spare = spareSubrequests(results.length, tickLimit);
   let held: HeldRule[] = [];
@@ -76,22 +77,22 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     const now = scheduledTime;
     held = await purgeAuditEvents<HeldRule>(env.DB, heldRulesStatement(env, now, spare), now);
   } catch (error) {
-    console.error("Audit purge failed", errorCode(error));
+    log.error("audit.purge_failed", { code: errorCode(error) }, error);
   }
   let holdsCost = 0;
   try {
     holdsCost = await releaseHeldRules(env, held, scheduledTime, spare);
   } catch (error) {
     holdsCost = spare;
-    console.error("Releasing held rules failed", errorCode(error));
+    log.error("rules.release_held_failed", { code: errorCode(error) }, error);
   }
   const ids = results.map(({ id }) => id);
   for (const id of accountsToTick(ids, scheduledTime, tickLimit - holdsCost)) {
     // One failing account must not stop the ticks of the others.
     try {
-      await accountSync(env, id).tick();
+      await accountSync(env, id).tick(carrier());
     } catch (error) {
-      console.error("Cron tick failed", id, errorCode(error));
+      log.error("cron.tick_failed", { accountId: id, code: errorCode(error) }, error);
     }
   }
   // Last, so that a call proves a finished run, and only with a subrequest left over.

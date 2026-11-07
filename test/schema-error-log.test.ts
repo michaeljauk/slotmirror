@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 // The providers parse with zod/mini; its error message after the boundary is what is tested.
 import * as z from "zod/mini";
-import { errorCode, errorLogFields } from "../src/audit";
+import { errorCode } from "../src/audit";
+import { errorFields } from "../src/error-fields";
 import { TokenError } from "../src/providers/oauth-token";
 
 /** A Graph calendar list whose second calendar has a canEdit that is not a boolean. */
@@ -26,20 +27,19 @@ afterEach(() => {
 
 describe("schema errors in the log", () => {
   it("names the issue code and path of a schema error", () => {
-    const fields = errorLogFields(schemaError());
-    expect(fields).toContain("schema invalid_type@value.1.canEdit");
+    expect(errorFields(schemaError()).message).toBe("schema invalid_type@value.1.canEdit");
   });
 
   it("keeps the issue after the Durable Object boundary", () => {
     // Over the boundary only a plain Error with the same message is left.
     const crossed = new Error(schemaError().message);
-    expect(errorLogFields(crossed)).toContain("schema invalid_type@value.1.canEdit");
+    expect(errorFields(crossed).message).toBe("schema invalid_type@value.1.canEdit");
   });
 
   it("logs no value from the provider response", () => {
     const error = schemaError();
     for (const candidate of [error, new Error(error.message)]) {
-      const logged = JSON.stringify(errorLogFields(candidate));
+      const logged = JSON.stringify(errorFields(candidate));
       expect(logged).not.toContain("SECRET");
       expect(logged).not.toContain("secret@example.com");
     }
@@ -55,7 +55,7 @@ describe("schema errors in the log", () => {
     });
     expect(result.success).toBe(false);
     for (const candidate of [result.error!, new Error(result.error!.message)]) {
-      const logged = JSON.stringify(errorLogFields(candidate));
+      const logged = JSON.stringify(errorFields(candidate));
       expect(logged).toContain("invalid_type@extendedProperties.private.?");
       expect(logged).not.toContain("secret");
       expect(logged).not.toContain("Secret");
@@ -63,9 +63,9 @@ describe("schema errors in the log", () => {
   });
 
   it("ignores a message that only looks like JSON", () => {
-    const fields = errorLogFields(new Error('[{"code":"SECRET VALUE","path":["a"]}]'));
+    const fields = errorFields(new Error('[{"code":"SECRET VALUE","path":["a"]}]'));
     expect(JSON.stringify(fields)).not.toContain("SECRET");
-    expect(fields.some((field) => field.startsWith("schema"))).toBe(false);
+    expect(fields.message).toBeUndefined();
   });
 });
 

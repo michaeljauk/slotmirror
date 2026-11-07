@@ -10,7 +10,6 @@ import type { AppEnv } from "./app-env";
 import {
   accountStatuses,
   errorCode,
-  errorLogFields,
   latestCompares,
   latestRuleOutcomes,
   orgActivity,
@@ -58,6 +57,7 @@ import { accountSync } from "./durable";
 import { isValidToken, notifyChange } from "./webhooks";
 import { deleteUser, removeAccounts } from "./offboarding";
 import { crossSiteGuard, securityHeaders } from "./request-guard";
+import { carrier, log, startRequest } from "./telemetry";
 
 /** A count from a query string, or 0 if it is none. */
 function countParam(value: string | undefined): number {
@@ -69,6 +69,9 @@ export const app = new Hono<AppEnv>();
 
 // First, so that every answer of the Worker carries the headers, also errors and redirects.
 app.use("*", securityHeaders);
+
+// Before the routes and the error handler, so that every log line of a request carries its ID.
+app.use("*", (_c, next) => startRequest("http", next));
 
 app.get("/healthz", (c) => c.text("ok"));
 
@@ -94,7 +97,7 @@ app.post("/webhooks/microsoft", async (c) => {
   const ids = valid.map((item) => item.resourceData?.id);
   if (valid.length === 0) return c.body(null, 202);
   if (ids.every((id): id is string => typeof id === "string" && id !== "")) {
-    await accountSync(c.env, accountId).graphChanged(ids);
+    await accountSync(c.env, accountId).graphChanged(ids, carrier());
   } else {
     await notifyChange(c.env, accountId);
   }
@@ -111,7 +114,8 @@ app.post("/webhooks/google", async (c) => {
     (await isValidToken(c.env, accountId, c.req.header("x-goog-channel-token")))
   ) {
     // The instance skips the sync if the change is only blocks it wrote itself.
-    await accountSync(c.env, accountId).googleChanged(c.req.header("x-goog-channel-id") ?? "");
+    const channelId = c.req.header("x-goog-channel-id") ?? "";
+    await accountSync(c.env, accountId).googleChanged(channelId, carrier());
   }
   return c.body(null, 200);
 });
@@ -567,12 +571,15 @@ app.post("/admin/compare", async (c) => {
   for (const { id } of results) {
     // One failing account must not stop the others.
     try {
-      const { started, open, failed } = await accountSync(c.env, id).startCompares("full");
+      const { started, open, failed } = await accountSync(c.env, id).startCompares(
+        "full",
+        carrier(),
+      );
       total.started += started;
       total.open += open;
       total.failed += failed;
     } catch (error) {
-      console.error("Starting a comparison failed", id, errorCode(error));
+      log.error("compare.start_failed", { accountId: id, code: errorCode(error) }, error);
       total.failed++;
     }
   }
@@ -621,10 +628,11 @@ app.post("/admin/mcp-policy", async (c) => {
 
 // An unexpected error gets a page in the user's language, or a short text for the editor
 // script. The log never holds a raw message or stack: a provider description can name the user,
-// and a SyntaxError can quote the input. See `errorLogFields`.
+// and a SyntaxError can quote the input. See `errorFields`.
 app.onError((error, c) => {
   if (error instanceof HTTPException) return error.getResponse();
-  console.error("Request failed", ...errorLogFields(error));
+  // The path without the query: an OAuth callback carries its code in the query.
+  log.error("request.failed", { method: c.req.method, path: c.req.path }, error);
   const { t } = i18nFromContext(c);
   if (c.req.header("x-fragment") === "1") return c.text(t.messages.errorText, 500);
   return render(

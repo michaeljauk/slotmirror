@@ -1,7 +1,8 @@
 import type { CalendarInfo } from "./providers/calendar-client";
-import { errorCode, errorLogFields } from "./audit";
+import { errorCode } from "./audit";
 import { accountSync } from "./durable";
 import { reconcileRules } from "./editor";
+import { carrier, log } from "./telemetry";
 
 export interface CalendarRow {
   id: string;
@@ -54,9 +55,9 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
     // One account with expired or missing tokens must not block the calendars of the others.
     let calendars: CalendarInfo[];
     try {
-      calendars = await accountSync(env, account.id).listCalendars();
+      calendars = await accountSync(env, account.id).listCalendars(carrier());
     } catch (error) {
-      console.error("Loading calendars failed", account.id, ...errorLogFields(error));
+      log.error("calendars.load_failed", { accountId: account.id }, error);
       continue;
     }
     if (calendars.length === 0) continue;
@@ -89,6 +90,6 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
   try {
     await reconcileRules(env, { id: userId, orgId });
   } catch (error) {
-    console.error("Adding missing rules failed", errorCode(error));
+    log.error("rules.reconcile_failed", { userId, code: errorCode(error) }, error);
   }
 }

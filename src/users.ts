@@ -6,9 +6,10 @@ import {
   type AccessPolicy,
   type Role,
 } from "./access";
-import { errorLogFields, recordAudit } from "./audit";
+import { recordAudit } from "./audit";
 import { parseMcpForMembers, type McpForMembers } from "./permissions";
 import type { Identity } from "./providers/oauth-token";
+import { log } from "./telemetry";
 
 export interface CurrentUser {
   id: string;
@@ -401,11 +402,7 @@ export function ownerAdmission(env: Env): (owner: OwnerColumns) => boolean {
       try {
         policy = orgPolicy(env, owner.ownerOrgId, owner.ownerPolicy);
       } catch (error) {
-        console.error(
-          "Stored access policy is invalid",
-          owner.ownerOrgId,
-          ...errorLogFields(error),
-        );
+        log.error("access.policy_invalid", { orgId: owner.ownerOrgId }, error);
       }
       policies.set(owner.ownerOrgId, policy);
     }

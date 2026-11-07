@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../app-env";
-import { errorLogFields, latestRuleOutcomes, recordAudit } from "../audit";
+import { latestRuleOutcomes, recordAudit } from "../audit";
 import { refreshUserCalendars, userCalendars } from "../calendars";
 import { MAX_BUFFER_MINUTES, ruleOptionsSchema, setupStatus } from "../config";
 import { i18nFromContext, useI18n as i18nForStatus, type Messages } from "../i18n";
@@ -32,6 +32,7 @@ import { operatorNotice } from "../operator-notice";
 import { render } from "../render";
 import type { CurrentUser } from "../users";
 import { accountSync } from "../durable";
+import { carrier, log } from "../telemetry";
 
 export const rules = new Hono<AppEnv>();
 
@@ -512,14 +513,14 @@ rules.post("/direction/check", async (c) => {
   const sum = { create: 0, update: 0, delete: 0, unchanged: 0 };
   try {
     for (const ruleId of ruleIds) {
-      const result = await accountSync(c.env, to).runRule(ruleId, { dryRun: true });
+      const result = await accountSync(c.env, to).runRule(ruleId, { dryRun: true }, carrier());
       sum.create += result.stats.create;
       sum.update += result.stats.update;
       sum.delete += result.stats.delete;
       sum.unchanged += result.stats.unchanged;
     }
   } catch (error) {
-    console.error("Direction check failed", from, to, ...errorLogFields(error));
+    log.error("rules.check_failed", { fromAccountId: from, toAccountId: to }, error);
     return refuse(c, runErrorText(t, error));
   }
   const text = t.editor.checkResult(sum.create, sum.update, sum.delete, sum.unchanged);
@@ -534,9 +535,11 @@ for (const action of ["preview", "run"] as const) {
     const target = await targetAccountOf(c.env.DB, ruleId, user.id);
     if (!target) return c.notFound();
     try {
-      const result = await accountSync(c.env, target.accountId).runRule(ruleId, {
-        dryRun: action === "preview",
-      });
+      const result = await accountSync(c.env, target.accountId).runRule(
+        ruleId,
+        { dryRun: action === "preview" },
+        carrier(),
+      );
       const { create, update, delete: remove, unchanged } = result.stats;
       const text =
         action === "preview"
@@ -550,7 +553,7 @@ for (const action of ["preview", "run"] as const) {
       }
       return renderPage(c, { kind: "info", text });
     } catch (error) {
-      console.error(`Rule ${action} failed`, ruleId, ...errorLogFields(error));
+      log.error("rules.action_failed", { action, ruleId }, error);
       return refuse(c, runErrorText(t, error));
     }
   });
@@ -578,7 +581,7 @@ for (const [action, enabled] of [
         kind: enabled ? "rule_enabled" : "rule_paused",
       });
       // Start the first run now instead of waiting for the next cron.
-      if (enabled && target) await accountSync(c.env, target.accountId).requestSync();
+      if (enabled && target) await accountSync(c.env, target.accountId).requestSync(carrier());
     }
     return c.redirect("/rules");
   });

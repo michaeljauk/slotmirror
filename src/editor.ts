@@ -1,9 +1,10 @@
-import { auditStatement, errorLogFields, recordAudit, type AuditEvent } from "./audit";
+import { auditStatement, recordAudit, type AuditEvent } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
 import { detailLevelFor, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
 import { displayTimeZone } from "./i18n";
+import { carrier, log } from "./telemetry";
 import {
   ALL_WEEKDAYS,
   canonicalTimeZone,
@@ -500,9 +501,9 @@ export async function setSettings(
   // One call per target account. Like every queueing, a failure is logged and does not fail the save.
   for (const [accountId, rules] of trims) {
     try {
-      await accountSync(env, accountId).queueRemovals(rules, { trim: true });
+      await accountSync(env, accountId).queueRemovals(rules, { trim: true }, carrier());
     } catch (error) {
-      console.error("Queueing the trims failed", accountId, ...errorLogFields(error));
+      log.error("removal.trim_queue_failed", { accountId }, error);
     }
   }
   await recordAudit(env.DB, {
@@ -1108,10 +1109,15 @@ async function queueRemoval(
   options: { trim?: boolean } = {},
 ): Promise<boolean> {
   try {
-    await accountSync(env, target.accountId).queueRemoval(ruleId, target.remoteCalendarId, options);
+    await accountSync(env, target.accountId).queueRemoval(
+      ruleId,
+      target.remoteCalendarId,
+      options,
+      carrier(),
+    );
     return true;
   } catch (error) {
-    console.error("Queueing the removal failed", ruleId, ...errorLogFields(error));
+    log.error("removal.queue_failed", { ruleId }, error);
     return false;
   }
 }
@@ -1335,10 +1341,10 @@ export async function setDirections(
   const queued = new Map<string, boolean>();
   for (const [accountId, rules] of removals) {
     try {
-      await accountSync(env, accountId).queueRemovals(rules);
+      await accountSync(env, accountId).queueRemovals(rules, {}, carrier());
       queued.set(accountId, true);
     } catch (error) {
-      console.error("Queueing the removals failed", accountId, ...errorLogFields(error));
+      log.error("removal.queue_failed", { accountId }, error);
       queued.set(accountId, false);
     }
   }
@@ -1355,7 +1361,7 @@ export async function setDirections(
     try {
       await env.DB.batch(audits.map((audit) => auditStatement(env.DB, audit)));
     } catch (error) {
-      console.error("Audit write failed", "rule_updated", ...errorLogFields(error));
+      log.error("audit.write_failed", { auditKind: "rule_updated" }, error);
     }
   }
   await requestSyncs(env, targets, syncs);
@@ -1605,7 +1611,7 @@ export async function requestSyncs(
 ): Promise<void> {
   for (const id of accountIds) {
     if (syncs) syncs.add(id);
-    else await accountSync(env, id).requestSync();
+    else await accountSync(env, id).requestSync(carrier());
   }
 }
 
@@ -1753,7 +1759,7 @@ async function leaveGroup(
   try {
     await env.DB.batch(audits);
   } catch (error) {
-    console.error("Audit write failed", "group_changed", ...errorLogFields(error));
+    log.error("audit.write_failed", { auditKind: "group_changed" }, error);
   }
 }
 

@@ -510,10 +510,15 @@ describe("unexpected errors", () => {
     expect(html).toContain("Etwas ist schiefgelaufen");
     // A D1 message is logged: it holds no bound values. The stack is only its frames.
     expect(errors).toHaveBeenCalledWith(
-      "Request failed",
-      "Error",
-      "D1_ERROR: database is locked",
-      expect.stringMatching(/^\s*at /),
+      expect.objectContaining({
+        event: "request.failed",
+        path: "/rules",
+        error: expect.objectContaining({
+          name: "Error",
+          message: "D1_ERROR: database is locked",
+          frames: expect.stringMatching(/^\s*at /),
+        }),
+      }),
     );
 
     const fragment = await exports.default.fetch(`${BASE}/rules/direction/check?lang=de`, {

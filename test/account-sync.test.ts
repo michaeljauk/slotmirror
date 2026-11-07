@@ -2,7 +2,8 @@ import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from 
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
-import { errorCode, errorLogFields, stackFrames } from "../src/audit";
+import { errorCode } from "../src/audit";
+import { errorFields, stackFrames } from "../src/error-fields";
 import { en } from "../src/i18n/en";
 import { runErrorText } from "../src/routes/rules";
 import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
@@ -599,11 +600,11 @@ describe("errors that cross the Durable Object boundary", () => {
     expect(JSON.stringify(error)).not.toContain("alice@");
     expect(String(error.stack)).not.toContain("alice@");
 
-    const logged = JSON.stringify([errorLogFields(error), errorCode(error)]);
+    const logged = JSON.stringify([errorFields(error), errorCode(error)]);
     expect(logged).not.toContain("alice@");
     expect(logged).not.toContain("AADSTS");
     expect(errorCode(error)).toBe("token_invalid_grant");
-    expect(errorLogFields(error).slice(0, 2)).toEqual(["Error", "invalid_grant"]);
+    expect(errorFields(error)).toMatchObject({ name: "Error", code: "invalid_grant" });
     // The UI still tells the user to connect again.
     expect(runErrorText(en, error)).toBe(en.editor.checkNoTokens);
     expect(runErrorText(en, new Error("Account has no tokens"))).toBe(en.editor.checkNoTokens);
@@ -999,7 +1000,7 @@ describe("alarm queue", () => {
   /** Whether the removal logged a failed rule lookup. Call it after `stuckBlockGraph()`. */
   function lookupLog() {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    return () => errors.mock.calls.some(([message]) => message === "Removal rule lookup failed");
+    return () => errors.mock.calls.some(([line]) => line?.event === "removal.rule_lookup_failed");
   }
 
   it("drops a waiting removal once its rule runs again, and owes a full cycle", async () => {
@@ -1188,7 +1189,12 @@ describe("alarm queue", () => {
     expect(job).toMatchObject({ ruleId, attempts: 2 });
     expect(await alarmKind(stub)).toBe("removal");
     expect(await alarmAt(stub)).toBe(job?.notBefore);
-    expect(errors).toHaveBeenCalledWith("Removal rule lookup failed", "D1_ERROR: transient");
+    expect(errors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "removal.rule_lookup_failed",
+        code: "D1_ERROR: transient",
+      }),
+    );
   });
 
   it("runs the account's rules while a removal waits for its next attempt", async () => {
@@ -3384,9 +3390,12 @@ describe("accounts that need reconnecting", () => {
     );
 
     await expectRejection(stub.listCalendars());
-    const line = logged.mock.calls.find((call) => call[0] === "Listing calendars failed");
-    expect(line).toBeDefined();
-    expect(line).toContain("token_invalid_client");
+    const line = logged.mock.calls.find(([record]) => record?.event === "calendars.list_failed");
+    expect(line?.[0]).toMatchObject({
+      accountId: "acc-list-fails",
+      code: "token_invalid_client",
+      requestId: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
   });
 
   it("keeps the account connected if the refused token was replaced during the refresh", async () => {
@@ -5234,7 +5243,7 @@ describe("run markers", () => {
 
     await stub.tick();
 
-    const failures = error.mock.calls.filter(([message]) => message === "Audit write failed");
+    const failures = error.mock.calls.filter(([line]) => line?.event === "audit.write_failed");
     expect(failures).toHaveLength(1);
     expect(await runMarkers(stub)).toHaveLength(2);
   });
@@ -5583,7 +5592,7 @@ describe("safe messages", () => {
       "Requesting a sync failed in 3 account(s)",
     ]) {
       expect(errorCode(new Error(message))).toBe(message);
-      expect(errorLogFields(new Error(message))).toContain(message);
+      expect(errorFields(new Error(message)).message).toBe(message);
     }
   });
 
@@ -5593,9 +5602,7 @@ describe("safe messages", () => {
       new RangeError("Invalid time value 'Dentist'"),
       new Error("Unexpected token 'Dentist' in JSON"),
     ]) {
-      expect(JSON.stringify([errorCode(error), errorLogFields(error)])).not.toMatch(
-        /alice|Dentist/,
-      );
+      expect(JSON.stringify([errorCode(error), errorFields(error)])).not.toMatch(/alice|Dentist/);
     }
     expect(errorCode(new TypeError("x"))).toBe("TypeError");
   });
@@ -5606,9 +5613,9 @@ describe("safe messages", () => {
     expect(
       errorCode(new Error("D1_TYPE_ERROR: Type 'object' not supported for value 'alice@x'")),
     ).toBe("Error");
-    expect(errorLogFields(new Error("D1_TYPE_ERROR: bad value alice@x")).join(" ")).not.toContain(
-      "alice",
-    );
+    expect(
+      JSON.stringify(errorFields(new Error("D1_TYPE_ERROR: bad value alice@x"))),
+    ).not.toContain("alice");
   });
 
   it("return one code for a token error inside and outside the Durable Object", () => {

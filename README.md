@@ -299,7 +299,19 @@ marks the check as up again, so an alert does not stay visible in the check.
 "observability": { "enabled": true, "logs": { "invocation_logs": false } }
 ```
 
-`console` output is a separate kind of log and stays in Workers Logs. An invocation log records the
+Each log line of slotmirror is a JSON object, which Workers Logs indexes as fields:
+
+- `event`: a stable name such as `calendars.list_failed`. Filter by it.
+- `level`: `error`, `warn` or `info`.
+- `requestId`: one ID per HTTP request, cron run and Durable Object alarm. A call into an
+  account's Durable Object keeps the ID of its caller, so one filter on `requestId` shows the lines
+  of the Worker and of the Durable Object together.
+- `accountId`, `ruleId` and other IDs, if the line has them.
+- `error`: the error's name, a code, the message if it cannot hold user data, and the stack frames.
+
+A log line holds IDs, codes and times, never event titles, calendar names, addresses or tokens.
+
+This output is a separate kind of log and stays in Workers Logs. An invocation log records the
 URL of a request, so with `invocation_logs` set to `true`, Workers Logs store OAuth parameters in
 your Cloudflare account. A deploy applies this setting from `wrangler.jsonc`, so change it there and
 not in the dashboard.

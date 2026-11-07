@@ -1,10 +1,11 @@
 import type { OffboardingOwner } from "./account-sync";
-import { auditStatement, errorLogFields, recordAudit } from "./audit";
+import { auditStatement, recordAudit } from "./audit";
 import { HOLD_LEASE_MS, openTombstone } from "./cleanup";
 import { parseRuleOptions } from "./config";
 import { accountSync } from "./durable";
 import { ruleTagFor } from "./sync/plan";
 import { syncWindow } from "./sync/rules";
+import { carrier, log } from "./telemetry";
 
 /**
  * Removing accounts and users, and pausing a user. The blocks go through the removal queue of each
@@ -60,10 +61,11 @@ async function queueRemovals(
       await accountSync(env, accountId).queueRemovals(
         jobs.map(({ ruleId, remoteCalendarId }) => ({ ruleId, remoteCalendarId })),
         offboarding ? { offboarding: { ...offboarding, accountId } } : {},
+        carrier(),
       );
     } catch (error) {
       failed += jobs.length;
-      console.error("Queueing removals failed", accountId, ...errorLogFields(error));
+      log.error("removal.queue_failed", { accountId, jobs: jobs.length }, error);
     }
   }
   return failed;
@@ -176,10 +178,10 @@ function releaseHolds(env: Env, hold: string, rules: OwnedRule[]) {
  */
 async function cancelRetirement(env: Env, accountId: string, generation: string): Promise<boolean> {
   try {
-    await accountSync(env, accountId).cancelRetire(generation);
+    await accountSync(env, accountId).cancelRetire(generation, carrier());
     return true;
   } catch (error) {
-    console.error("Cancelling a retirement failed", accountId, ...errorLogFields(error));
+    log.error("retirement.cancel_failed", { accountId }, error);
     return false;
   }
 }
@@ -195,7 +197,7 @@ async function retiringAccounts(env: Env, accountIds: string[]): Promise<Set<str
       if (await accountSync(env, accountId).retiring()) unclear.add(accountId);
     } catch (error) {
       unclear.add(accountId);
-      console.error("Reading a retirement failed", accountId, ...errorLogFields(error));
+      log.error("retirement.read_failed", { accountId }, error);
     }
   }
   return unclear;
@@ -235,9 +237,9 @@ async function resumeRules(
     const targets = new Set(
       left.filter((rule) => released.has(rule.ruleId)).map((rule) => rule.targetAccountId),
     );
-    for (const accountId of targets) await accountSync(env, accountId).requestSync();
+    for (const accountId of targets) await accountSync(env, accountId).requestSync(carrier());
   } catch (error) {
-    console.error("Resuming rules failed", ...errorLogFields(error));
+    log.error("rules.resume_failed", {}, error);
   }
 }
 
@@ -289,7 +291,7 @@ export async function removeAccounts(
   }
   for (const [index, accountId] of accountIds.entries()) {
     try {
-      await accountSync(env, accountId).retire(generation);
+      await accountSync(env, accountId).retire(generation, carrier());
       await env.DB.prepare("DELETE FROM accounts WHERE id = ? AND user_id = ?")
         .bind(accountId, user.id)
         .run();
@@ -427,9 +429,9 @@ export async function releaseHeldRules(
   const syncs = runs.slice(0, Math.max(0, budget - made));
   for (const { targetAccountId } of syncs) {
     try {
-      await accountSync(env, targetAccountId).requestSync();
+      await accountSync(env, targetAccountId).requestSync(carrier());
     } catch (error) {
-      console.error("Starting a sync failed", targetAccountId, ...errorLogFields(error));
+      log.error("sync.request_failed", { accountId: targetAccountId }, error);
     }
   }
   return made + syncs.length;

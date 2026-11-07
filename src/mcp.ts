@@ -3,7 +3,6 @@ import { bodyLimit } from "hono/body-limit";
 import * as z from "zod/mini";
 import { authenticateToken, reserveToolCall, settleToolCall } from "./api-tokens";
 import type { AppEnv } from "./app-env";
-import { errorLogFields } from "./audit";
 import { APP_NAME } from "./brand";
 import { mcpEnabled, setupStatus } from "./config";
 import { countingRows } from "./d1-rows";
@@ -18,6 +17,7 @@ import { i18nFor, type Messages } from "./i18n";
 import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
 import { can, permitted } from "./permissions";
+import { log } from "./telemetry";
 import type { CurrentUser } from "./users";
 import { buildVersionLabel } from "./version";
 
@@ -164,7 +164,7 @@ async function readCapped(request: Request): Promise<string | null> {
 
 // A failure of D1 or of the code reaches the client as JSON-RPC, never as the app's HTML page.
 mcp.onError(async (error, c) => {
-  console.error("MCP request failed", ...errorLogFields(error));
+  log.error("mcp.request_failed", {}, error);
   // Read the body only within the route's own size limit: D1 at its daily limit fails every
   // request before `bodyLimit` runs, and a large or endless body must not cost CPU then.
   let id: RequestId;
@@ -421,13 +421,13 @@ async function callTool(
       structuredContent: data,
     });
   } catch (error) {
-    console.error("MCP tool failed", tool.name, ...errorLogFields(error));
+    log.error("mcp.tool_failed", { tool: tool.name }, error);
     return toolError(t.errors.toolFailed);
   } finally {
     // A failed count must not cost the user an answer that is ready.
     const rows = counted.rows() + CHECK_ROWS;
     await settleToolCall(c.env.DB, user.id, reserved.day, rows).catch((error: unknown) => {
-      console.error("MCP usage count failed", ...errorLogFields(error));
+      log.error("mcp.usage_count_failed", {}, error);
     });
   }
 }

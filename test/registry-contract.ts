@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeMessage } from "../src/audit";
+import { safeMessage } from "../src/error-fields";
 import { EditorConflict, guardedBatch, requireChange } from "../src/editor";
 
 /**

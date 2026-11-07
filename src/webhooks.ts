@@ -1,5 +1,6 @@
 import type { Provider } from "./config";
 import { accountSync } from "./durable";
+import { carrier } from "./telemetry";
 
 /**
  * Push notifications from Microsoft and Google. A change in a calendar starts a sync within
@@ -86,7 +87,7 @@ export async function requestSyncs(env: Env, accountIds: string[]): Promise<void
   let cause: unknown;
   for (const id of accountIds) {
     try {
-      await accountSync(env, id).requestSync();
+      await accountSync(env, id).requestSync(carrier());
     } catch (error) {
       failed.push(id);
       cause ??= error;

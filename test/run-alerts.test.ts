@@ -985,7 +985,7 @@ describe("hourly check in the cron handler", () => {
       failing,
     );
 
-    expect(JSON.stringify(errors.mock.calls)).toContain("Silence check failed");
+    expect(JSON.stringify(errors.mock.calls)).toContain("silence_check.failed");
     expect(alerts).toHaveLength(1);
     const alarm = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
     expect(alarm).not.toBeNull();

@@ -437,7 +437,9 @@ slotmirror is licensed under the [GNU Affero General Public License v3.0](./LICE
 (`AGPL-3.0-only`). See the [FAQ](https://slotmirror.com/docs/faq/) for what that means in plain words.
 
 Code up to and including commit `fde4b24` stays available under the MIT license. Its text and
-copyright line are in [LICENSE-MIT](./LICENSE-MIT). Later changes are under AGPL-3.0 only.
+copyright line are in the
+[LICENSE file at that commit](https://github.com/slotmirror/slotmirror/blob/fde4b24b2ee3cf4e9c57d8c7fd308f54c29a634a/LICENSE).
+Later changes are under AGPL-3.0 only.
 
 Contributions need a signed [Contributor License Agreement](./CLA.md). The CLA bot posts the
 signing link on your pull request.

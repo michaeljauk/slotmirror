@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.1.0...slotmirror-v0.2.0) (2026-11-07)
+
+
+### Features
+
+* **node:** add the SQLite registry database ([#91](https://github.com/slotmirror/slotmirror/issues/91)) ([90bb298](https://github.com/slotmirror/slotmirror/commit/90bb298f28b311c6c76dde9b0f0ed67998e03c31))
+* **website:** add an imprint and a privacy notice for slotmirror.com ([#93](https://github.com/slotmirror/slotmirror/issues/93)) ([662c533](https://github.com/slotmirror/slotmirror/commit/662c533fa91c9f856f564ae24d4846e94fab0310))
+* **website:** redesign the home page around a live demo and showcase cards ([#92](https://github.com/slotmirror/slotmirror/issues/92)) ([f9b5685](https://github.com/slotmirror/slotmirror/commit/f9b5685e8a4d0f554f76882cb1453c3751f8a791))
+
+
+### Bug fixes
+
+* **calendars:** skip a calendar that does not fit the schema and read every page ([#99](https://github.com/slotmirror/slotmirror/issues/99)) ([8fe34c3](https://github.com/slotmirror/slotmirror/commit/8fe34c35bde536e41f71fd7016c4b3863d56abc5))
+* **graph:** accept a calendar whose owner is null ([#97](https://github.com/slotmirror/slotmirror/issues/97)) ([0bb5f09](https://github.com/slotmirror/slotmirror/commit/0bb5f0978b6e7b1e07e55ab35a6235bfb37aef20))
+* **log:** log why listing calendars failed inside the account instance ([#96](https://github.com/slotmirror/slotmirror/issues/96)) ([81cb350](https://github.com/slotmirror/slotmirror/commit/81cb350d58f4d8d2fee8f5c1cef38e1f13e602b1))
+* **log:** name the code and path of a schema error in error logs ([#95](https://github.com/slotmirror/slotmirror/issues/95)) ([f5bef68](https://github.com/slotmirror/slotmirror/commit/f5bef685bc3f69ef4e59d83e1426be25e0d3ac30))
+* **release:** ignore release-please files in oxfmt and read the version in tests ([#86](https://github.com/slotmirror/slotmirror/issues/86)) ([3889106](https://github.com/slotmirror/slotmirror/commit/3889106dabf6b0cb84c969ab10e7ec43a93b8d20))
+
+
+### Documentation
+
+* **license:** drop license-mit and link the mit text at its last commit ([#98](https://github.com/slotmirror/slotmirror/issues/98)) ([8fe8430](https://github.com/slotmirror/slotmirror/commit/8fe8430987ab86451ae4431c0c5f6ae773aa6ddf))
+
 ## 0.1.0 (2026-11-06)
 
 

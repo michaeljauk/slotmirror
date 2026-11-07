@@ -15,6 +15,7 @@ import {
   summarizeBatch,
   type BatchResult,
 } from "../sync/throttle";
+import { parseEach } from "../schema-issues";
 import { cleanupWindow } from "../sync/rules";
 import {
   blockStatusOf,
@@ -41,17 +42,17 @@ import {
 const API = "https://www.googleapis.com/calendar/v3";
 const BATCH_URL = "https://www.googleapis.com/batch/calendar/v3";
 
+/** One entry of the calendar list. Each is parsed on its own; see `parseEach`. */
+const calendarListEntrySchema = z.object({
+  id: z.string(),
+  summary: z.string(),
+  summaryOverride: z.optional(z.string()),
+  accessRole: z.string(),
+  primary: z.optional(z.boolean()),
+});
+
 const calendarListSchema = z.object({
-  items: z.array(
-    z.object({
-      id: z.string(),
-      summary: z.string(),
-      summaryOverride: z.optional(z.string()),
-      accessRole: z.string(),
-      primary: z.optional(z.boolean()),
-      /** Email of the calendar's data owner; Google sets it only for secondary calendars. */
-    }),
-  ),
+  items: z.array(z.unknown()),
   nextPageToken: z.optional(z.string()),
 });
 
@@ -106,7 +107,7 @@ export class GoogleCalendar implements CalendarClient {
       const page = calendarListSchema.parse(
         await this.get(`${API}/users/me/calendarList?${params.toString()}`),
       );
-      for (const item of page.items) {
+      for (const item of parseEach(page.items, calendarListEntrySchema, "calendar")) {
         calendars.push({
           id: item.id,
           name: item.summaryOverride ?? item.summary,

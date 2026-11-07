@@ -72,7 +72,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
       // The logo as a pair of eyes: they look toward the cursor, up or down like a meeting in a
       // day. The copy (hatched) follows the original a moment later and winks now and then.
       const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const logos = [...document.querySelectorAll<SVGSVGElement>(".brand svg, [data-eyes] svg")];
+      const logos = [...document.querySelectorAll<SVGSVGElement>(".brand svg")];
       if (!reduced && logos.length > 0) {
         let frame = 0;
         addEventListener("pointermove", (event) => {

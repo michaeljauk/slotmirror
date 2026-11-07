@@ -5,12 +5,17 @@
   "compatibility_date": "2026-10-25",
   // Invocation logs record the request URL, and confirm and unsubscribe links carry a token.
   "observability": { "enabled": false },
+  // The zone redirects slotmirror.app to slotmirror.com, except /api/signup, /confirm and
+  // /unsubscribe. Redirect rules run before Workers.
+  "routes": [{ "pattern": "slotmirror.app", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "slotmirror-waitlist",
-      // Null ID. Replace it with the ID from `wrangler d1 create slotmirror-waitlist`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Created with --jurisdiction=eu. The jurisdiction cannot change.
+      "database_id": "6202d7dc-1db8-4eff-abb4-c04b1695a6ad",
       "migrations_dir": "migrations",
     },
   ],
@@ -24,7 +29,7 @@
     // Hosts that may post the form. Also the hosts Turnstile must report.
     "ALLOWED_ORIGINS": "https://slotmirror.com,https://www.slotmirror.com,https://slotmirror.app",
     "MAIL_FROM": "slotmirror <waitlist@slotmirror.app>",
-    // Global limit of mails per UTC day. Resend Free allows 100 per day.
+    // Global limit of mails per UTC day. Keep it below the daily limit of the Resend plan.
     "DAILY_MAIL_CAP": "90",
     // Sign-up attempts per IP address per hour.
     "SIGNUPS_PER_IP_PER_HOUR": "5",
@@ -40,6 +45,7 @@
   //   { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
   // ],
   // Optional. Contact for deletion requests, shown if an unsubscribe link has expired. Set it as a
-  // plain var in the dashboard, or add it to "vars". The repository holds no contact.
+  // secret (wrangler secret put DELETION_CONTACT): a deploy removes plain vars set in the
+  // dashboard. The repository holds no contact.
   // "DELETION_CONTACT": "privacy@example.com",
 }

@@ -1,0 +1,48 @@
+---
+// The sign-up form of the waitlist. scripts/waitlist.ts finds it by its IDs, so a page holds at
+// most one. It renders nothing if the build has no waitlist address.
+import { waitlist } from "../waitlist-config";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+{
+  waitlist && (
+    <form
+      class="waitlist"
+      id="waitlist-form"
+      method="post"
+      hidden
+      data-endpoint={waitlist.endpoint}
+      data-site-key={waitlist.siteKey}
+    >
+      <label for="waitlist-email">Email address</label>
+      <div class="waitlist-row">
+        <input
+          id="waitlist-email"
+          name="email"
+          type="email"
+          autocomplete="email"
+          inputmode="email"
+          maxlength="254"
+          required
+          aria-describedby="waitlist-status"
+        />
+        <button class="button primary" type="submit" id="waitlist-submit">
+          Join the waitlist
+        </button>
+      </div>
+      <div id="waitlist-widget" class="waitlist-widget" />
+      <p id="waitlist-status" class="waitlist-status" role="status" aria-live="polite" />
+      <p class="note">
+        We use your address only for this list. We send one mail to confirm it. You can unsubscribe
+        from that mail. <a href={`${base}/privacy/`}>Privacy notice</a>
+      </p>
+    </form>
+  )
+}
+
+<script>
+  // The waitlist code loads only if this build renders the form.
+  if (document.querySelector("#waitlist-form")) void import("../scripts/waitlist");
+</script>

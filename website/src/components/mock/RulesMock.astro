@@ -1,0 +1,101 @@
+---
+// A simplified mockup of the rules page: one direction cycles through the four levels, and the
+// preview of the copy and the overview cell follow. CSS only. Decorative, so the figure that holds
+// it carries the description.
+import { google, microsoft } from "../../icons";
+import "../../styles/mock.css";
+
+const levels = ["Not", "As busy", "With title", "Everything"];
+---
+
+<div class="mk mk-rules" aria-hidden="true">
+  <div class="mk-win mk-main">
+    <div class="mk-bar"><i></i><i></i><i></i><span>Rules</span></div>
+    <div class="mk-body">
+      <div class="mk-from">
+        <span class="mk-ico" style="--c:var(--work)"><Fragment set:html={microsoft} /></span>
+        <div>
+          <strong>Events from Work</strong>
+          <span class="mk-line" style="width:9em"></span>
+        </div>
+      </div>
+
+      <div class="mk-dir">
+        <div class="mk-to">
+          <span class="mk-arrow">→</span><i style="--c:var(--private)"></i><Fragment
+            set:html={google}
+          />Personal
+        </div>
+        <div class="mk-seg">
+          <span class="mk-pill"></span>
+          {levels.map((level, i) => <span class={`mk-opt mk-p${i}`}>{level}</span>)}
+          <span class="mk-track"
+            ><span class="mk-cursor"
+              ><svg viewBox="0 0 24 24"
+                ><path
+                  d="M5 3.5v15.2l4.1-3.9 2.6 6 2.7-1.2-2.6-5.9h5.7z"
+                  fill="#fff"
+                  stroke="#0f1626"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"></path></svg
+              ></span
+            ></span
+          >
+        </div>
+        <div class="mk-there">
+          <span class="mk-label">There:</span>
+          <span class="mk-chips">
+            <span class="mk-chip mk-none mk-p0">Nothing appears</span>
+            <span class="mk-chip mk-busy mk-p1"><b>Busy</b> 10:00–11:00</span>
+            <span class="mk-chip mk-full mk-p2"><b>Q4 offer</b> 10:00–11:00</span>
+            <span class="mk-chip mk-full mk-p3"><b>Q4 offer</b> 10:00–11:00 · Teams · agenda</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="mk-dir">
+        <div class="mk-to">
+          <span class="mk-arrow">→</span><i style="--c:var(--client)"></i><Fragment
+            set:html={microsoft}
+          />Client
+        </div>
+        <div class="mk-seg mk-static">
+          {levels.map((level, i) => <span class:list={["mk-opt", i === 1 && "mk-on"]}>{level}</span>)}
+        </div>
+        <div class="mk-there">
+          <span class="mk-label">There:</span>
+          <span class="mk-chip mk-busy"><b>Busy</b> 10:00–11:00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mk-win mk-matrix">
+    <div class="mk-bar"><i></i><i></i><i></i><span>Overview</span></div>
+    <div class="mk-grid">
+      <span></span>
+      <span class="mk-h" style="--c:var(--work)">Work</span>
+      <span class="mk-h" style="--c:var(--private)">Personal</span>
+      <span class="mk-h" style="--c:var(--client)">Client</span>
+
+      <span class="mk-h" style="--c:var(--work)">Work</span>
+      <span class="mk-cell mk-self"></span>
+      <span class="mk-cell mk-live">
+        <span class="mk-p0">not</span><span class="mk-p1">busy</span><span class="mk-p2"
+          >title</span
+        ><span class="mk-p3">all</span>
+      </span>
+      <span class="mk-cell">busy</span>
+
+      <span class="mk-h" style="--c:var(--private)">Personal</span>
+      <span class="mk-cell">busy</span>
+      <span class="mk-cell mk-self"></span>
+      <span class="mk-cell">busy</span>
+
+      <span class="mk-h" style="--c:var(--client)">Client</span>
+      <span class="mk-cell">busy</span>
+      <span class="mk-cell">busy</span>
+      <span class="mk-cell mk-self"></span>
+    </div>
+  </div>
+</div>

@@ -2,9 +2,10 @@
 // no session replay. The project key comes from the build variable PUBLIC_POSTHOG_KEY. Without
 // the key this file does nothing and the site works as before.
 //
-// Four events are sent today:
+// Five events are sent today:
 //   deploy_click          a click on a Deploy to Cloudflare button or link
-//   quickstart_click      the main button of the home page, which opens the quickstart
+//   quickstart_click      a quickstart button of the home page
+//   waitlist_jump         the hero button of the home page that leads to the waitlist form
 //   waitlist_submit       a sign-up sent from the waitlist form on the home page, if the build
 //                         shows it. The event carries the path only: never the address, a token or the answer.
 //   $pageview             the standard page view, which replaces Cloudflare Web Analytics
@@ -14,6 +15,7 @@
 const EVENTS = [
   "deploy_click",
   "quickstart_click",
+  "waitlist_jump",
   "waitlist_submit",
   "suite_to_quickstart",
 ] as const;
@@ -25,9 +27,12 @@ const host = (import.meta.env.PUBLIC_POSTHOG_HOST as string | undefined) || "/in
 
 type Properties = Record<string, unknown>;
 
-// Query strings and fragments can carry tokens. They never leave the browser.
+// Query strings and fragments can carry tokens. They never leave the browser. A value that is not
+// an absolute http(s) URL, such as the referrer marker "$direct", keeps its form: resolved against
+// the page, "$direct" would turn into a link from the own site.
 function stripUrl(value: unknown): unknown {
   if (typeof value !== "string") return value;
+  if (!/^https?:\/\//i.test(value)) return value.split(/[?#]/)[0];
   try {
     const url = new URL(value, location.href);
     return `${url.origin}${url.pathname}`;

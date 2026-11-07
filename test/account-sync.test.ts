@@ -1193,6 +1193,9 @@ describe("alarm queue", () => {
       expect.objectContaining({
         event: "removal.rule_lookup_failed",
         code: "D1_ERROR: transient",
+        // The alarm started its own request.
+        requestId: expect.stringMatching(/^[0-9a-f]{16}$/),
+        trigger: "alarm",
       }),
     );
   });

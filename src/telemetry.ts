@@ -163,9 +163,15 @@ function write(
   // A broken log must not break a sync or a sign-in.
   try {
     const merged: Record<string, Scalar> = {};
-    definedOnly(active.context.current(), merged);
+    const context = active.context.current();
+    definedOnly(context, merged);
     definedOnly(own, merged);
     definedOnly(fields, merged);
+    // A field of the call cannot replace the request ID or the trigger of the context.
+    for (const key of ["requestId", "trigger"]) {
+      const value = context?.[key];
+      if (value !== undefined) merged[key] = value;
+    }
     const record: LogRecord = { level, event, time: Date.now(), fields: merged };
     if (hasError) record.error = errorFields(error);
     const span = active.tracer.current();
@@ -234,11 +240,6 @@ export function requestId(): string | undefined {
 /** Runs `fn` as a new request with a new ID. Each HTTP request, cron run and alarm starts one. */
 export function startRequest<T>(trigger: Trigger, fn: () => T, context?: Fields): T {
   return active.context.run({ ...context, requestId: newRequestId(), trigger }, fn);
-}
-
-/** Runs `fn` with `fields` added to the context of the current request. */
-export function withContext<T>(fields: Fields, fn: () => T): T {
-  return active.context.run({ ...active.context.current(), ...fields }, fn);
 }
 
 /** The context to pass as the last argument of a call into a Durable Object. */

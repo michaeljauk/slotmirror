@@ -673,7 +673,12 @@ export class AccountSync extends DurableObject<Env> {
    * ID and this account. A call from another method of this instance stays in its own request.
    */
   private inRequest<T>(from: Carrier | undefined, fn: () => Promise<T>): Promise<T> {
-    return resumeRequest(from, fn, { accountId: this.ctx.id.name });
+    return resumeRequest(from, fn, { accountId: this.logAccountId() });
+  }
+
+  /** The account for the log context. The name can be missing; the tokens then hold the ID. */
+  private logAccountId(): string | undefined {
+    return this.ctx.id.name ?? this.accountIdOrNull() ?? undefined;
   }
 
   /**
@@ -937,7 +942,8 @@ export class AccountSync extends DurableObject<Env> {
         throttled = true;
         delayMs = throttleDelay;
       } else {
-        log.error("feed.read_failed", { calendarId }, error);
+        // Not the calendar ID: a Google calendar ID is often an email address.
+        log.error("feed.read_failed", {}, error);
       }
     }
     if (!throttled) {
@@ -2601,7 +2607,7 @@ export class AccountSync extends DurableObject<Env> {
    * they wait too. If another account throttled the read of a rule's source, only that rule waits.
    */
   override async alarm(): Promise<void> {
-    await startRequest("alarm", () => this.alarmStep(), { accountId: this.ctx.id.name });
+    await startRequest("alarm", () => this.alarmStep(), { accountId: this.logAccountId() });
   }
 
   private async alarmStep(): Promise<void> {
@@ -3278,7 +3284,7 @@ export class AccountSync extends DurableObject<Env> {
           // Google channels cannot be extended: the old one overlaps briefly, then stops.
           if (current) await client.unwatch(current).catch(() => undefined);
         } catch (error) {
-          log.error("watch.start_failed", { calendarId }, error);
+          log.error("watch.start_failed", {}, error);
           // Without a watch, the cron polls this calendar every 10 minutes.
           await markWatched(calendarId, null);
         }

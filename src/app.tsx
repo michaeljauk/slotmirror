@@ -631,8 +631,9 @@ app.post("/admin/mcp-policy", async (c) => {
 // and a SyntaxError can quote the input. See `errorFields`.
 app.onError((error, c) => {
   if (error instanceof HTTPException) return error.getResponse();
-  // The path without the query: an OAuth callback carries its code in the query.
-  log.error("request.failed", { method: c.req.method, path: c.req.path }, error);
+  // The route pattern, not the path: a path can hold a calendar ID, and an OAuth callback carries
+  // its code in the query.
+  log.error("request.failed", { method: c.req.method, route: c.req.routePath }, error);
   const { t } = i18nFromContext(c);
   if (c.req.header("x-fragment") === "1") return c.text(t.messages.errorText, 500);
   return render(

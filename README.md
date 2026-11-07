@@ -305,7 +305,8 @@ Each log line of slotmirror is a JSON object, which Workers Logs indexes as fiel
 - `level`: `error`, `warn` or `info`.
 - `requestId`: one ID per HTTP request, cron run and Durable Object alarm. A call into an
   account's Durable Object keeps the ID of its caller, so one filter on `requestId` shows the lines
-  of the Worker and of the Durable Object together.
+  of the Worker and of the Durable Object together. Work that two requests share, such as a rule
+  run that a click joins while an alarm runs it, logs under the ID of the request that started it.
 - `accountId`, `ruleId` and other IDs, if the line has them.
 - `error`: the error's name, a code, the message if it cannot hold user data, and the stack frames.
 

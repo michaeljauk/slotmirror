@@ -11,7 +11,6 @@ import {
   span,
   startRequest,
   traceId,
-  withContext,
 } from "../src/telemetry";
 import { addAccount } from "./helpers";
 import { captureLogs } from "./telemetry";
@@ -128,18 +127,13 @@ describe("the request context", () => {
     expect(records).toHaveLength(4);
   });
 
-  it("adds fields with withContext and drops them after", async () => {
+  it("does not let a field of the call replace the request ID", async () => {
     const { records } = capturing();
-    await startRequest("cron", async () => {
-      await withContext({ accountId: "a-1" }, async () => {
-        await tick();
-        log.info("test.inner");
-      });
-      log.info("test.outer");
+    const id = await startRequest("cron", async () => {
+      log.info("test.spoof", { requestId: "ffffffffffffffff", trigger: "http" });
+      return requestId();
     });
-    expect(records[0]?.fields.accountId).toBe("a-1");
-    expect(records[1]?.fields.accountId).toBeUndefined();
-    expect(records[0]?.fields.requestId).toBe(records[1]?.fields.requestId);
+    expect(records[0]?.fields).toMatchObject({ requestId: id, trigger: "cron" });
   });
 
   it("continues the caller's request from a carrier, and refuses a malformed ID", async () => {
@@ -207,8 +201,9 @@ describe("the Workers tracer", () => {
   it("runs a span and returns its result without observability", async () => {
     capture = captureLogs({ tracer: workersTracer });
     const result = await span("test.span", { ruleId: "r-1", none: undefined }, async (s) => {
+      // Without observability these calls record nothing; they must not throw.
       s.setAttributes({ count: 1 });
-      s.recordError(new Error("secret alice@corp.example"));
+      s.recordError(new Error("boom"));
       return 42;
     });
     expect(result).toBe(42);

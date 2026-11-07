@@ -17,7 +17,7 @@ import {
 export function jsonLineSink(out: { write(line: string): unknown } = process.stdout): LogSink {
   return {
     write(record) {
-      const line = { time: new Date(record.time).toISOString(), ...logLine(record) };
+      const line = { ...logLine(record), time: new Date(record.time).toISOString() };
       out.write(`${JSON.stringify(line)}\n`);
     },
   };

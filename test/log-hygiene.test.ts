@@ -29,6 +29,9 @@ function withoutLiterals(code: string): string {
 
 const SAFE_CALLS = /errorFields\([^)]*\)|errorCode\([^)]*\)/g;
 
+/** A logger call, also on a logger that `log.with(...)` made. */
+const LOG_CALL = /\blog(?:\.with\([^)]*\))?\.(?:error|warn|info)\(/g;
+
 /** The arguments of the call whose "(" is at `open`, split at top-level commas. */
 function callArgs(code: string, open: number): string[] {
   const args: string[] = [];
@@ -76,7 +79,7 @@ export function rawErrorLogs(source: string): string[] {
   }
   // A logger call. The third argument is the caught value itself: the logger keeps only its
   // `errorFields`. The event and the fields must not name an error, `.message` or `.stack`.
-  for (const m of code.matchAll(/\blog\.(?:error|warn|info)\(/g)) {
+  for (const m of code.matchAll(LOG_CALL)) {
     const [event = "", fields = "", error, ...extra] = callArgs(code, m.index + m[0].length - 1);
     const named = [event, fields, ...extra].join(", ").replace(SAFE_CALLS, "");
     if (/\.(message|stack)\b/.test(named) || word.test(named)) found.push(`log(${named})`);
@@ -132,10 +135,12 @@ describe("log hygiene", () => {
 
   it("names every log event in dotted lower case", () => {
     const events = Object.entries(sources).flatMap(([path, code]) =>
-      [...code.matchAll(/\blog\.(?:error|warn|info)\(\s*([^,)]*)/g)].map((m) => ({
-        path,
-        event: (m[1] ?? "").trim(),
-      })),
+      [...code.matchAll(/\blog(?:\.with\([^)]*\))?\.(?:error|warn|info)\(\s*([^,)]*)/g)].map(
+        (m) => ({
+          path,
+          event: (m[1] ?? "").trim(),
+        }),
+      ),
     );
     expect(events.length).toBeGreaterThan(70);
     const bad = events.filter(({ event }) => !/^"[a-z][a-z_]*(\.[a-z][a-z_]*)+"$/.test(event));
@@ -155,6 +160,7 @@ describe("log hygiene", () => {
     expect(rawErrorLogs('log.warn("x.y", { stack: error.stack }, error);')).toHaveLength(1);
     expect(rawErrorLogs('log.error("x.y", {}, error.message);')).toHaveLength(1);
     expect(rawErrorLogs('log.error("x.y", { code: errorCode(error) }, error);')).toHaveLength(0);
+    expect(rawErrorLogs('log.with({ id }).error("x.y", { text: e.message });')).toHaveLength(1);
     expect(rawErrorLogs("try { x(); } catch (boom) { log.error('x.y', { boom }); }")).toHaveLength(
       1,
     );

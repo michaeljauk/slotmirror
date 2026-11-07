@@ -56,9 +56,11 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
   log tokens.
 - **Log through `log` from `src/telemetry.ts`, never `console`.** Use a dotted event name in lower
   case (`"calendars.list_failed"`), scalar fields, and the caught value as the third argument:
-  `log.error("calendars.list_failed", { calendarId }, error)`. The logger keeps only
-  `errorFields(error)`. A call into `AccountSync` passes `carrier()` as its last argument, so that
-  the instance logs with the caller's request ID. `test/log-hygiene.test.ts` enforces this.
+  `log.error("removal.failed", { ruleId }, error)`. The logger keeps only `errorFields(error)`.
+  Log IDs of slotmirror, not remote calendar IDs: a Google calendar ID is often an email address.
+  `test/log-hygiene.test.ts` checks the event names and that no raw error reaches a log. A call
+  into `AccountSync` passes `carrier()` as its last argument, so that the instance logs with the
+  caller's request ID.
 - **Migrations are additive.** Add tables and columns. Do not drop or rename anything. Do not add
   `NOT NULL` without a default. The previous Worker must run on the new schema, because migrations
   run before the code and do not run backward. See `website/src/content/docs/docs/updating.md`.
